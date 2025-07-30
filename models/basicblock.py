@@ -190,9 +190,6 @@ class ConvReverse2d(nn.Module):
         return z
 
 
-
-        
-
 """
 # --------------------------------------------
 # implementation of Converse Block
@@ -236,12 +233,58 @@ class Converse_Block(nn.Module):
                                    nn.Conv2d(2*out_channels, out_channels, 1, 1, 0))
                                   
     def forward(self, x):
-        # x = self.alpha1 * self.conv1(x) + x
-        # x = self.alpha2 * self.conv2(x) + x
         x = self.conv1(x) + x
         x = self.conv2(x) + x
         return x
 
+
+class Converse_Block_alpha(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, scale=1, padding=2, padding_mode='replicate', eps=1e-5):
+        super(Converse_Block_alpha, self).__init__()
+        """
+        Converse_Block: A Convolutional Block for Image Restoration using Converse2D Operations.
+
+        This block consists of two main sub-blocks, each incorporating normalization, pointwise convolution,
+        non-linearity, and (optionally) a custom reverse convolution (`ConvReverse2d`) for learnable upsampling.
+        It also includes residual connections to preserve information and improve gradient flow.
+
+        Args:
+            in_channels (int): Number of channels in the input tensor.
+            out_channels (int): Number of channels to be produced by the block.
+            kernel_size (int, optional): Kernel size used in the `ConvReverse2d` operation. Default: 3.
+            scale (int, optional): Upsampling scale factor. Default: 1 (no upsampling).
+            padding (int, optional): Padding size for `ConvReverse2d`. Default: 2.
+            padding_mode (str, optional): Padding mode to use in `ConvReverse2d`. One of {'reflect', 'replicate', 'circular', 'constant'}. Default: 'circular'.
+            eps (float, optional): A small epsilon value for numerical stability in normalization layers. Default: 1e-6.
+
+        Forward:
+            x (Tensor): Input tensor of shape (N, in_channels, H, W)
+            Returns:
+                Tensor: Output tensor of shape (N, out_channels, H * scale, W * scale)
+        """
+        self.alpha1 = nn.Parameter(torch.zeros((1, out_channels, 1, 1)), requires_grad=True)
+        self.alpha2 = nn.Parameter(torch.zeros((1, out_channels, 1, 1)), requires_grad=True)
+
+
+        self.conv1 = nn.Sequential(LayerNorm(in_channels, eps=1e-5, data_format="channels_first"),
+                                   nn.Conv2d(in_channels, 2*out_channels, 1, 1, 0),
+                                   nn.GELU(),
+                                   ConvReverse2d(2*out_channels, 2*out_channels, kernel_size, scale=scale, padding=padding, padding_mode=padding_mode, eps=eps), 
+                                   nn.GELU(),
+                                   nn.Conv2d(2*out_channels, out_channels, 1, 1, 0))
+                                  
+        self.conv2 = nn.Sequential(LayerNorm(in_channels, eps=1e-5, data_format="channels_first"),
+                                   nn.Conv2d(out_channels, 2*out_channels, 1, 1, 0),
+                                   nn.GELU(),
+                                   nn.Conv2d(2*out_channels, out_channels, 1, 1, 0))
+        
+
+
+                                  
+    def forward(self, x):
+        x = self.alpha1 * self.conv1(x) + x
+        x = self.alpha2 * self.conv2(x) + x
+        return x
 
 """
 # --------------------------------------------
