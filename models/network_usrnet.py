@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from models.basicblock import sequential, Converse_Block, Conv_Block
+from models.basicblock import sequential, Converse_Block, Conv_Block, Converse_Block_alpha
 # from utils import utils_image as util
 import torch.fft
 import torch.nn.init as init
@@ -16,6 +16,31 @@ class ConverseNet(nn.Module):
     def __init__(self, in_nc=64, nb=7, kernel=3, scale=1, padding=2, padding_mode="circular"):
         super(ConverseNet, self).__init__()
         self.m_body  = sequential(*[Converse_Block(in_nc, in_nc, kernel, scale, padding, padding_mode) for _ in range(nb)])
+        self.apply(self._init_weights)
+    def forward(self, x):
+        x = self.m_body(x)
+        return x
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.trunc_normal_(m.weight, std=.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, nn.Conv2d):
+            nn.init.trunc_normal_(m.weight, std=.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.ConvTranspose2d):
+            nn.init.trunc_normal_(m.weight, std=.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+class ConverseNet_alpha(nn.Module):
+    def __init__(self, in_nc=64, nb=7, kernel=3, scale=1, padding=2, padding_mode="circular"):
+        super(ConverseNet_alpha, self).__init__()
+        self.m_body  = sequential(*[Converse_Block_alpha(in_nc, in_nc, kernel, scale, padding, padding_mode) for _ in range(nb)])
         self.apply(self._init_weights)
     def forward(self, x):
         x = self.m_body(x)
@@ -61,7 +86,7 @@ class ConvNet(nn.Module):
             nn.init.trunc_normal_(m.weight, std=.02)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-                
+
 
 """
 # --------------------------------------------
@@ -195,16 +220,6 @@ class Denoiser(nn.Module):
         self.conv2 = nn.Conv2d(in_nc, 3, 1, 1, 0)
         self.n = n_iter
         
-
-        # for conv1
-        weight = self.conv1.weight
-        init.uniform_(weight, a=0, b=1)
-        weight.data = F.softmax(weight.data.view(weight.size(0), -1), dim=1).view_as(weight)
-        
-        # for conv2
-        weight = self.conv2.weight
-        init.uniform_(weight, a=0, b=1)
-        weight.data = F.softmax(weight.data.view(weight.size(0), -1), dim=1).view_as(weight)
     def forward(self, x):
         '''
         x: tensor, NxCxWxH
@@ -229,7 +244,7 @@ class USRNet(nn.Module):
         super(USRNet, self).__init__()
 
         self.d = ConvReverse2d_DataNet()
-        self.p = ConverseNet(in_nc=in_nc, nb=nb)
+        self.p = ConverseNet_alpha(in_nc=in_nc, nb=nb)
         self.conv1 = nn.Conv2d(3, 64, 1, 1, 0)
         self.conv2 = nn.Conv2d(64, 3, 1, 1, 0)
         self.kernelnet = KernelNet()
