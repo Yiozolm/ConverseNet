@@ -3,20 +3,17 @@ import cv2
 import logging
 import time
 import os
-
 import numpy as np
 from collections import OrderedDict
-#import hdf5storage
+# import hdf5storage
 from scipy import ndimage
-
 import torch
-
 from utils import utils_logger
 from utils import utils_sisr as sr
 from utils import utils_image as util
 
 # test Converse USRNet
-from models.network_usrnet import Denoiser as net
+from models.network_usrnet import USRNet as net
 # test ConverseNet
 # from models.network_usrnet import Denoiser as net
 
@@ -57,7 +54,7 @@ def main():
     # ----------------------------------------
     # Preparation
     # ----------------------------------------
-    model_name = 'converse_usrnet'   # 'usrgan' | 'usrnet' | 'usrgan_tiny' | 'usrnet_tiny'
+    model_name = 'conversenet'   # 'usrgan' | 'usrnet' | 'usrgan_tiny' | 'usrnet_tiny'
     testset_name = 'BSD100'        # test set,  'set5' | 'srbsd68'
     test_sf = [1]                   # scale factor, from {1,2,3,4}
     show_img = False                # default: False
