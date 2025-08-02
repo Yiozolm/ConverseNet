@@ -29,28 +29,9 @@ class Converse_DnCNN(nn.Module):
         self.m_body = nn.Sequential(*self.m_body)
         self.m_tail = nn.Sequential(*self.m_tail)  
 
-        self.apply(self._init_weights)
-
     def forward(self, x):
         x = self.m_head(x)
         x = self.m_body(x)
         x = self.m_tail(x)
-
         return x
 
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.ConvTranspose2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
