@@ -37,6 +37,7 @@ class ConverseNet(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
+
 class ConverseNet_alpha(nn.Module):
     def __init__(self, in_nc=64, nb=7, kernel=3, scale=1, padding=2, padding_mode="circular"):
         super(ConverseNet_alpha, self).__init__()
@@ -62,30 +63,6 @@ class ConverseNet_alpha(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-class ConvNet(nn.Module):
-    def __init__(self, in_nc=64, nb=7, kernel=3, padding=1, padding_mode="circular"):
-        super(ConvNet, self).__init__()
-        self.m_body  = sequential(*[Conv_Block(in_nc, in_nc, kernel, padding, padding_mode) for _ in range(nb)])
-        self.apply(self._init_weights)
-    def forward(self, x):
-        x = self.m_body(x)
-        return x
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.ConvTranspose2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
 
 
 """
@@ -204,34 +181,6 @@ class KernelNet(nn.Module):
         k = k.view(b, 16, self.kernel_size, self.kernel_size)
         return k
 
-"""
-# --------------------------------------------
-# blind denoiser
-# --------------------------------------------
-"""
-class Denoiser(nn.Module):
-    def __init__(self, n_iter=5, in_nc=64, nb=7):
-        """
-        totally denoiser for deblur
-        """
-        super(Denoiser, self).__init__()
-        self.p = ConverseNet(in_nc=in_nc, nb=nb)
-        self.conv1 = nn.Conv2d(3, in_nc, 1, 1, 0)
-        self.conv2 = nn.Conv2d(in_nc, 3, 1, 1, 0)
-        self.n = n_iter
-        
-    def forward(self, x):
-        '''
-        x: tensor, NxCxWxH
-        k: tensor, Nx(1,3)xwxh
-        sf: integer, 1
-        sigma: tensor, Nx1x1x1
-        '''
-        x = self.conv1(x)
-        for i in range(self.n):
-            x = self.p(x)
-        x = self.conv2(x)
-        return x
 
 """
 # --------------------------------------------
