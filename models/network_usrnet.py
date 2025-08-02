@@ -16,53 +16,18 @@ class ConverseNet(nn.Module):
     def __init__(self, in_nc=64, nb=7, kernel=3, scale=1, padding=2, padding_mode="circular"):
         super(ConverseNet, self).__init__()
         self.m_body  = sequential(*[Converse_Block(in_nc, in_nc, kernel, scale, padding, padding_mode) for _ in range(nb)])
-        self.apply(self._init_weights)
     def forward(self, x):
         x = self.m_body(x)
         return x
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.ConvTranspose2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
 
 
 class ConverseNet_alpha(nn.Module):
     def __init__(self, in_nc=64, nb=7, kernel=3, scale=1, padding=2, padding_mode="circular"):
         super(ConverseNet_alpha, self).__init__()
         self.m_body  = sequential(*[Converse_Block_alpha(in_nc, in_nc, kernel, scale, padding, padding_mode) for _ in range(nb)])
-        self.apply(self._init_weights)
     def forward(self, x):
         x = self.m_body(x)
         return x
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.ConvTranspose2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-
 
 
 """
