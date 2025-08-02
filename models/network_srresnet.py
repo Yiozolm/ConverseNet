@@ -52,11 +52,7 @@ class MSRResNet(nn.Module):
         return x1 + x
 
 
-"""
-# --------------------------------------------
-# implementation of MSResNet which replace the residual block with converse block, conv block and transposed conv block, respectively 
-# --------------------------------------------
-"""  
+
 class Converse_Block_MSRResNet(nn.Module):
     '''
     modified SRResNet
@@ -114,117 +110,9 @@ class Converse_Block_MSRResNet(nn.Module):
 
         return x1 + x
 
-class Conv_Block_MSRResNet(nn.Module):
-    """modified SRResNet"""
-
-    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=16, upscale=4):
-        super(Conv_Block_MSRResNet, self).__init__()
-        self.upscale = upscale
-
-        self.conv_first = nn.Conv2d(in_nc, nf, 1, 1, 0, bias=True)
-        self.conv_body = nn.Sequential(*[Conv_Block(nf, nf, 5) for _ in range(nb)])
-
-        # upsampling
-        self.conv1 = nn.Conv2d(nf, nf, kernel_size=2, stride=1, groups=nf)
-        self.conv2 = nn.Conv2d(nf, nf, kernel_size=2, stride=1, groups=nf)
-        
-        self.conv_hres = Conv_Block(nf, nf, 5)
-        self.conv_last = nn.Conv2d(nf, out_nc, 1, 1, 0, bias=True)
-
-        # activation function
-        self.gelu = nn.GELU()
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.ConvTranspose2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        x1 = self.gelu(self.conv_first(x))
-        x1 = self.conv_body(x1)
-
-        x1 = F.interpolate(x1, scale_factor=2, mode="nearest")
-        x1 = F.pad(x1, (0, 1, 0, 1))
-        x1 = self.gelu(self.conv1(x1))
-        
-        x1 = F.interpolate(x1, scale_factor=2, mode="nearest")
-        x1 = F.pad(x1, (0, 1, 0, 1))
-        x1 = self.gelu(self.conv2(x1))
-        
-        x1 = self.conv_last(self.gelu(self.conv_hres(x1)))
-        x = F.interpolate(x, scale_factor=self.upscale, mode='bilinear', align_corners=False)
-
-        return x1 + x
-
-class ConvT_Block_MSRResNet(nn.Module):
-    """modified SRResNet"""
-
-    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=16, upscale=4):
-        super(ConvT_Block_MSRResNet, self).__init__()
-        self.upscale = upscale
-
-        self.conv_first = nn.Conv2d(in_nc, nf, 1, 1, 0, bias=True)
-        self.conv_body = nn.Sequential(*[ConvT_Block(nf, nf) for _ in range(nb)])
-
-        # upsampling
-        self.up1 = nn.ConvTranspose2d(nf, nf, 5, 2, 2, groups=nf)
-        self.up2 = nn.ConvTranspose2d(nf, nf, 5, 2, 2, groups=nf)
- 
-        self.conv_hres = ConvT_Block(nf, nf)
-        self.conv_last = nn.Conv2d(nf, out_nc, 1, 1, 0, bias=True)
-
-        # activation function
-        self.gelu = nn.GELU()
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.ConvTranspose2d):
-            nn.init.trunc_normal_(m.weight, std=.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        x1 = self.gelu(self.conv_first(x))
-        x1 = self.conv_body(x1)
-        
-        x1 = self.gelu(self.up1(x1))
-        x1 = F.pad(x1, (1, 0, 1, 0))
-        x1 = self.gelu(self.up2(x1))
-        x1 = F.pad(x1, (1, 0, 1, 0))
-        x1 = self.conv_last(self.gelu(self.conv_hres(x1)))
-        x = F.interpolate(x, scale_factor=self.upscale, mode='bilinear', align_corners=False)
-        return x1 + x
 
 
-"""
-# --------------------------------------------
-# implementation of MSResNet which replace the unsample ways with Converse2d, transposed convolution and interpolation, respectively
-# --------------------------------------------
-"""  
+
 class Converse_MSRResNet(nn.Module):
     def __init__(self, in_nc=3, out_nc=3, nf=64, nb=16, upscale=4):
         super(Converse_MSRResNet, self).__init__()
@@ -260,76 +148,6 @@ class Converse_MSRResNet(nn.Module):
 
         return x1 + x
     
-class ConvT_MSRResNet(nn.Module):
-    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=16, upscale=4):
-        super(ConvT_MSRResNet, self).__init__()
-        '''
-            upsample with transposed convolution
-        ''' 
-        self.upscale = upscale
-
-        self.conv_first = nn.Conv2d(in_nc, nf, 3, 1, 1, bias=True)
-        self.conv_body = nn.Sequential(*[ResidualBlock(nf) for _ in range(nb)])
-
-        self.conv1 = nn.Conv2d(nf, nf, 3, 1, 1)
-        self.up1 = nn.ConvTranspose2d(nf, nf, 2, 2, groups=nf, bias=True)
-        self.conv2 = nn.Conv2d(nf, nf, 3, 1, 1)
-        self.up2 = nn.ConvTranspose2d(nf, nf, 2, 2, groups=nf, bias=True)
-
-        self.conv_hres = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-        self.conv_last = nn.Conv2d(nf, out_nc, 3, 1, 1, bias=True)
-
-        # activation function
-        self.gelu = nn.GELU()
-
-
-    def forward(self, x):
-        x1 = self.gelu(self.conv_first(x))
-        x1 = self.conv_body(x1)
-
-        x1 = self.gelu(self.conv1(self.up1(x1)))
-        x1 = self.gelu(self.conv2(self.up2(x1)))
-
-
-        x1 = self.conv_last(self.gelu(self.conv_hres(x1)))
-        x = F.interpolate(x, scale_factor=self.upscale, mode='bilinear', align_corners=False)
-
-        return x1 + x 
-
-class Conv_MSRResNet(nn.Module):
-    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=16, upscale=4):
-        super(Conv_MSRResNet, self).__init__()
-        '''
-            upsample with tranposed convolution
-        ''' 
-        self.upscale = upscale
-
-        self.conv_first = nn.Conv2d(in_nc, nf, 3, 1, 1, bias=True)
-        self.conv_body = nn.Sequential(*[ResidualBlock(nf) for _ in range(nb)])
-
-        # upsampling
-        self.upconv1 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-        self.gelu = nn.GELU()
-        self.upconv2 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-
-        self.conv_hres = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-        self.conv_last = nn.Conv2d(nf, out_nc, 3, 1, 1, bias=True)
-
-
-
-    def forward(self, x):
-        x1 = self.gelu(self.conv_first(x))
-        x1 = self.conv_body(x1)
-
-
-        x1 = self.gelu(self.upconv1(F.interpolate(x1, scale_factor=2, mode='nearest')))
-        x1 = self.gelu(self.upconv2(F.interpolate(x1, scale_factor=2, mode='nearest')))
-
-        x1 = self.conv_last(self.gelu(self.conv_hres(x1)))
-        x = F.interpolate(x, scale_factor=self.upscale, mode='bilinear', align_corners=False)
-
-        return x1 + x
-
 
 
 
