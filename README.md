@@ -60,10 +60,10 @@ Models
 
 |Model|# params|
 |---|:---:|
-|[Converse-DnCNN](https://drive.google.com/file/d/1V7vQw9aZGIfBUZJUufFFi2l-bzvOq9NJ/view?usp=sharing)     | 734,913 |
-|[Converse-SRResNet](https://drive.google.com/file/d/1P_B70KrMVpc4oe43ZO6NUNsYQ1ARlf1P/view?usp=sharing)     | 694,208 |
-|[ConverseNet](https://drive.google.com/file/d/14b3gH1jZYEBztJMm7BxY0L3zO23hgiXo/view?usp=sharing)     | 243,267 |
-|[Converse-USRNet](https://drive.google.com/file/d/1x0QY1Cz53adRDjCAphgU7cmX189C8xy0/view?usp=sharing)     | 307,091 |
+|[Converse-DnCNN](model_zoo/converse_dncnn.pth)     | 734,913 |
+|[Converse-SRResNet](model_zoo/converse_srresnet.pth)     | 694,208 |
+|[ConverseNet](model_zoo/conversenet.pth)     | 243,267 |
+|[Converse-USRNet](model_zoo/converse_usrnet.pth)     | 307,091 |
 
 
 Codes
