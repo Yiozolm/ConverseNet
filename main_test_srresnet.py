@@ -26,9 +26,7 @@ github: https://github.com/cszn
 by Xuhong Huang (22/June/2025)
 # --------------------------------------------
 |--model_zoo                        # model_zoo  
-   |--conv_srresnet                 # model_name
-   |--convt_srresnet
-   |--converse_srresnet
+   |--converse_srresnet             # model_name
 |--testset                          # testsets
    |--set5                          # testset_name
    |--set14
@@ -49,7 +47,7 @@ def main():
     # ----------------------------------------
 
     model_name = 'converse_srresnet'           # 
-    testset_name = 'urban100'                # test set,  'set5' | 'srbsd68'
+    testset_name = 'set5'                # test set,  'set5' | 'srbsd68'
     need_degradation = True              # default: True
     sf = 4                               # scale factor
     show_img = False                     # default: False

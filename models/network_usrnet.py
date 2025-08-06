@@ -39,7 +39,7 @@ class ConvReverse2d_DataNet(nn.Module):
     def __init__(self,eps=1e-3):
         super(ConvReverse2d_DataNet, self).__init__()
         '''
-        padding_mode: default:reflect, {'reflect', 'replicate', 'circular'}
+        Converse2d operator for condition the kernel
         '''
         self.alpha = nn.Parameter(torch.zeros(1, 64, 1, 1))
         self.eps = eps
@@ -153,9 +153,9 @@ class KernelNet(nn.Module):
 # deep unfolding super-resolution network
 # --------------------------------------------
 """
-class USRNet(nn.Module):
+class Converse_USRNet(nn.Module):
     def __init__(self, n_iter=5, in_nc=64, nb=7):
-        super(USRNet, self).__init__()
+        super(Converse_USRNet, self).__init__()
 
         self.d = ConvReverse2d_DataNet()
         self.p = ConverseNet_alpha(in_nc=in_nc, nb=nb)

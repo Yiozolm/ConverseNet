@@ -1,13 +1,10 @@
 import os.path
 import logging
 import argparse
-
 import numpy as np
 from datetime import datetime
 from collections import OrderedDict
-# from scipy.io import loadmat
 import torch
-
 from utils import utils_logger
 from utils import utils_model
 from utils import utils_image as util
@@ -23,7 +20,7 @@ github: https://github.com/cszn
 
 
 % If you have any question, please feel free to contact with me.
-% Xuhong Huang (e-mail: kaizhang@nju.edu.cn; github: https://github.com/cszn)
+% Kai Zhang (e-mail: kaizhang@nju.edu.cn; github: https://github.com/cszn)
 
 by Xuhong Huang (22/June/2025)
 '''
@@ -31,15 +28,12 @@ by Xuhong Huang (22/June/2025)
 """
 # --------------------------------------------
 |--model_zoo                # model_zoo
-   |--conv_dncnn            # model_name
-   |--convt_dncnn
-   |--converse_dncnn
+   |--converse_dncnn        # model_name
 |--testset                  # testsets
    |--set12                 # testset_name
    |--bsd68
-|--results                  # results
-   |--set12_conv_dncnn      # result_name = testset_name + '_' + model_name
-   |--set12_converse_dncnn
+|--results                  # results      
+   |--set12_converse_dncnn  # result_name = testset_name + '_' + model_name
    |--bsd68_converse_dncnn
 # --------------------------------------------
 """
@@ -51,8 +45,8 @@ def main():
     # Preparation
     # ----------------------------------------
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name', type=str, default="converse_dncnn", help='converse_dncnn, conv_dncnn, convt_dncnn')
-    parser.add_argument('--testset_name', type=str, default='bsd68', help='set5, set12')
+    parser.add_argument('--model_name', type=str, default="converse_dncnn")
+    parser.add_argument('--testset_name', type=str, default='set12', help='set12, bsd68')
     parser.add_argument('--noise_level_img', type=int, default=25, help='noise level: 15, 25, 50')
     parser.add_argument('--x8', type=bool, default=False, help='x8 to boost performance')
     parser.add_argument('--show_img', type=bool, default=False, help='show the image')

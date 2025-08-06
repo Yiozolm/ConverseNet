@@ -13,9 +13,8 @@ from utils import utils_sisr as sr
 from utils import utils_image as util
 
 # test Converse USRNet
-from models.network_usrnet import USRNet as net
-# test ConverseNet
-# from models.network_usrnet import Denoiser as net
+from models.network_usrnet import Converse_USRNet as net
+
 
 '''
 Spyder (Python 3.12)
@@ -27,7 +26,7 @@ github: https://github.com/cszn
 
 
 % If you have any question, please feel free to contact with me.
-% Xuhong Huang (e-mail: kaizhang@nju.edu.cn; github: https://github.com/cszn)
+% Kai Zhang (e-mail: kaizhang@nju.edu.cn; github: https://github.com/cszn)
 
 by Xuhong Huang (22/June/2025)
 '''
@@ -54,7 +53,7 @@ def main():
     # ----------------------------------------
     # Preparation
     # ----------------------------------------
-    model_name = 'conversenet'   # 'usrgan' | 'usrnet' | 'usrgan_tiny' | 'usrnet_tiny'
+    model_name = 'converse_usrnet'   # 'usrgan' | 'usrnet' | 'usrgan_tiny' | 'usrnet_tiny'
     testset_name = 'BSD100'        # test set,  'set5' | 'srbsd68'
     test_sf = [1]                   # scale factor, from {1,2,3,4}
     show_img = False                # default: False
@@ -153,8 +152,8 @@ def main():
                     # --------------------------------
                     # (2) inference
                     # --------------------------------
-                    # x = model(x, k, sf)
-                    x = model(x)  # ConverseNet does not need kernel and sf
+                    x = model(x, k, sf)
+                    # x = model(x)  # ConverseNet does not need kernel and sf
 
                     # --------------------------------
                     # (3) img_E
