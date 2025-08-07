@@ -4,11 +4,6 @@ import torch.nn.functional as F
 from models.basicblock import ConvReverse2d, Converse_Block, ResidualBlock
 
 
-"""
-# --------------------------------------------
-# implementation of original MSResNet
-# --------------------------------------------
-"""  
 class MSRResNet(nn.Module):
     '''
     modified SRResNet
@@ -54,8 +49,8 @@ class MSRResNet(nn.Module):
 
 class Converse_Block_MSRResNet(nn.Module):
     '''
-    modified SRResNet
-       replace the residualblock with reverseblock and some other settings
+    modified MSRResNet
+       replace the residualblock with reverse block
     '''
 
     def __init__(self, in_nc=3, out_nc=3, nf=64, nb=16, upscale=4):

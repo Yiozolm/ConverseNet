@@ -1,0 +1,13 @@
+25-08-07 17:31:21.078 : Model path: model_zoo/converse_usrnet.pth
+25-08-07 17:31:21.079 : Params number: 307987
+25-08-07 17:31:21.079 : Model_name:converse_usrnet, image sigma:2.55
+25-08-07 17:31:21.079 : testsets/BSD100
+25-08-07 17:31:49.320 : Model path: model_zoo/converse_usrnet.pth
+25-08-07 17:31:49.320 : Params number: 307987
+25-08-07 17:31:49.320 : Model_name:converse_usrnet, image sigma:2.55
+25-08-07 17:31:49.320 : testsets/BSD100
+25-08-07 17:31:51.997 : ---1--> 101085.png -- x 1 PSNR: 28.59dB
+25-08-07 17:31:54.265 : ---2--> 101087.png -- x 1 PSNR: 33.15dB
+25-08-07 17:31:56.555 : ---3--> 102061.png -- x 1 PSNR: 32.37dB
+25-08-07 17:31:58.864 : ---4--> 103070.png -- x 1 PSNR: 35.38dB
+25-08-07 17:32:01.140 : ---5--> 105025.png -- x 1 PSNR: 31.01dB

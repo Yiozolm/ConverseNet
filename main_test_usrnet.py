@@ -12,9 +12,13 @@ from utils import utils_logger
 from utils import utils_sisr as sr
 from utils import utils_image as util
 
-# test Converse USRNet
-from models.network_usrnet import Converse_USRNet as net
+# when change, remember to modify line 156 to decide using kernel or not ^_^
 
+# test Converse_USRNet
+# from models.network_usrnet import Converse_USRNet as net
+
+# test ConverseNet
+from models.network_usrnet import ConverseNet as net
 
 '''
 Spyder (Python 3.12)
@@ -53,7 +57,7 @@ def main():
     # ----------------------------------------
     # Preparation
     # ----------------------------------------
-    model_name = 'converse_usrnet'   # 'usrgan' | 'usrnet' | 'usrgan_tiny' | 'usrnet_tiny'
+    model_name = 'conversenet'   # 'usrgan' | 'usrnet' | 'usrgan_tiny' | 'usrnet_tiny'
     testset_name = 'BSD100'        # test set,  'set5' | 'srbsd68'
     test_sf = [1]                   # scale factor, from {1,2,3,4}
     show_img = False                # default: False
@@ -152,8 +156,8 @@ def main():
                     # --------------------------------
                     # (2) inference
                     # --------------------------------
-                    x = model(x, k, sf)
-                    # x = model(x)  # ConverseNet does not need kernel and sf
+                    # x = model(x, k, sf)
+                    x = model(x)  # ConverseNet does not need kernel and sf
 
                     # --------------------------------
                     # (3) img_E

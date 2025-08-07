@@ -6,25 +6,20 @@ import torch.fft
 import torch.nn.init as init
 import torch.nn.functional as F
 
-"""
-# --------------------------------------------
-# Prior module; denoiser
-# x_k = P(z_k)
-# --------------------------------------------
-"""
-class ConverseNet(nn.Module):
-    def __init__(self, in_nc=64, nb=7, kernel=3, scale=1, padding=2, padding_mode="circular"):
-        super(ConverseNet, self).__init__()
-        self.m_body  = sequential(*[Converse_Block(in_nc, in_nc, kernel, scale, padding, padding_mode) for _ in range(nb)])
+
+class Multi_ConverseBlock(nn.Module):
+    def __init__(self, in_nc=64, nb=7, kernel_size=3, scale=1, padding=2, padding_mode="circular"):
+        super(Multi_ConverseBlock, self).__init__()
+        self.m_body  = sequential(*[Converse_Block(in_nc, in_nc, kernel_size, scale, padding, padding_mode) for _ in range(nb)])
     def forward(self, x):
         x = self.m_body(x)
         return x
 
 
-class ConverseNet_alpha(nn.Module):
-    def __init__(self, in_nc=64, nb=7, kernel=3, scale=1, padding=2, padding_mode="circular"):
-        super(ConverseNet_alpha, self).__init__()
-        self.m_body  = sequential(*[Converse_Block_alpha(in_nc, in_nc, kernel, scale, padding, padding_mode) for _ in range(nb)])
+class Multi_ConverseBlock_alpha(nn.Module):
+    def __init__(self, in_nc=64, nb=7, kernel_size=3, scale=1, padding=2, padding_mode="circular"):
+        super(Multi_ConverseBlock_alpha, self).__init__()
+        self.m_body  = sequential(*[Converse_Block_alpha(in_nc, in_nc, kernel_size, scale, padding, padding_mode) for _ in range(nb)])
     def forward(self, x):
         x = self.m_body(x)
         return x
@@ -32,7 +27,7 @@ class ConverseNet_alpha(nn.Module):
 
 """
 # --------------------------------------------
-# Data module, closed-form solution
+# Data module, for condition the kernel
 # --------------------------------------------
 """
 class ConvReverse2d_DataNet(nn.Module):
@@ -146,11 +141,38 @@ class KernelNet(nn.Module):
         k = k.view(b, 16, self.kernel_size, self.kernel_size)
         return k
 
+"""
+# --------------------------------------------
+# ConverseNet
+# for blind deblurring
+# --------------------------------------------
+"""
+class ConverseNet(nn.Module):
+    def __init__(self, n_iter=5, in_nc=64, nb=7):
+        """
+        totally denoiser for blind deblur
+        """
+        super(ConverseNet, self).__init__()
+        self.p = Multi_ConverseBlock(in_nc=in_nc, nb=nb)
+        self.conv1 = nn.Conv2d(3, in_nc, 1, 1, 0)
+        self.conv2 = nn.Conv2d(in_nc, 3, 1, 1, 0)
+        self.n = n_iter
+        
+    def forward(self, x):
+        '''
+        x: tensor, NxCxWxH
+        '''
+        x = self.conv1(x)
+        for i in range(self.n):
+            x = self.p(x)
+        x = self.conv2(x)
+        return x
+
 
 """
 # --------------------------------------------
-# main USRNet
-# deep unfolding super-resolution network
+# Converse_USRNet
+# for non-blind deblurring, condition the kernel
 # --------------------------------------------
 """
 class Converse_USRNet(nn.Module):
@@ -158,7 +180,7 @@ class Converse_USRNet(nn.Module):
         super(Converse_USRNet, self).__init__()
 
         self.d = ConvReverse2d_DataNet()
-        self.p = ConverseNet_alpha(in_nc=in_nc, nb=nb)
+        self.p = Multi_ConverseBlock_alpha(in_nc=in_nc, nb=nb)
         self.conv1 = nn.Conv2d(3, 64, 1, 1, 0)
         self.conv2 = nn.Conv2d(64, 3, 1, 1, 0)
         self.kernelnet = KernelNet()
