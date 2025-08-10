@@ -84,7 +84,7 @@ def main():
     # load model
     # ----------------------------------------
 
-    from models.network_srresnet import Converse_Block_MSRResNet as net
+    from models.network_srresnet import Converse_MSRResNet as net
     model = net(in_nc=n_channels, out_nc=n_channels, nf=64, nb=16, upscale=4)
     
     model.load_state_dict(torch.load(model_path), strict=True)

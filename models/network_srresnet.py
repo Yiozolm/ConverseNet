@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.functional as F
-from models.basicblock import ConvReverse2d, Converse_Block, ResidualBlock
+from models.util_converse import Converse2D, Converse_Block, ResidualBlock
 
 
 class MSRResNet(nn.Module):
@@ -47,23 +47,23 @@ class MSRResNet(nn.Module):
 
 
 
-class Converse_Block_MSRResNet(nn.Module):
+class Converse_MSRResNet(nn.Module):
     '''
     modified MSRResNet
        replace the residualblock with reverse block
     '''
 
     def __init__(self, in_nc=3, out_nc=3, nf=64, nb=16, upscale=4):
-        super(Converse_Block_MSRResNet, self).__init__()
+        super(Converse_MSRResNet, self).__init__()
         self.upscale = upscale
 
         self.conv_first = nn.Conv2d(in_nc, nf, 1, 1, 0, bias=True)
         self.conv_body = nn.Sequential(*[Converse_Block(nf, nf, 5, 1, 4, padding_mode='replicate', eps=1e-5) for _ in range(nb)])
 
         self.upconv1 = Converse_Block(nf, nf, 5, 1, 4, padding_mode='replicate', eps=1e-5)
-        self.up1 = ConvReverse2d(nf, nf, 2, 2, 2, padding_mode='replicate', eps=1e-3)
+        self.up1 = Converse2D(nf, nf, 2, 2, 2, padding_mode='replicate', eps=1e-3)
         self.upconv2 = Converse_Block(nf, nf, 5, 1, 4, padding_mode='replicate', eps=1e-5)
-        self.up2 = ConvReverse2d(nf, nf, 2, 2, 2, padding_mode='replicate', eps=1e-3)
+        self.up2 = Converse2D(nf, nf, 2, 2, 2, padding_mode='replicate', eps=1e-3)
         self.conv_hres = Converse_Block(nf, nf, 5, 1, 4, padding_mode='replicate', eps=1e-5)
         self.conv_last = nn.Conv2d(nf, out_nc, 1, 1, 0, bias=False)
         # activation function
@@ -82,9 +82,9 @@ class Converse_Block_MSRResNet(nn.Module):
 
 
 
-class Converse_MSRResNet(nn.Module):
+class Converse_UpMSRResNet(nn.Module):
     def __init__(self, in_nc=3, out_nc=3, nf=64, nb=16, upscale=4):
-        super(Converse_MSRResNet, self).__init__()
+        super(Converse_UpMSRResNet, self).__init__()
         '''
             upsample with Converse2D operator
         '''      
@@ -95,9 +95,9 @@ class Converse_MSRResNet(nn.Module):
         self.conv_body = nn.Sequential(*[ResidualBlock(nf) for _ in range(nb)])
        
         self.conv1 = nn.Conv2d(nf, nf, 3, 1, 1) 
-        self.reverse1 = ConvReverse2d(nf, nf, 2, scale=2)
+        self.reverse1 = Converse2D(nf, nf, 2, scale=2)
         self.conv2 = nn.Conv2d(nf, nf, 3, 1, 1)
-        self.reverse2 = ConvReverse2d(nf, nf, 2, scale=2)
+        self.reverse2 = Converse2D(nf, nf, 2, scale=2)
 
         self.conv_hres = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
         self.conv_last = nn.Conv2d(nf, out_nc, 3, 1, 1, bias=True)
