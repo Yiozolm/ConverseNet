@@ -195,11 +195,11 @@ class Converse2D(nn.Module):
 # implementation of Converse Block
 # --------------------------------------------
 """
-class Converse_Block(nn.Module):
+class ConverseBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, scale=1, padding=2, padding_mode='replicate', eps=1e-5):
-        super(Converse_Block, self).__init__()
+        super(ConverseBlock, self).__init__()
         """
-        Converse_Block: A Convolutional Block for Image Restoration using Converse2D Operations.
+        ConverseBlock: A Convolutional Block for Image Restoration using Converse2D Operations.
 
         This block consists of two main sub-blocks, each incorporating normalization, pointwise convolution,
         non-linearity, and (optionally) a custom reverse convolution (`Converse2D`) for learnable upsampling.
@@ -238,11 +238,11 @@ class Converse_Block(nn.Module):
         return x
 
 
-class Converse_Block_alpha(nn.Module):
+class ConverseBlockAlphaVariant(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, scale=1, padding=2, padding_mode='replicate', eps=1e-5):
-        super(Converse_Block_alpha, self).__init__()
+        super(ConverseBlockAlphaVariant, self).__init__()
         """
-        Converse_Block_alpha: Only difference is the addition of alpha parameters to the convolution blocks.
+        ConverseBlockAlphaVariant: Only difference is the addition of alpha parameters to the convolution blocks.
         """
         
         self.alpha1 = nn.Parameter(torch.zeros((1, out_channels, 1, 1)), requires_grad=True)
@@ -276,10 +276,10 @@ class ResidualBlock(nn.Module):
      |________________|
     """
 
-    def __init__(self, nf=64):
+    def __init__(self, num_features=64):
         super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-        self.conv2 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.conv1 = nn.Conv2d(num_features, num_features, 3, 1, 1, bias=True)
+        self.conv2 = nn.Conv2d(num_features, num_features, 3, 1, 1, bias=True)
 
     def forward(self, x):
         out = F.relu(self.conv1(x), inplace=True)
