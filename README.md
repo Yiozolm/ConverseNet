@@ -1,6 +1,6 @@
 # [Reverse Convolution and Its Application to Image Restoration](https://arxiv.org/pdf/2003.10428.pdf)
 
-[Xuhong Huang<sup>*</sup>](https://github.com/HRonaldo), [Shiqi Liu<sup>*</sup>](https://github.com/Stella-67), [Kai Zhang<sup>†</sup>](https://cszn.github.io/)
+[Xuhong Huang<sup>*</sup>](https://csgeekhuang.github.io/), [Shiqi Liu<sup>*</sup>](https://github.com/Stella-67), [Kai Zhang<sup>†</sup>](https://cszn.github.io/)
 Nanjing University, China
 
 [[Paper](http://openaccess.thecvf.com/content_CVPR_2020/papers/Zhang_Deep_Unfolding_Network_for_Image_Super-Resolution_CVPR_2020_paper.pdf)][[Code](https://github.com/cszn/USRNet/blob/9d1cb1c3244b40828c9058b594ed03d43e306bc3/models/network_usrnet.py#L309)]
