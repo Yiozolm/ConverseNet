@@ -1,6 +1,6 @@
 # [Reverse Convolution and Its Application to Image Restoration](https://arxiv.org/pdf/2003.10428.pdf)
 
-[Xuhong Huang<sup>*</sup>](https://csgeekhuang.github.io/), [Shiqi Liu<sup>*</sup>](https://github.com/Stella-67), [Kai Zhang<sup>†</sup>](https://cszn.github.io/), Ying Tai, Jian Yang, Hui Zeng, [Lei Zhang](http://www4.comp.polyu.edu.hk/~cslzhang/)
+[Xuhong Huang<sup>*</sup>](https://csgeekhuang.github.io/), [Shiqi Liu<sup>*</sup>](https://github.com/Stella-67), [Kai Zhang<sup>†</sup>](https://cszn.github.io/), [Ying Tai](https://tyshiwo.github.io/), [Jian Yang](https://scholar.google.com/citations?user=6CIDtZQAAAAJ&hl=zh-CN), [Hui Zeng](https://huizeng.github.io/), [Lei Zhang](http://www4.comp.polyu.edu.hk/~cslzhang/)
 
 Nanjing University, China
 
