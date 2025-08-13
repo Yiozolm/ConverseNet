@@ -127,9 +127,9 @@ Visual results of Converse-USRNet
 |<i>Blur images</i>|<i>Deblurring results by Converse-USRNet</i>|
 
 Acknowledgments
+----------
 This work was supported by Suzhou
 Key Technologies Project (Grant No. SYG2024136), Natu-
 ral Science Foundation of China (Grant No. 62406135), and
 Natural Science Foundation of Jiangsu Province (Grant No.
 BK20241198).
-----------
