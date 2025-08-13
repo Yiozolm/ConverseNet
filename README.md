@@ -79,12 +79,12 @@ PSNR results
 
 Run [main_test_converse_dncnn.py](main_test_converse_dncnn.py) to produce the following results.
 
-
+<img src="figs/psnr_dncnn.png" width="500px"/>  
 The table shows the number of parameters and average PSNR(dB) results of different models for Gaussian denoising with noise level 25 on Set12 and BSD68 datasets.
 
 Run [main_test_converse_srresnet.py](main_test_converse_srresnet.py) to produce the following results.
 
-
+<img src="figs/psnr_srresnet.png" width="500px"/>  
 The table shows the average PSNR(dB) results of different variants of SRResNet for super-resolution with scale factor 4.
 
 Run [main_test_converse_usrnet.py](main_test_converse_usrnet.py) to produce the following results.
