@@ -69,25 +69,25 @@ Models
 Codes
 ----------
 
-* [main_test_dncnn.py](main_test_dncnn.py):  _Code to denoise images by Converse-DnCNN_
-* [main_test_srresnet.py](main_test_srresnet.py):  _Code to super-resolve LR images by Converse-SRResNet_
-* [main_test_usrnet.py](main_test_usrnet.py):  _Code to super-resolve LR images by Converse-USRNet_
+* [main_test_converse_dncnn.py](main_test_converse_dncnn.py):  _Code to denoise images by Converse-DnCNN_
+* [main_test_converse_srresnet.py](main_test_converse_srresnet.py):  _Code to super-resolve LR images by Converse-SRResNet_
+* [main_test_converse_usrnet.py](main_test_converse_usrnet.py):  _Code to super-resolve LR images by Converse-USRNet_
 
 
 PSNR results
 ----------
 
-Run [main_test_dncnn.py](main_test_dncnn.py) to produce the following results.
+Run [main_test_converse_dncnn.py](main_test_converse_dncnn.py) to produce the following results.
 
 <img src="figs/psnr_dncnn.png" width="500px"/>  
 The table shows the number of parameters and average PSNR(dB) results of different models for Gaussian denoising with noise level 25 on Set12 and BSD68 datasets.
 
-Run [main_test_srresnet.py](main_test_srresnet.py) to produce the following results.
+Run [main_test_converse_srresnet.py](main_test_converse_srresnet.py) to produce the following results.
 
 <img src="figs/psnr_srresnet.png" width="500px"/>  
 The table shows the average PSNR(dB) results of different variants of SRResNet for super-resolution with scale factor 4.
 
-Run [main_test_usrnet.py](main_test_usrnet.py) to produce the following results.
+Run [main_test_converse_usrnet.py](main_test_converse_usrnet.py) to produce the following results.
 
 <img src="figs/psnr_usrnet.png" width="500px"/>  
 The table shows the average PSNR(dB) results of different methods on Set5, Set14, BSD100 and Urban100 datasets.
