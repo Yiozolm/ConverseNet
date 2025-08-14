@@ -106,20 +106,20 @@ Visual results of Converse-SRResNet
 
 |<img src="figs/downsample.png" width="430x"/> |<img src="figs/SR_reverse.png" width="430x"/>|
 |:---:|:---:|
-|<i>LR image with scale factors 2</i>|<i>Super-resolution result by Converse-SRResNet</i>|
+|<i>LR image</i>|<i>Super-resolution result by Converse-SRResNet</i>|
 
 Visual results of ConverseNet
 ----------
 
 |<img src="figs/img_088_LR_12_output.png" width="430x"/> |<img src="figs/img_088_denoiseconverse_12_output.png" width="430x"/>|
 |:---:|:---:|
-|<i>Blur images</i>|<i>Deblurring results by ConverseNet</i>|
+|<i>Blurred image</i>|<i>Deblurring results by ConverseNet</i>|
 
 Visual results of Converse-USRNet
 ----------
 
 |<img src="figs/img_022_LR_12_output.png" width="430x"/> |<img src="figs/img_022_standard_12_output.png" width="430x"/>|
 |:---:|:---:|
-|<i>Blur images</i>|<i>Deblurring results by Converse-USRNet</i>|
+|<i>Blurred image</i>|<i>Deblurring results by Converse-USRNet</i>|
 
 
