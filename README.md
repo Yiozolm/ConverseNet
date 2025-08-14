@@ -113,21 +113,13 @@ Visual results of ConverseNet
 
 |<img src="figs/img_088_LR_12_output.png" width="430x"/> |<img src="figs/img_088_denoiseconverse_12_output.png" width="430x"/>|
 |:---:|:---:|
-|<img src="figs/img_003_LR_10_output.png" width="430x"/> |<img src="figs/img_003_denoiseconverse_10_output.png" width="430x"/>|
-|<img src="figs/8023_LR_1_output.png" width="430x"/> |<img src="figs/8023_denoiseconverse_1_output.png" width="430x"/>|
 |<i>Blur images</i>|<i>Deblurring results by ConverseNet</i>|
 
 Visual results of Converse-USRNet
 ----------
 
-|<img src="figs/102061_LR_13_output.png" width="430x"/> |<img src="figs/102061_standard_13_output.png" width="430x"/>|
-|:---:|:---:|
 |<img src="figs/img_022_LR_12_output.png" width="430x"/> |<img src="figs/img_022_standard_12_output.png" width="430x"/>|
-|<img src="figs/3096_LR_6_output.png" width="430x"/> |<img src="figs/3096_standard_6_output.png" width="430x"/>|
+|:---:|:---:|
 |<i>Blur images</i>|<i>Deblurring results by Converse-USRNet</i>|
 
-Acknowledgments
-----------
-This work was supported by Suzhou
-Key Technologies Project (Grant No. SYG2024136), Natural Science Foundation of China (Grant No. 62406135), and
-Natural Science Foundation of Jiangsu Province (Grant No.BK20241198).
+
