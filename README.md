@@ -123,3 +123,17 @@ Visual results of Converse-USRNet
 |<i>Blurred image</i>|<i>Deblurring results by Converse-USRNet</i>|
 
 
+
+Citation
+----------
+```
+@inproceedings{huang2025reverse,
+    title={Reverse Convolution and Its Applications to Image Restoration},
+    author={Huang, Xuhong and Liu, Shiqi and Zhang, Kai and Tai, Ying and Yang, Jian and Zeng, Hui and Zhang, Lei},
+    booktitle={International Conference on Computer Vision},
+    pages={1--10},
+    year={2025}
+}
+```
+
+
