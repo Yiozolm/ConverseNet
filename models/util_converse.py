@@ -1,13 +1,41 @@
+import os
+os.environ['TORCH_CUDA_ARCH_LIST'] = '7.5'
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.cpp_extension import load
 from collections import OrderedDict
+
+
 
 """
 # --------------------------------------------
 # LayerNorm for Vision Normalization
 # --------------------------------------------
 """
+
+
+def load_converse2D():
+    current_file_dir = os.path.dirname(os.path.abspath(__file__))
+    converse2D_cuda = load(
+        name="converse2D_cuda",
+        sources=[
+            os.path.join(current_file_dir, "CUDA/converse2d_op.cpp"),
+            os.path.join(current_file_dir, "CUDA/converse2d_cuda.cu"),
+        ],
+        verbose=True,
+        extra_cuda_cflags=[
+            "-res-usage",
+            "--maxrregcount 60",
+            "--use_fast_math",
+            "-O3",
+            "-Xptxas -O3",
+            "-gencode arch=compute_75,code=sm_75",
+        ],
+    )
+    return converse2D_cuda
+
+
 class LayerNorm(nn.Module):
     '''
     LayerNorm that supports two data formats: channels_last (default) or channels_first.
@@ -65,7 +93,7 @@ def sequential(*args):
 # --------------------------------------------
 """
 class Converse2D(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, scale=1, padding=2, padding_mode='circular', eps=1e-5):
+    def __init__(self, in_channels, out_channels, kernel_size, scale=1, padding=2, padding_mode='circular', eps=1e-5, backend:str='torch'):
         super(Converse2D, self).__init__()
         """
         Converse2D Operator for Image Restoration Tasks.
@@ -95,6 +123,8 @@ class Converse2D(nn.Module):
         self.padding = padding
         self.padding_mode = padding_mode
         self.eps = eps
+        assert backend in ['torch', 'cuda'], "Not Implementd Yet"
+        self.backend = backend
 
 
         # ensure depthwise
@@ -109,27 +139,35 @@ class Converse2D(nn.Module):
         if self.padding > 0:
             x = nn.functional.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode, value=0)
 
-        self.biaseps = torch.sigmoid(self.bias-9.0) + self.eps
-        _, _, h, w = x.shape
-        STy = self.upsample(x, scale=self.scale)
-        if self.scale != 1:
-            x = nn.functional.interpolate(x, scale_factor=self.scale, mode='nearest')
-            # x = nn.functional.interpolate(x, scale_factor=self.scale, mode='bilinear',align_corners=False)
-        # x = torch.zeros_like(x)
+        if self.backend == 'torch':
 
-        FB = self.p2o(self.weight, (h*self.scale, w*self.scale))
-        FBC = torch.conj(FB)
-        F2B = torch.pow(torch.abs(FB), 2)
-        FBFy = FBC*torch.fft.fftn(STy, dim=(-2, -1))
-        
-        FR = FBFy + torch.fft.fftn(self.biaseps*x, dim=(-2,-1))
-        x1 = FB.mul(FR)
-        FBR = torch.mean(self.splits(x1, self.scale), dim=-1, keepdim=False)
-        invW = torch.mean(self.splits(F2B, self.scale), dim=-1, keepdim=False)
-        invWBR = FBR.div(invW + self.biaseps)
-        FCBinvWBR = FBC*invWBR.repeat(1, 1, self.scale, self.scale)
-        FX = (FR-FCBinvWBR)/self.biaseps
-        out = torch.real(torch.fft.ifftn(FX, dim=(-2, -1)))
+            self.biaseps = torch.sigmoid(self.bias-9.0) + self.eps
+            _, _, h, w = x.shape
+            STy = self.upsample(x, scale=self.scale)
+            if self.scale != 1:
+                x = nn.functional.interpolate(x, scale_factor=self.scale, mode='nearest')
+                # x = nn.functional.interpolate(x, scale_factor=self.scale, mode='bilinear',align_corners=False)
+            # x = torch.zeros_like(x)
+
+            FB = self.p2o(self.weight, (h*self.scale, w*self.scale))
+            FBC = torch.conj(FB)
+            F2B = torch.pow(torch.abs(FB), 2)
+            FBFy = FBC*torch.fft.fftn(STy, dim=(-2, -1))
+            
+            FR = FBFy + torch.fft.fftn(self.biaseps*x, dim=(-2,-1))
+            x1 = FB.mul(FR)
+            FBR = torch.mean(self.splits(x1, self.scale), dim=-1, keepdim=False)
+            invW = torch.mean(self.splits(F2B, self.scale), dim=-1, keepdim=False)
+            invWBR = FBR.div(invW + self.biaseps)
+            FCBinvWBR = FBC*invWBR.repeat(1, 1, self.scale, self.scale)
+            FX = (FR-FCBinvWBR)/self.biaseps
+            out = torch.real(torch.fft.ifftn(FX, dim=(-2, -1)))
+
+        elif self.backend == 'cuda':
+            out = load_converse2D().forward(x, self.weight, self.bias, self.scale, self.eps)
+        else:
+            raise NotImplementedError
+
 
         if self.padding > 0:
             out = out[..., self.padding*self.scale:-self.padding*self.scale, self.padding*self.scale:-self.padding*self.scale]
@@ -196,7 +234,7 @@ class Converse2D(nn.Module):
 # --------------------------------------------
 """
 class ConverseBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, scale=1, padding=2, padding_mode='replicate', eps=1e-5):
+    def __init__(self, in_channels, out_channels, kernel_size=3, scale=1, padding=2, padding_mode='replicate', eps=1e-5, backend='torch'):
         super(ConverseBlock, self).__init__()
         """
         ConverseBlock: A Convolutional Block for Image Restoration using Converse2D Operations.
@@ -223,7 +261,7 @@ class ConverseBlock(nn.Module):
         self.conv1 = nn.Sequential(LayerNorm(in_channels, eps=1e-5, data_format="channels_first"),
                                    nn.Conv2d(in_channels, 2*out_channels, 1, 1, 0),
                                    nn.GELU(),
-                                   Converse2D(2*out_channels, 2*out_channels, kernel_size, scale=scale, padding=padding, padding_mode=padding_mode, eps=eps), 
+                                   Converse2D(2*out_channels, 2*out_channels, kernel_size, scale=scale, padding=padding, padding_mode=padding_mode, eps=eps, backend=backend), 
                                    nn.GELU(),
                                    nn.Conv2d(2*out_channels, out_channels, 1, 1, 0))
                                   
