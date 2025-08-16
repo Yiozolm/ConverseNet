@@ -1,29 +1,62 @@
 import torch
-import time
 from util_converse import Converse2D
 
 
-def benchmark(model, input_tensor, model_name, num_runs=100):
+def benchmark(model, input_tensor, model_name, pass_type='forward', num_runs=100):
     """
-    Measures the average forward pass time of a model.
+    Measures the average forward or backward pass time of a model.
+    Uses torch.cuda.Event for precise GPU timing.
     """
-    print(f"Warming up {model_name} backend...")
-    # Warm-up runs to stabilize performance measurement
+    if pass_type not in ['forward', 'backward']:
+        raise ValueError("pass_type must be 'forward' or 'backward'")
+
+    print(f"Warming up {model_name} backend for {pass_type} pass...")
+    # Warm-up runs to stabilize performance and CUDA kernels
     for _ in range(10):
-        _ = model(input_tensor)
+        output = model(input_tensor)
+        if pass_type == 'backward':
+            grad_output = torch.ones_like(output)
+            output.backward(gradient=grad_output)
+
     torch.cuda.synchronize()
 
-    print(f"Running benchmark for {model_name} backend ({num_runs} iterations)...")
-    start_time = time.time()
-    for _ in range(num_runs):
-        _ = model(input_tensor)
-    # Wait for all kernels to complete
-    torch.cuda.synchronize()
-    end_time = time.time()
+    print(f"Running benchmark for {model_name} backend {pass_type} pass ({num_runs} iterations)...")
+    
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+    total_time = 0.0
 
-    avg_time = (end_time - start_time) / num_runs
+    if pass_type == 'forward':
+        start_event.record()
+        for _ in range(num_runs):
+            _ = model(input_tensor)
+        end_event.record()
+    else:
+        for _ in range(num_runs):
+            output = model(input_tensor)
+            grad_output = torch.ones_like(output)
+            torch.cuda.synchronize() 
+
+            start_event.record()
+            output.backward(gradient=grad_output)
+            end_event.record()
+            
+            torch.cuda.synchronize()
+            total_time += start_event.elapsed_time(end_event)
+
+            del output, grad_output
+
+    if pass_type == 'forward':
+        torch.cuda.synchronize()
+        total_time = start_event.elapsed_time(end_event)
+
+    avg_time = (total_time / 1000.0) / num_runs
     return avg_time
 
+# =======================================================================
+# The 'run_comparison' function and the rest of the file remain the same.
+# No changes are needed below this line.
+# =======================================================================
 def run_comparison():
     if not torch.cuda.is_available():
         print("CUDA is not available. Performance comparison cannot be run.")
@@ -35,7 +68,7 @@ def run_comparison():
 
     params = {
         'in_channels': 64,
-        'out_channels': 64, # Must be the same as in_channels for Converse2D
+        'out_channels': 64,
         'kernel_size': 3,
         'scale': 2,
         'padding': 2,
@@ -52,8 +85,6 @@ def run_comparison():
     print(f"Device: {params['device']}")
     print("---------------------------------\n")
 
-
-    # Create a dummy input tensor on the GPU
     input_tensor = torch.randn(
         params['batch_size'],
         params['in_channels'],
@@ -62,7 +93,6 @@ def run_comparison():
     ).to(params['device'])
 
     try:
-        # Initialize PyTorch backend model
         print("Initializing PyTorch backend model...")
         converse_torch = Converse2D(
             in_channels=params['in_channels'],
@@ -74,7 +104,6 @@ def run_comparison():
         ).to(params['device'])
         print("PyTorch backend model initialized.")
 
-        # Initialize CUDA backend model (this will trigger the JIT compilation)
         print("\nInitializing CUDA backend model (compilation may take a moment)...")
         converse_cuda = Converse2D(
             in_channels=params['in_channels'],
@@ -91,22 +120,45 @@ def run_comparison():
         print("Please ensure that a compatible CUDA toolkit is installed and configured correctly for PyTorch.")
         return
 
-    # Run benchmarks
-    torch_time = benchmark(converse_torch, input_tensor, "PyTorch")
-    cuda_time = benchmark(converse_cuda, input_tensor, "CUDA")
+    # --- Run Forward Pass benchmarks ---
+    print("\n--- Benchmarking Forward Pass ---")
+    cuda_forward_time = benchmark(converse_cuda, input_tensor, "CUDA", pass_type='forward')
+    torch_forward_time = benchmark(converse_torch, input_tensor, "PyTorch", pass_type='forward')
+    
+    # --- Run Backward Pass benchmarks ---
+    print("\n--- Benchmarking Backward Pass ---")
+    # Enable gradient computation on the input tensor for the backward pass
+    input_tensor.requires_grad_(True)
+    cuda_backward_time = benchmark(converse_cuda, input_tensor, "CUDA", pass_type='backward')
+    torch_backward_time = benchmark(converse_torch, input_tensor, "PyTorch", pass_type='backward')
 
-    # --- Step 4: Report the results ---
-    print("\n--- Performance Comparison Results ---")
+    # --- Report the results ---
+    print("\n\n--- Performance Comparison Results ---")
     print(f"Input Tensor Shape: ({params['batch_size']}, {params['in_channels']}, {params['height']}, {params['width']})")
-    print(f"PyTorch Backend Average Time: {torch_time * 1000:.4f} ms")
-    print(f"CUDA Backend Average Time:    {cuda_time * 1000:.4f} ms")
     print("--------------------------------------")
 
-    if cuda_time > 0:
-        speedup = torch_time / cuda_time
-        print(f"The CUDA implementation is approximately {speedup:.2f}x faster than the PyTorch implementation.")
+    # Forward pass results
+    print("\n--- Forward Pass ---")
+    print(f"PyTorch Backend Average Time: {torch_forward_time * 1000:.4f} ms")
+    print(f"CUDA Backend Average Time:    {cuda_forward_time * 1000:.4f} ms")
+    if cuda_forward_time > 0:
+        forward_speedup = torch_forward_time / cuda_forward_time
+        print(f"CUDA implementation is {forward_speedup:.2f}x faster.")
     else:
-        print("Could not calculate speedup due to zero execution time.")
+        print("Could not calculate forward pass speedup.")
+
+    # Backward pass results
+    print("\n--- Backward Pass ---")
+    print(f"PyTorch Backend Average Time: {torch_backward_time * 1000:.4f} ms")
+    print(f"CUDA Backend Average Time:    {cuda_backward_time * 1000:.4f} ms")
+    if cuda_backward_time > 0:
+        backward_speedup = torch_backward_time / cuda_backward_time
+        print(f"CUDA implementation is {backward_speedup:.2f}x faster.")
+    else:
+        print("Could not calculate backward pass speedup.")
+    
+    print("\n--------------------------------------")
+
 
 if __name__ == "__main__":
     run_comparison()
@@ -131,8 +183,18 @@ Device: cuda
 
 --- Performance Comparison Results ---
 Input Tensor Shape: (4, 64, 256, 256)
-PyTorch Backend Average Time: 131.7963 ms
-CUDA Backend Average Time:    67.5533 ms
+--------------------------------------
+
+--- Forward Pass ---
+PyTorch Backend Average Time: 202.0048 ms
+CUDA Backend Average Time:    76.2283 ms
+CUDA implementation is 2.65x faster.
+
+--- Backward Pass ---
+PyTorch Backend Average Time: 105.8770 ms
+CUDA Backend Average Time:    123.8077 ms
+CUDA implementation is 0.86x faster.
+
 --------------------------------------
 The CUDA implementation is approximately 1.95x faster than the PyTorch implementation.
 

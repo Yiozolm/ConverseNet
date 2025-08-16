@@ -13,11 +13,11 @@ from collections import OrderedDict
 # LayerNorm for Vision Normalization
 # --------------------------------------------
 """
-
+converse2D_cuda = None
 
 def load_converse2D():
     current_file_dir = os.path.dirname(os.path.abspath(__file__))
-    converse2D_cuda = load(
+    converse2D_cuda_lib = load(
         name="converse2D_cuda",
         sources=[
             os.path.join(current_file_dir, "CUDA/converse2d_op.cpp"),
@@ -33,7 +33,35 @@ def load_converse2D():
             "-gencode arch=compute_75,code=sm_75",
         ],
     )
-    return converse2D_cuda
+    return converse2D_cuda_lib
+
+
+class Converse2DFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, weight, bias, scale, eps):
+        ctx.scale = scale
+        
+        global converse2D_cuda
+        if converse2D_cuda is None:
+            converse2D_cuda = load_converse2D()
+            
+        out = converse2D_cuda.forward(x, weight, bias, scale, eps)
+        tensors_to_save = out[1:]
+        ctx.save_for_backward(x, weight, bias, *tensors_to_save)
+
+        return out[0]
+
+    @staticmethod
+    def backward(ctx, grad_out):
+        x, weight, bias, *saved_tensors = ctx.saved_tensors
+        scale = ctx.scale
+
+        grad_x, grad_weight, grad_bias = converse2D_cuda.backward(grad_out, x, weight, bias, scale, saved_tensors)
+
+        return grad_x, grad_weight, grad_bias, None, None 
+
+def Converse2D_CUDA(x, weight, bias, scale, eps):
+    return Converse2DFunction.apply(x, weight, bias, scale, eps)
 
 
 class LayerNorm(nn.Module):
@@ -123,9 +151,8 @@ class Converse2D(nn.Module):
         self.padding = padding
         self.padding_mode = padding_mode
         self.eps = eps
-        assert backend in ['torch', 'cuda'], "Not Implementd Yet"
+        assert backend in ['torch', 'cuda'], "Not Implementd Yet" #, 'cuda_fuse'
         self.backend = backend
-
 
         # ensure depthwise
         assert self.out_channels == self.in_channels
@@ -135,12 +162,10 @@ class Converse2D(nn.Module):
 
         
     def forward(self, x):
-
         if self.padding > 0:
             x = nn.functional.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode, value=0)
 
         if self.backend == 'torch':
-
             self.biaseps = torch.sigmoid(self.bias-9.0) + self.eps
             _, _, h, w = x.shape
             STy = self.upsample(x, scale=self.scale)
@@ -162,12 +187,10 @@ class Converse2D(nn.Module):
             FCBinvWBR = FBC*invWBR.repeat(1, 1, self.scale, self.scale)
             FX = (FR-FCBinvWBR)/self.biaseps
             out = torch.real(torch.fft.ifftn(FX, dim=(-2, -1)))
-
         elif self.backend == 'cuda':
-            out = load_converse2D().forward(x, self.weight, self.bias, self.scale, self.eps)
+            out = Converse2D_CUDA(x, self.weight, self.bias, self.scale, self.eps)
         else:
             raise NotImplementedError
-
 
         if self.padding > 0:
             out = out[..., self.padding*self.scale:-self.padding*self.scale, self.padding*self.scale:-self.padding*self.scale]
