@@ -1,4 +1,5 @@
 import os
+from torch._tensor import Tensor
 os.environ['TORCH_CUDA_ARCH_LIST'] = '7.5'
 import torch
 import torch.nn as nn
@@ -38,30 +39,42 @@ def load_converse2D():
 
 class Converse2DFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, weight, bias, scale, eps):
-        ctx.scale = scale
-        
+    def forward(ctx, x_padded, weight, bias, fb, fbc, scale, eps):
         global converse2D_cuda
         if converse2D_cuda is None:
             converse2D_cuda = load_converse2D()
-            
-        out = converse2D_cuda.forward(x, weight, bias, scale, eps)
-        tensors_to_save = out[1:]
-        ctx.save_for_backward(x, weight, bias, *tensors_to_save)
 
-        return out[0]
+        # 直接将 padded tensor 传入 CUDA a
+        forward_results = converse2D_cuda.forward(x_padded, fb, fbc, bias, scale, eps)
+        
+        out_padded = forward_results[0]
+        tensors_to_save = forward_results[1:]
+        
+        # 保存 padded tensor 用于反向传播
+        ctx.scale = scale
+        ctx.save_for_backward(x_padded, weight, bias, fb, fbc, *tensors_to_save)
+        
+        # 返回 padded tensor，由 nn.Module 负责裁剪
+        return out_padded
 
     @staticmethod
-    def backward(ctx, grad_out):
-        x, weight, bias, *saved_tensors = ctx.saved_tensors
+    def backward(ctx, grad_out_padded):
+        # Unpack saved tensors
+        x_padded, weight, bias, fb, fbc, *saved_tensors = ctx.saved_tensors
         scale = ctx.scale
 
-        grad_x, grad_weight, grad_bias = converse2D_cuda.backward(grad_out, x, weight, bias, scale, saved_tensors)
+        # grad_out_padded 和 x_padded 都是填充后的大小
+        grad_x_padded, grad_weight, grad_bias = converse2D_cuda.backward(
+            grad_out_padded, x_padded, weight, bias, fb, fbc, scale, saved_tensors
+        )
 
-        return grad_x, grad_weight, grad_bias, None, None 
+        # 返回对应 padded a 的梯度
+        return grad_x_padded, grad_weight, grad_bias, None, None, None, None
 
-def Converse2D_CUDA(x, weight, bias, scale, eps):
-    return Converse2DFunction.apply(x, weight, bias, scale, eps)
+
+
+def Converse2D_CUDA(x_paddad, weight, bias, fb, fbc, scale, eps):
+    return Converse2DFunction.apply(x_paddad, weight, bias, fb, fbc, scale, eps)
 
 
 class LayerNorm(nn.Module):
@@ -160,10 +173,15 @@ class Converse2D(nn.Module):
         self.bias = nn.Parameter(torch.zeros(1, self.in_channels, 1, 1))
         self.weight.data = nn.functional.softmax(self.weight.data.view(1,self.in_channels,-1), dim=-1).view(1, self.in_channels, self.kernel_size, self.kernel_size)
 
-        
+        if self.backend == 'cuda':
+            self.register_buffer('cached_fb', None)
+            self.register_buffer('cached_fbc', None)
+            self.cached_shape = None
+            self.cached_weight_version = -1
+
     def forward(self, x):
         if self.padding > 0:
-            x = nn.functional.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode, value=0)
+            x: Tensor = nn.functional.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode, value=0)
 
         if self.backend == 'torch':
             self.biaseps = torch.sigmoid(self.bias-9.0) + self.eps
@@ -188,7 +206,21 @@ class Converse2D(nn.Module):
             FX = (FR-FCBinvWBR)/self.biaseps
             out = torch.real(torch.fft.ifftn(FX, dim=(-2, -1)))
         elif self.backend == 'cuda':
-            out = Converse2D_CUDA(x, self.weight, self.bias, self.scale, self.eps)
+            target_shape = (x.shape[2] * self.scale, x.shape[3] * self.scale)
+            
+            if (self.cached_fb is None or 
+                self.cached_shape != target_shape or 
+                self.cached_weight_version != self.weight._version):
+                
+                # 重新计算 FFT
+                fb = self.p2o(self.weight, target_shape)
+                self.cached_fb = fb
+                self.cached_fbc = torch.conj(fb)
+                self.cached_shape = target_shape
+                # 更新 weight 的版本号
+                self.cached_weight_version: int = self.weight._version
+
+            out = Converse2D_CUDA(x, self.weight, self.bias, self.cached_fb, self.cached_fbc,self.scale, self.eps)
         else:
             raise NotImplementedError
 

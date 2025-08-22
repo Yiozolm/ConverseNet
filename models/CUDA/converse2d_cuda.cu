@@ -52,7 +52,12 @@ inline torch::Tensor interpolate_backward_nearest_cuda(torch::Tensor grad_out, i
 
 
 std::vector<torch::Tensor> converse2d_cuda_forward(
-    torch::Tensor x, torch::Tensor weight, torch::Tensor bias, int scale, float eps
+    torch::Tensor x,
+    torch::Tensor FB,          // Pre-computed FFT of weight
+    torch::Tensor FBC,         // Pre-computed conjugate of FB
+    torch::Tensor bias,
+    int scale,
+    float eps
 ) {
     TORCH_CHECK(x.is_cuda(), "Input tensor must be a CUDA tensor");
     const int H_up = x.size(2) * scale;
@@ -65,8 +70,7 @@ std::vector<torch::Tensor> converse2d_cuda_forward(
         x_interp = torch::nn::functional::interpolate(x,
             torch::nn::functional::InterpolateFuncOptions().scale_factor(std::vector<double>({(double)scale, (double)scale})).mode(torch::kNearest));
     }
-    auto FB = p2o_cuda(weight, {H_up, W_up}).contiguous();
-    auto FBC = torch::conj(FB).contiguous();
+
     auto STy_fft = torch::fft::fftn(STy, c10::nullopt, c10::IntArrayRef({-2, -1})).contiguous();
     auto x_fft = torch::fft::fftn(biaseps * x_interp, c10::nullopt, c10::IntArrayRef({-2, -1})).contiguous();
     auto FR = (FBC * STy_fft) + x_fft;
@@ -77,23 +81,26 @@ std::vector<torch::Tensor> converse2d_cuda_forward(
     auto FX = (FR - FCBinvWBR) / biaseps.to(torch::kComplexFloat);
     auto out = torch::real(torch::fft::ifftn(FX, c10::nullopt, c10::IntArrayRef({-2, -1})));
 
-    return {out, x_interp, biaseps, FB, FBC, FR, invW, FBR, invWBR, STy_fft};
+    return {out, x_interp, biaseps, FR, invW, FBR, invWBR, STy_fft};
 }
-
 std::vector<torch::Tensor> converse2d_cuda_backward(
-    torch::Tensor grad_out, torch::Tensor x, torch::Tensor weight, torch::Tensor bias, int scale,
+    torch::Tensor grad_out,
+    torch::Tensor x,
+    torch::Tensor weight, // Still needed for shape info and final grad calculation
+    torch::Tensor bias,
+    torch::Tensor FB,     // Pre-computed FFT of weight
+    torch::Tensor FBC,    // Pre-computed conjugate of FB
+    int scale,
     const std::vector<torch::Tensor>& saved_tensors
 ) {
     // --- Unpack saved tensors ---
     auto x_interp = saved_tensors[0];
     auto biaseps  = saved_tensors[1];
-    auto FB       = saved_tensors[2];
-    auto FBC      = saved_tensors[3];
-    auto FR       = saved_tensors[4];
-    auto invW     = saved_tensors[5];
-    auto FBR      = saved_tensors[6];
-    auto invWBR   = saved_tensors[7];
-    auto STy_fft  = saved_tensors[8];
+    auto FR       = saved_tensors[2];
+    auto invW     = saved_tensors[3];
+    auto FBR      = saved_tensors[4];
+    auto invWBR   = saved_tensors[5];
+    auto STy_fft  = saved_tensors[6];
 
 
     auto grad_out_c = grad_out.to(torch::kComplexFloat);
