@@ -165,7 +165,7 @@ if __name__ == "__main__":
 
 """
 --- Device Details ---
-GPU Architecture: RTX 2080ti
+GPU Architecture: RTX 5060ti
 CUDA version: 12.8
 Torch verison: 2.8.0
 
@@ -186,16 +186,15 @@ Input Tensor Shape: (4, 64, 256, 256)
 --------------------------------------
 
 --- Forward Pass ---
-PyTorch Backend Average Time: 202.0048 ms
-CUDA Backend Average Time:    76.2283 ms
-CUDA implementation is 2.65x faster.
+PyTorch Backend Average Time: 149.9957 ms
+CUDA Backend Average Time:    66.0036 ms
+CUDA implementation is 2.27x faster.
 
 --- Backward Pass ---
-PyTorch Backend Average Time: 105.8770 ms
-CUDA Backend Average Time:    123.8077 ms
-CUDA implementation is 0.86x faster.
+PyTorch Backend Average Time: 135.4817 ms
+CUDA Backend Average Time:    162.7645 ms
+CUDA implementation is 0.83x faster.
 
 --------------------------------------
-The CUDA implementation is approximately 1.95x faster than the PyTorch implementation.
 
 """
