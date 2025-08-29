@@ -23,7 +23,7 @@ Kernel Registry
 
 ```python
 cd ./Converse2D
-pip install -e.
+pip install --no-build-isolation -e.
 ```
 
 **Usage**
