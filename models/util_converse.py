@@ -1,11 +1,35 @@
 import os
-os.environ['TORCH_CUDA_ARCH_LIST'] = '7.5'
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.cpp_extension import load
 from collections import OrderedDict
 
+
+_HAS_CONVERSE2D_EXT = False
+
+def _try_import_converse2d_ext():
+    global _HAS_CONVERSE2D_EXT
+    if _HAS_CONVERSE2D_EXT:
+        return
+
+    candidates = [
+        "converse2d_ext",                        
+        "torch_converse2d.converse2d_ext",       
+        "torch_converse2d",                     
+    ]
+    for mod in candidates:
+        try:
+            __import__(mod)
+        except Exception:
+            continue
+        if hasattr(torch.ops, "converse2d") and hasattr(torch.ops.converse2d, "forward"):
+            print(mod)
+            _HAS_CONVERSE2D_EXT = True
+            break
+
+_try_import_converse2d_ext()
+
+converse2d_CUDA = torch.ops.converse2d.forward
 
 
 """
@@ -13,57 +37,6 @@ from collections import OrderedDict
 # LayerNorm for Vision Normalization
 # --------------------------------------------
 """
-converse2D_cuda = None
-
-def load_converse2D():
-    current_file_dir = os.path.dirname(os.path.abspath(__file__))
-    converse2D_cuda_lib = load(
-        name="converse2D_cuda",
-        sources=[
-            os.path.join(current_file_dir, "CUDA/converse2d_op.cpp"),
-            os.path.join(current_file_dir, "CUDA/converse2d_cuda.cu"),
-        ],
-        verbose=True,
-        extra_cuda_cflags=[
-            "-res-usage",
-            "--maxrregcount 60",
-            "--use_fast_math",
-            "-O3",
-            "-Xptxas -O3",
-            "-gencode arch=compute_75,code=sm_75",
-        ],
-    )
-    return converse2D_cuda_lib
-
-
-class Converse2DFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x, weight, bias, scale, eps):
-        ctx.scale = scale
-        
-        global converse2D_cuda
-        if converse2D_cuda is None:
-            converse2D_cuda = load_converse2D()
-            
-        out = converse2D_cuda.forward(x, weight, bias, scale, eps)
-        tensors_to_save = out[1:]
-        ctx.save_for_backward(x, weight, bias, *tensors_to_save)
-
-        return out[0]
-
-    @staticmethod
-    def backward(ctx, grad_out):
-        x, weight, bias, *saved_tensors = ctx.saved_tensors
-        scale = ctx.scale
-
-        grad_x, grad_weight, grad_bias = converse2D_cuda.backward(grad_out, x, weight, bias, scale, saved_tensors)
-
-        return grad_x, grad_weight, grad_bias, None, None 
-
-def Converse2D_CUDA(x, weight, bias, scale, eps):
-    return Converse2DFunction.apply(x, weight, bias, scale, eps)
-
-
 class LayerNorm(nn.Module):
     '''
     LayerNorm that supports two data formats: channels_last (default) or channels_first.
@@ -121,7 +94,7 @@ def sequential(*args):
 # --------------------------------------------
 """
 class Converse2D(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, scale=1, padding=2, padding_mode='circular', eps=1e-5, backend:str='torch'):
+    def __init__(self, in_channels, out_channels, kernel_size, scale=1, padding=2, padding_mode='circular', eps=1e-5, backend: str = "auto"):
         super(Converse2D, self).__init__()
         """
         Converse2D Operator for Image Restoration Tasks.
@@ -138,6 +111,8 @@ class Converse2D(nn.Module):
                                         Default is `circular`.
             eps (float, optional): Small value added to denominators for numerical stability.
                                 Default is a small value like 1e-5.
+            backend (str, optional): Backend for computing the convolution. One of {'auto', 'cuda', 'pytorch'}.
+                                        Default is 'auto'.
 
         Returns:
             Tensor: Output tensor of shape (N, out_channels, H * scale, W * scale), where spatial dimensions
@@ -151,8 +126,9 @@ class Converse2D(nn.Module):
         self.padding = padding
         self.padding_mode = padding_mode
         self.eps = eps
-        assert backend in ['torch', 'cuda'], "Not Implementd Yet" #, 'cuda_fuse'
-        self.backend = backend
+        self.backend = backend.lower()
+        if self.backend not in ("auto", "cuda", "pytorch"):
+            raise ValueError(f"backend must be 'auto' | 'cuda' | 'pytorch', got: {self.backend}")    
 
         # ensure depthwise
         assert self.out_channels == self.in_channels
@@ -162,17 +138,37 @@ class Converse2D(nn.Module):
 
         
     def forward(self, x):
+
         if self.padding > 0:
             x = nn.functional.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode, value=0)
 
-        if self.backend == 'torch':
-            self.biaseps = torch.sigmoid(self.bias-9.0) + self.eps
-            _, _, h, w = x.shape
+        self.biaseps = torch.sigmoid(self.bias-9.0) + self.eps
+        _, _, h, w = x.shape
+
+        backend = (os.environ.get("CONVERSE2D_BACKEND", "") or self.backend).lower()
+
+        def _can_use_cuda_backend():
+            return (_HAS_CONVERSE2D_EXT and x.is_cuda)
+
+        use_cuda_backend = False
+        if backend == "cuda":
+            if not _can_use_cuda_backend():
+                raise RuntimeError("Converse2D backend='cuda' but CUDA extension is unavailable.")
+            use_cuda_backend = True
+        elif backend == "python":
+            use_cuda_backend = False
+        else:  # "auto"
+            use_cuda_backend = _can_use_cuda_backend()
+
+        if use_cuda_backend:
+            x0 = x if self.scale == 1 else F.interpolate(x, scale_factor=self.scale, mode='nearest')
+            out = converse2d_CUDA(
+                x, x0, self.weight, self.bias, int(self.scale), float(self.eps)
+            )
+        else:
             STy = self.upsample(x, scale=self.scale)
             if self.scale != 1:
                 x = nn.functional.interpolate(x, scale_factor=self.scale, mode='nearest')
-                # x = nn.functional.interpolate(x, scale_factor=self.scale, mode='bilinear',align_corners=False)
-            # x = torch.zeros_like(x)
 
             FB = self.p2o(self.weight, (h*self.scale, w*self.scale))
             FBC = torch.conj(FB)
@@ -187,10 +183,6 @@ class Converse2D(nn.Module):
             FCBinvWBR = FBC*invWBR.repeat(1, 1, self.scale, self.scale)
             FX = (FR-FCBinvWBR)/self.biaseps
             out = torch.real(torch.fft.ifftn(FX, dim=(-2, -1)))
-        elif self.backend == 'cuda':
-            out = Converse2D_CUDA(x, self.weight, self.bias, self.scale, self.eps)
-        else:
-            raise NotImplementedError
 
         if self.padding > 0:
             out = out[..., self.padding*self.scale:-self.padding*self.scale, self.padding*self.scale:-self.padding*self.scale]
@@ -257,7 +249,7 @@ class Converse2D(nn.Module):
 # --------------------------------------------
 """
 class ConverseBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, scale=1, padding=2, padding_mode='replicate', eps=1e-5, backend='torch'):
+    def __init__(self, in_channels, out_channels, kernel_size=3, scale=1, padding=2, padding_mode='replicate', eps=1e-5):
         super(ConverseBlock, self).__init__()
         """
         ConverseBlock: A Convolutional Block for Image Restoration using Converse2D Operations.
@@ -284,7 +276,7 @@ class ConverseBlock(nn.Module):
         self.conv1 = nn.Sequential(LayerNorm(in_channels, eps=1e-5, data_format="channels_first"),
                                    nn.Conv2d(in_channels, 2*out_channels, 1, 1, 0),
                                    nn.GELU(),
-                                   Converse2D(2*out_channels, 2*out_channels, kernel_size, scale=scale, padding=padding, padding_mode=padding_mode, eps=eps, backend=backend), 
+                                   Converse2D(2*out_channels, 2*out_channels, kernel_size, scale=scale, padding=padding, padding_mode=padding_mode, eps=eps), 
                                    nn.GELU(),
                                    nn.Conv2d(2*out_channels, out_channels, 1, 1, 0))
                                   

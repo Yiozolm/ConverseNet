@@ -17,6 +17,26 @@ ___________
 * [Visual results of ConverseNet](#visual-results-of-conversenet)
 * [Visual results of Converse-USRNet](#visual-results-of-converse-usrnet)
 
+Kernel Registry
+----------
+**Installation**
+
+```python
+cd ./Converse2D
+pip install -e.
+```
+
+**Usage**
+
+```python
+import torch
+import torch_converse2d
+
+out = torch.ops.converse2d.forward(x, x0, weight, bias, scale, eps)
+print(torch.ops.converse2d)
+```
+
+
 
 Motivation
 ----------
@@ -42,7 +62,6 @@ $$
 $$
 \mathbf{X}^\ast = \arg\min_{\mathbf{X}} \left\| \mathbf{Y} - \left( \mathbf{X} \otimes \mathbf{K} \right) \downarrow_{s} \right\|_F^2 + \lambda \left\| \mathbf{X} - \mathbf{X}_0 \right\|_F^2,
 $$
-
 
 $$
 \mathbf{X}^\ast = \arg\min_{\mathbf{X}} \left\| \mathbf{Y} - \left( \mathbf{X} \otimes \mathbf{K} \right) \downarrow_{s} \right\|_F^2
@@ -135,5 +154,4 @@ Citation
     year={2025}
 }
 ```
-
 
