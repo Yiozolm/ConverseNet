@@ -155,7 +155,7 @@ class Converse2D(nn.Module):
             if not _can_use_cuda_backend():
                 raise RuntimeError("Converse2D backend='cuda' but CUDA extension is unavailable.")
             use_cuda_backend = True
-        elif backend == "python":
+        elif backend == "pytorch":
             use_cuda_backend = False
         else:  # "auto"
             use_cuda_backend = _can_use_cuda_backend()
