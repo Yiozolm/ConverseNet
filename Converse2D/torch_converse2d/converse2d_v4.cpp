@@ -1,4 +1,3 @@
-// backend/converse2d_v3.cpp
 #include <torch/extension.h>
 #include <ATen/ATen.h>
 #include <ATen/ops/zeros_like.h>
@@ -19,6 +18,7 @@
 using at::Tensor;
 
 Tensor block_mean_cuda(const Tensor &input, int64_t s);
+Tensor sfold_upsample_cuda_launcher(const Tensor &x, int64_t scale);
 
 // ---------- FB Cache ----------
 struct FBKey
@@ -98,15 +98,7 @@ static inline Tensor sfold_upsample_zero_insertion(const Tensor &x, int64_t s)
 {
     if (s == 1)
         return x;
-    auto sizes = x.sizes().vec();
-    sizes[sizes.size() - 2] *= s;
-    sizes[sizes.size() - 1] *= s;
-    Tensor z = at::zeros(sizes, x.options());
-    z.index_put_({at::indexing::Slice(), at::indexing::Slice(),
-                  at::indexing::Slice(0, z.size(-2), s),
-                  at::indexing::Slice(0, z.size(-1), s)},
-                 x);
-    return z;
+    return sfold_upsample_cuda_launcher(x, s);
 }
 
 // ---------- Forward ----------
@@ -159,7 +151,6 @@ Tensor converse2d_forward(Tensor x, Tensor x0, Tensor weight, Tensor bias, int64
     return out;
 }
 
-// ---------- Clear Cache ----------
 void clear_fb_cache()
 {
     std::lock_guard<std::mutex> lock(fb_cache_mutex);
@@ -167,7 +158,6 @@ void clear_fb_cache()
     fb_cache_lru.clear();
 }
 
-// ---------- Registration ----------
 TORCH_LIBRARY(converse2d, m)
 {
     m.def("forward(Tensor x, Tensor x0, Tensor weight, Tensor bias, int scale, float eps=1e-5) -> Tensor");
