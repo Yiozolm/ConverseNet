@@ -1,4 +1,3 @@
-import os
 import torch
 from models.util_converse import Converse2D
 
