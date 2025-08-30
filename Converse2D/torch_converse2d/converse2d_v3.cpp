@@ -10,13 +10,14 @@
 #include <ATen/ops/sigmoid.h>
 #include <ATen/ops/empty.h>
 #include <ATen/ops/conj_physical.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
+
 #include <unordered_map>
 #include <list>
 #include <mutex>
 
 using at::Tensor;
+
+Tensor block_mean_cuda(const Tensor &input, int64_t s);
 
 // ---------- FB Cache ----------
 struct FBKey
@@ -47,71 +48,12 @@ namespace std
                    ((hash<void *>()(k.ptr)) ^ hash<int>()(static_cast<int>(k.dtype)));
         }
     };
-} // namespace std
+}
 
 constexpr size_t FB_CACHE_MAX_SIZE = 64;
 static std::unordered_map<FBKey, std::pair<at::Tensor, at::Tensor>> fb_cache;
 static std::list<FBKey> fb_cache_lru;
 static std::mutex fb_cache_mutex;
-
-__global__ void block_mean_kernel(
-    const float *__restrict__ input,
-    float *__restrict__ output,
-    int B, int C, int H, int W, int s)
-{
-    int b = blockIdx.z;
-    int c = blockIdx.y;
-    int h = blockIdx.x / W;
-    int w = blockIdx.x % W;
-
-    if (h >= H || w >= W)
-        return;
-
-    int Hs = H * s;
-    int Ws = W * s;
-
-    float sum = 0.0f;
-    for (int i = 0; i < s; ++i)
-    {
-        for (int j = 0; j < s; ++j)
-        {
-            int hs = h * s + i;
-            int ws = w * s + j;
-            int idx = ((b * C + c) * Hs + hs) * Ws + ws;
-            sum += input[idx];
-        }
-    }
-
-    int out_idx = ((b * C + c) * H + h) * W + w;
-    output[out_idx] = sum / (s * s);
-}
-
-Tensor block_mean_cuda(const Tensor &input, int64_t s)
-{
-    TORCH_CHECK(input.dim() == 4, "input must be (B,C,Hs,Ws)");
-    TORCH_CHECK(input.device().is_cuda(), "input must be CUDA tensor");
-
-    const int64_t B = input.size(0);
-    const int64_t C = input.size(1);
-    const int64_t Hs = input.size(2);
-    const int64_t Ws = input.size(3);
-    TORCH_CHECK(Hs % s == 0 && Ws % s == 0, "Hs and Ws must be divisible by s");
-
-    const int64_t H = Hs / s;
-    const int64_t W = Ws / s;
-
-    Tensor output = at::empty({B, C, H, W}, input.options());
-
-    const int threads = 1;
-    const dim3 blocks(H * W, C, B);
-
-    block_mean_kernel<<<blocks, threads>>>(
-        input.data_ptr<float>(),
-        output.data_ptr<float>(),
-        B, C, H, W, s);
-
-    return output;
-}
 
 static inline std::pair<Tensor, Tensor> p2o_cached(const Tensor &psf, int64_t H, int64_t W)
 {
@@ -151,7 +93,6 @@ static inline std::pair<Tensor, Tensor> p2o_cached(const Tensor &psf, int64_t H,
     return {FB, F2B};
 }
 
-// ---------- Utility ----------
 static inline Tensor sfold_upsample_zero_insertion(const Tensor &x, int64_t s)
 {
     if (s == 1)
@@ -165,47 +106,6 @@ static inline Tensor sfold_upsample_zero_insertion(const Tensor &x, int64_t s)
                   at::indexing::Slice(0, z.size(-1), s)},
                  x);
     return z;
-}
-
-static inline Tensor splits_mean_then_mean(const Tensor &a, int64_t s)
-{
-    const auto &sizes = a.sizes();
-    const int64_t L = a.dim();
-    const int64_t W = sizes[L - 2];
-    const int64_t H = sizes[L - 1];
-    const int64_t W_s = W / s;
-    const int64_t H_s = H / s;
-
-    std::vector<int64_t> view_shape;
-    view_shape.reserve(L + 2);
-    for (int64_t i = 0; i < L - 2; ++i)
-        view_shape.push_back(sizes[i]);
-    view_shape.push_back(s);
-    view_shape.push_back(W_s);
-    view_shape.push_back(s);
-    view_shape.push_back(H_s);
-    Tensor v = a.view(view_shape);
-
-    std::vector<int64_t> perm;
-    perm.reserve(view_shape.size());
-    for (int64_t i = 0; i < L - 2; ++i)
-        perm.push_back(i);
-    perm.push_back(L - 2 + 1);
-    perm.push_back(L - 2 + 3);
-    perm.push_back(L - 2 + 0);
-    perm.push_back(L - 2 + 2);
-    Tensor p = v.permute(perm).contiguous();
-
-    std::vector<int64_t> merge_shape;
-    merge_shape.reserve(L + 1);
-    for (int64_t i = 0; i < L - 2; ++i)
-        merge_shape.push_back(p.size(i));
-    merge_shape.push_back(W_s);
-    merge_shape.push_back(H_s);
-    merge_shape.push_back(s * s);
-    Tensor r = p.view(merge_shape);
-
-    return r.mean(-1, /*keepdim=*/false);
 }
 
 // ---------- Forward ----------
@@ -240,16 +140,13 @@ Tensor converse2d_forward(Tensor x, Tensor x0, Tensor weight, Tensor bias, int64
     Tensor FR = FBFy + at::fft_fftn(lambda_ * x0, c10::nullopt, {-2, -1}, c10::nullopt);
 
     Tensor x1 = FB * FR;
-    // Tensor FBR = splits_mean_then_mean(x1, scale);
-    // Tensor invW = splits_mean_then_mean(F2B, scale);
-    Tensor FBR = block_mean_cuda(x1, scale);
-    Tensor invW = block_mean_cuda(F2B, scale);
+
+    Tensor FBR = block_mean_cuda(x1, scale);   // (B,C,H,W)
+    Tensor invW = block_mean_cuda(F2B, scale); // (B,C,H,W)
 
     Tensor invW_plus = invW + lambda_;
     Tensor invWBR = FBR / invW_plus;
 
-    // ---- 关键替换：避免 repeat 物化，使用广播展开（零 stride） ----
-    // 形状： (B,C,H,1,W,1) -> expand 为 (B,C,H,scale,W,scale) -> reshape 为 (B,C,Hs,Ws)
     Tensor invWBR_exp = invWBR.view({B, C, H, 1, W, 1})
                             .expand({B, C, H, scale, W, scale})
                             .reshape({B, C, Hs, Ws});
@@ -281,4 +178,3 @@ TORCH_LIBRARY_IMPL(converse2d, CompositeImplicitAutograd, m)
     m.impl("clear_cache", TORCH_FN(clear_fb_cache));
 }
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {}
-s
