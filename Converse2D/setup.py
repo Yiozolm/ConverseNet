@@ -20,7 +20,7 @@ for i, a in enumerate(list(sys.argv)):
 for idx in reversed(to_remove):
     sys.argv.pop(idx)
 
-if variant not in {"", "v1","v2","v3","v4"}:
+if variant not in {"", "v1","v2","v3","v4", "v5", "v6","v7"}:
     raise SystemExit(f"[setup.py] invalid --variant={variant!r}; pick from v1|v2|v3|v4")
 
 if not variant:

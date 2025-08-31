@@ -6,13 +6,17 @@ We offer four versions Converse2d Kernel.
 - v2:   Add FB/F2B cache & broadcast replace repeat **much faster**
 - v3:  `​splits→permute→view→mean` to `block mean CUDA kernel` **fastest**
 - v4:   STy s-fold upsampler CUDA kernel **fastest**
+- v5:   Larger batched FFT CUDA kernel 
+- v6:   Eliminate redundant calculations of `conj/abs/pow(2)` 
+- v7:   R2C/C2R (Real FFT) replaces C2C 
 
 **Tested Device**
 - NVIDIA RTX 2080ti
 - NVIDIA RTX 4090
 - NVIDIA RTX 5060ti 16g
 
-Under different circumstances, **v3** and **v4** each have their own performance advantages, but they are both faster than **v1** and **v2**.
+~~Under different circumstances, **v3** and **v4** each have their own performance advantages, but they are both faster than **v1** and **v2**.~~
+**v7** fastest
 
 We highly recommend you to run `test/test_speed.py` first to choose the most suitable backend for GPU.
 
@@ -22,7 +26,7 @@ We highly recommend you to run `test/test_speed.py` first to choose the most sui
 ```python
 cd ./Converse2D
 # Remember to choose the wanted kernel version
-CONVERSE2D_VARIANT={v1,v2,v3,v4} pip install -e .
+pip install . --no-build-isolation --config-settings=--variant=v7
 ```
 
 **Usage**
@@ -37,9 +41,9 @@ print(torch.ops.converse2d)
 
 **TODO**
 - [ ] Temporary Tensor Reuse and In-Place Writing
-- [ ] Larger batched FFT
-- [ ] Eliminate redundant calculations of `conj/abs/pow(2)`
+- [x] Larger batched FFT(v5) **Note: not very useful**
+- [x] Eliminate redundant calculations of `conj/abs/pow(2)` (v6) *Note: not very useful**
 - [ ] The minimal necessary policy for `contiguous()`
-- [ ] R2C/C2R (Real FFT) replaces C2C **(Optional)**
+- [x] R2C/C2R (Real FFT) replaces C2C (v7) **(Optional)**
 - [ ] Mixed precision **(Optional)**
 - [ ] Adaptive padding **(Optional)**
