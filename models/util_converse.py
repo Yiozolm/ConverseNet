@@ -29,7 +29,9 @@ def _try_import_converse2d_ext():
 
 _try_import_converse2d_ext()
 
-converse2d_CUDA = torch.ops.converse2d.forward
+converse2d_CUDA = torch.ops.converse2d.forward if (
+    hasattr(torch.ops, "converse2d") and hasattr(torch.ops.converse2d, "forward")
+) else None
 
 
 """

@@ -5,13 +5,11 @@ import os, sys, time, json, argparse, pathlib, statistics, subprocess, csv, re
 import torch
 import torch.nn.functional as F
 
-ROOT = pathlib.Path(__file__).resolve().parent
-MODELS = ROOT / "models"
-BACKEND = MODELS / "backend"
+# 路径：项目根 + 包源码目录
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+PKG = PROJECT_ROOT / "Converse2D/torch_converse2d"   # <== 统一放置 CUDA 源
 
-# -----------------------------
-# Common utils
-# -----------------------------
 def synchronize():
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -40,23 +38,16 @@ def to_dtype(name):
     if name in ("fp32","float32","float"):return torch.float32
     raise ValueError(name)
 
-# -----------------------------
-# Subprocess runner
-# -----------------------------
+# -------- parent <-> child plumbing --------
+import re
 def _parse_last_json_from_text(txt: str):
-    # 提取最后一个 {...} JSON 对象；把所有输出（包含编译日志）都容忍
     m = re.findall(r"\{.*\}", txt, flags=re.S)
     if not m:
         tail = txt[-2000:] if len(txt) > 2000 else txt
-        raise RuntimeError("Child produced no JSON. Tail of output:\n" + tail)
+        raise RuntimeError("Child produced no JSON. Tail:\n" + tail)
     return json.loads(m[-1])
 
-
 def run_variant_subprocess(variant, case_args, cache_root):
-    """
-    在子进程中跑一个 variant（pytorch / cuda_v1..v4），返回 json 结果。
-    合并 stdout+stderr，解析最后一个 JSON。
-    """
     cmd = [
         sys.executable, __file__, "--worker",
         "--variant", variant,
@@ -68,18 +59,13 @@ def run_variant_subprocess(variant, case_args, cache_root):
     ]
     env = os.environ.copy()
     env["TORCH_EXTENSIONS_DIR"] = str(pathlib.Path(cache_root) / variant)
-    env.setdefault("PYTHONWARNINGS", "ignore")
-    env.setdefault("TORCH_SHOW_CPP_STACKTRACES", "0")
-
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     out = proc.stdout
     if proc.returncode != 0:
         raise RuntimeError(f"Subprocess failed (variant={variant}). Output:\n{out}")
     return _parse_last_json_from_text(out)
 
-# -----------------------------
-# Worker: run in subprocess
-# -----------------------------
+# -------- worker --------
 def worker_main(args):
     device = "cuda" if (args.device=="cuda" and torch.cuda.is_available()) else "cpu"
     dtype  = to_dtype(args.dtype)
@@ -102,18 +88,18 @@ def worker_main(args):
 
     from torch.utils.cpp_extension import load
     vnum = int(args.variant.split("_v")[1])
-    cpp = BACKEND / f"converse2d_v{vnum}.cpp"
-    cu  = BACKEND / f"converse2d_v{vnum}.cu"
+    cpp = PKG / f"converse2d_v{vnum}.cpp"
+    cu  = PKG / f"converse2d_v{vnum}.cu"
     sources = [str(cpp)]
     if cu.exists(): sources.append(str(cu))
 
-    os.environ["TORCH_CUDA_ARCH_LIST"] = "8.9"  # RTX 4090 (sm_89)
+    os.environ["TORCH_CUDA_ARCH_LIST"] = "7.5"  # RTX 4090
     load(
         name=f"converse2d_v{vnum}_ext",
         sources=sources,
         verbose=False,
         extra_cflags=["-O3"],
-        extra_cuda_cflags=(["-O3","-gencode=arch=compute_89,code=sm_89"] if cu.exists() else [])
+        extra_cuda_cflags=(["-O3","-gencode=arch=compute_75,code=sm_75"] if cu.exists() else []),
     )
 
     torch.manual_seed(0)
@@ -129,15 +115,11 @@ def worker_main(args):
             _ = converse2d_forward(x, x0, weight, bias, int(s), float(1e-5))
     stat = timed_run(call, args.warmup, args.iters)
     stat["tp"] = tp_gpix_per_s(B,H,W,s,stat["mean_ms"])
-
     try: torch.ops.converse2d.clear_cache()
     except Exception: pass
-
     print(json.dumps({"variant": args.variant, **stat}))
 
-# -----------------------------
-# Orchestrator (parent)
-# -----------------------------
+# -------- parent orchestrator --------
 def parent_main(args):
     device = "cuda" if (args.device=="cuda" and torch.cuda.is_available()) else "cpu"
     Bs  = [int(x) for x in args.B_list.split(",")]
@@ -152,8 +134,7 @@ def parent_main(args):
     print(f"[Grid] B={Bs} C={Cs} H={Hs} W={Ws} scale={Ss} ksize={Ks}\n")
 
     variants = ["pytorch", "cuda_v1", "cuda_v2", "cuda_v3", "cuda_v4"]
-    results = []
-    cache_root = ROOT / ".torch_ext_cache_grid"
+    cache_root = PROJECT_ROOT / ".torch_ext_cache_grid"
     cache_root.mkdir(exist_ok=True)
 
     for B in Bs:
@@ -167,44 +148,14 @@ def parent_main(args):
                                         dtype=args.dtype,device=device)
                             base = run_variant_subprocess("pytorch", case, cache_root)
                             base_mean = base["mean_ms"]
-                            results.append({**case,"variant":"pytorch",**base})
-
                             print(f"[Case] B{B} C{C} {H}x{W} s{s} k{k}")
                             print(f"  PyTorch : {base_mean:.3f} ms")
-
                             for v in variants[1:]:
                                 r = run_variant_subprocess(v, case, cache_root)
                                 sp = base_mean / r["mean_ms"] if r["mean_ms"]>0 else None
-                                results.append({**case, "variant":v, **r, "speedup_vs_pytorch": sp})
                                 print(f"  {v:8s}: {r['mean_ms']:.3f} ms  ({sp:.2f}x vs PyTorch)")
                             print("")
 
-    # 将原来的header定义
-    header = ["variant","B","C","H","W","scale","ksize","mean_ms","p50_ms","p90_ms","tp","speedup_vs_pytorch"]
-    
-    # 修改为包含所有需要的字段
-    header = ["variant","B","C","H","W","scale","ksize","mean_ms","p50_ms","p90_ms","tp","speedup_vs_pytorch","warmup","dtype","device","iters"]
-    print("\n=== Summary (normalized to PyTorch) ===")
-    print(" | ".join(h.rjust(10) for h in header))
-    print("-"*120)
-    for r in results:
-        line=[]
-        for h in header:
-            v = r.get(h,"")
-            if isinstance(v,float):
-                line.append(f"{v:10.3f}")
-            else:
-                line.append(str(v).rjust(10))
-        print(" | ".join(line))
-
-    if args.csv:
-        with open(args.csv,"w",newline="") as f:
-            w=csv.DictWriter(f, fieldnames=header); w.writeheader(); w.writerows(results)
-        print(f"\n[Saved] {args.csv}")
-
-# -----------------------------
-# CLI
-# -----------------------------
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--worker", action="store_true", help="internal")
@@ -220,19 +171,15 @@ def main():
     p.add_argument("--dtype", default="float32", choices=["float16","bfloat16","float32"])
     p.add_argument("--device", default="cuda")
     # grid
-    p.add_argument("--B_list", default="1")
-    p.add_argument("--C_list", default="3")
+    p.add_argument("--B_list", default="1,2")
+    p.add_argument("--C_list", default="3,8")
     p.add_argument("--H_list", default="128,256")
     p.add_argument("--W_list", default="128,256")
     p.add_argument("--scale_list", default="1,2,3")
     p.add_argument("--ksize_list", default="3,5,7")
-    p.add_argument("--csv", default="")
     args = p.parse_args()
-
-    if args.worker:
-        worker_main(args)
-    else:
-        parent_main(args)
+    if args.worker: worker_main(args)
+    else: parent_main(args)
 
 if __name__ == "__main__":
     main()

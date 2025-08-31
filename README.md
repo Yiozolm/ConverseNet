@@ -17,25 +17,6 @@ ___________
 * [Visual results of ConverseNet](#visual-results-of-conversenet)
 * [Visual results of Converse-USRNet](#visual-results-of-converse-usrnet)
 
-Kernel Registry
-----------
-**Installation**
-
-```python
-cd ./Converse2D
-pip install --no-build-isolation -e.
-```
-
-**Usage**
-
-```python
-import torch
-import torch_converse2d
-
-out = torch.ops.converse2d.forward(x, x0, weight, bias, scale, eps)
-print(torch.ops.converse2d)
-```
-
 
 
 Motivation
