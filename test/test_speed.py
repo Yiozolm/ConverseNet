@@ -5,10 +5,9 @@ import os, sys, time, json, argparse, pathlib, statistics, subprocess, csv, re
 import torch
 import torch.nn.functional as F
 
-# 路径：项目根 + 包源码目录
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
-PKG = PROJECT_ROOT / "Converse2D/torch_converse2d"   # <== 统一放置 CUDA 源
+PKG = PROJECT_ROOT / "Converse2D/torch_converse2d" 
 
 def synchronize():
     if torch.cuda.is_available():
@@ -93,13 +92,25 @@ def worker_main(args):
     sources = [str(cpp)]
     if cu.exists(): sources.append(str(cu))
 
-    os.environ["TORCH_CUDA_ARCH_LIST"] = "7.5"  # RTX 4090
+    maj, min = torch.cuda.get_device_capability(0) if device == "cuda" else (0, 0)
+    arch_num = f"{maj}{min}"        # e.g. "75", "86", "89"
+    arch_str = f"{maj}.{min}"       # e.g. "7.5"
+    os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{arch_str}+PTX")
+
+    ext_name = f"converse2d_v{vnum}_sm{arch_num}_ext"
+
+    print(f"[build] compiling {ext_name} for sm_{arch_num} (variant={args.variant}) ...", flush=True)
+
+    extra_cuda = []
+    if cu.exists() and device == "cuda":
+        extra_cuda = ["-O3", f"-gencode=arch=compute_{arch_num},code=sm_{arch_num}"]
+
     load(
-        name=f"converse2d_v{vnum}_ext",
+        name=ext_name,
         sources=sources,
         verbose=False,
         extra_cflags=["-O3"],
-        extra_cuda_cflags=(["-O3","-gencode=arch=compute_75,code=sm_75"] if cu.exists() else []),
+        extra_cuda_cflags=extra_cuda,
     )
 
     torch.manual_seed(0)
@@ -134,6 +145,7 @@ def parent_main(args):
     print(f"[Grid] B={Bs} C={Cs} H={Hs} W={Ws} scale={Ss} ksize={Ks}\n")
 
     variants = ["pytorch", "cuda_v1", "cuda_v2", "cuda_v3", "cuda_v4"]
+    results = list()
     cache_root = PROJECT_ROOT / ".torch_ext_cache_grid"
     cache_root.mkdir(exist_ok=True)
 
@@ -148,13 +160,34 @@ def parent_main(args):
                                         dtype=args.dtype,device=device)
                             base = run_variant_subprocess("pytorch", case, cache_root)
                             base_mean = base["mean_ms"]
+                            results.append({**case,"variant":"pytorch",**base})
                             print(f"[Case] B{B} C{C} {H}x{W} s{s} k{k}")
                             print(f"  PyTorch : {base_mean:.3f} ms")
                             for v in variants[1:]:
                                 r = run_variant_subprocess(v, case, cache_root)
                                 sp = base_mean / r["mean_ms"] if r["mean_ms"]>0 else None
+                                results.append({**case, "variant":v, **r, "speedup_vs_pytorch": sp})
                                 print(f"  {v:8s}: {r['mean_ms']:.3f} ms  ({sp:.2f}x vs PyTorch)")
                             print("")
+
+    header = ["variant","B","C","H","W","scale","ksize","mean_ms","p50_ms","p90_ms","tp","speedup_vs_pytorch","warmup","dtype","device","iters"]
+    print("\n=== Summary (normalized to PyTorch) ===")
+    print(" | ".join(h.rjust(10) for h in header))
+    print("-"*120)
+    for r in results:
+        line=[]
+        for h in header:
+            v = r.get(h,"")
+            if isinstance(v,float):
+                line.append(f"{v:10.3f}")
+            else:
+                line.append(str(v).rjust(10))
+        print(" | ".join(line))
+
+    if args.csv:
+        with open(args.csv,"w",newline="") as f:
+            w=csv.DictWriter(f, fieldnames=header); w.writeheader(); w.writerows(results)
+        print(f"\n[Saved] {args.csv}")
 
 def main():
     p = argparse.ArgumentParser()
@@ -171,15 +204,18 @@ def main():
     p.add_argument("--dtype", default="float32", choices=["float16","bfloat16","float32"])
     p.add_argument("--device", default="cuda")
     # grid
-    p.add_argument("--B_list", default="1,2")
+    p.add_argument("--B_list", default="1")
     p.add_argument("--C_list", default="3,8")
     p.add_argument("--H_list", default="128,256")
     p.add_argument("--W_list", default="128,256")
     p.add_argument("--scale_list", default="1,2,3")
     p.add_argument("--ksize_list", default="3,5,7")
+    p.add_argument("--csv", default="")
     args = p.parse_args()
-    if args.worker: worker_main(args)
-    else: parent_main(args)
+    if args.worker: 
+        worker_main(args)
+    else: 
+        parent_main(args)
 
 if __name__ == "__main__":
     main()
