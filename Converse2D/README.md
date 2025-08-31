@@ -35,3 +35,11 @@ out = torch.ops.converse2d.forward(x, x0, weight, bias, scale, eps)
 print(torch.ops.converse2d)
 ```
 
+**TODO**
+- [ ] Temporary Tensor Reuse and In-Place Writing
+- [ ] Larger batched FFT
+- [ ] Eliminate redundant calculations of `conj/abs/pow(2)`
+- [ ] The minimal necessary policy for `contiguous()`
+- [ ] R2C/C2R (Real FFT) replaces C2C **(Optional)**
+- [ ] Mixed precision **(Optional)**
+- [ ] Adaptive padding **(Optional)**
