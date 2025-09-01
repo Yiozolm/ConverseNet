@@ -60,10 +60,11 @@ static std::mutex fb_cache_mutex;
 
 static inline std::tuple<Tensor, Tensor, Tensor> p2o_cached(const Tensor &psf, int64_t H, int64_t W)
 {
+    const bool training_with_grad = at::GradMode::is_enabled() && psf.requires_grad();
     auto C = psf.size(1);
     FBKey key{psf.device().index(), psf.scalar_type(), C, H, W, psf.data_ptr()};
 
-    {
+    if (!training_with_grad) {
         std::lock_guard<std::mutex> lock(fb_cache_mutex);
         auto it = fb_cache.find(key);
         if (it != fb_cache.end())
@@ -81,7 +82,7 @@ static inline std::tuple<Tensor, Tensor, Tensor> p2o_cached(const Tensor &psf, i
     Tensor FB = at::fft_fftn(otf, c10::nullopt, {-2, -1}, c10::nullopt);
     auto [FBC, F2B] = fb_postprocess_cuda(FB); 
 
-    {
+    if (!training_with_grad) {
         std::lock_guard<std::mutex> lock(fb_cache_mutex);
         fb_cache[key] = std::make_tuple(FB, FBC, F2B);
         fb_cache_lru.push_front(key);

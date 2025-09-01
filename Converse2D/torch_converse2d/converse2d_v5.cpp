@@ -92,10 +92,11 @@ inline Tensor ifft2_auto_batched(const Tensor& x)
 
 static inline std::pair<Tensor, Tensor> p2o_cached(const Tensor &psf, int64_t H, int64_t W)
 {
+    const bool training_with_grad = at::GradMode::is_enabled() && psf.requires_grad();
     auto C = psf.size(1);
     FBKey key{psf.device().index(), psf.scalar_type(), C, H, W, psf.data_ptr()};
 
-    {
+    if (!training_with_grad){
         std::lock_guard<std::mutex> lock(fb_cache_mutex);
         auto it = fb_cache.find(key);
         if (it != fb_cache.end())
@@ -113,7 +114,7 @@ static inline std::pair<Tensor, Tensor> p2o_cached(const Tensor &psf, int64_t H,
     Tensor FB = fft2_auto_batched(otf);
     Tensor F2B = at::abs(FB).pow(2);
 
-    {
+    if (!training_with_grad){
         std::lock_guard<std::mutex> lock(fb_cache_mutex);
         fb_cache[key] = {FB, F2B};
         fb_cache_lru.push_front(key);
