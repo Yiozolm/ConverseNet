@@ -14,14 +14,14 @@ for i, a in enumerate(list(sys.argv)):
     aa = a.lower()
     if aa.startswith("--variant="):
         variant = a.split("=", 1)[1].lower(); to_remove.append(i)
-    elif aa in ("--v1","--v2","--v3","--v4"):
+    elif aa in ("--v1","--v2","--v3","--v4","--v5","--v6","--v7"):
         variant = aa[2:]; to_remove.append(i)
 # scrub custom flags so setuptools doesn't see them
 for idx in reversed(to_remove):
     sys.argv.pop(idx)
 
 if variant not in {"", "v1","v2","v3","v4", "v5", "v6","v7"}:
-    raise SystemExit(f"[setup.py] invalid --variant={variant!r}; pick from v1|v2|v3|v4")
+    raise SystemExit(f"[setup.py] invalid --variant={variant!r}; pick from v1|v2|v3|v4|v5|v6|v7")
 
 if not variant:
     variant = "v1"  # default
@@ -29,9 +29,17 @@ if not variant:
 # ---------------------------
 # pick sources per variant
 # ---------------------------
-CPP = str(PKG_DIR / f"converse2d_{variant}.cpp")
-CU  = str(PKG_DIR / f"converse2d_{variant}.cu")
-has_cu = os.path.exists(CU)  # v3,v4 have .cu; v1,v2 usually not
+CPP = PKG_DIR / f"converse2d_{variant}.cpp"
+cu_candidates = [
+    PKG_DIR / f"converse2d_{variant}_kernels.cu",
+    PKG_DIR / f"converse2d_{variant}.cu",
+]
+CU = next((p for p in cu_candidates if p.exists()), None)
+
+sources = [str(CPP)] if CPP.exists() else []
+has_cu = CU is not None
+if has_cu:
+    sources.append(str(CU))
 
 # ---------------------------
 # CUDA arch (auto if not set)
@@ -53,18 +61,12 @@ if has_cu and "TORCH_CUDA_ARCH_LIST" not in os.environ:
 # ---------------------------
 # Extension definition
 # ---------------------------
-if has_cu:
-    ext = CUDAExtension(
-        name="converse2d_ext",
-        sources=[CPP, CU],
-        extra_compile_args={"cxx": extra_cflags, "nvcc": extra_cuda},
-    )
-else:
-    ext = CppExtension(
-        name="converse2d_ext",
-        sources=[CPP],
-        extra_compile_args={"cxx": extra_cflags},
-    )
+
+ext = (CUDAExtension if has_cu else CppExtension)(
+    name="converse2d_ext",
+    sources=sources,
+    extra_compile_args={"cxx": ["-O3"], "nvcc": ["-O3"]} if has_cu else {"cxx": ["-O3"]},
+)
 
 print(f"[setup.py] building variant={variant}  sources={[p for p in ([CPP] + ([CU] if has_cu else []))]}")
 print(f"[setup.py] TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST','<unset>')}")

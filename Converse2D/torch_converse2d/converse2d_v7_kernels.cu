@@ -1,4 +1,3 @@
-// converse2d_v7.cu  (PyTorch 2.4 / CUDA 12.1 兼容版)
 #include <torch/extension.h>
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>   // getCurrentCUDAStream
@@ -7,7 +6,6 @@
 
 using at::Tensor;
 
-// ---- 简易累加类型映射：half/bfloat16/float 用 float；double 用 double ----
 template <typename T> struct acc_type_map { using type = float; };
 template <> struct acc_type_map<double>   { using type = double; };
 template <> struct acc_type_map<float>    { using type = float;  };
