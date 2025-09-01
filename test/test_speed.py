@@ -185,7 +185,7 @@ def parent_main(args):
     print(f"[Cfg] dtype={args.dtype}, warmup={args.warmup}, iters={args.iters}")
     print(f"[Grid] B={Bs} C={Cs} H={Hs} W={Ws} scale={Ss} ksize={Ks}\n")
 
-    variants = ["pytorch", "cuda_v1", "cuda_v2", "cuda_v3","cuda_v4", "cuda_v5", "cuda_v6", "cuda_v7"]
+    variants = ["pytorch", "cuda"]
 
     results = []
     cache_root = PROJECT_ROOT / ".torch_ext_cache_grid"
