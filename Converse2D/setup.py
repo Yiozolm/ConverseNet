@@ -14,14 +14,14 @@ for i, a in enumerate(list(sys.argv)):
     aa = a.lower()
     if aa.startswith("--variant="):
         variant = a.split("=", 1)[1].lower(); to_remove.append(i)
-    elif aa in ("--v1","--v2","--v3","--v4","--v5","--v6","--v7"):
+    elif aa in ("--v1","--v2"):
         variant = aa[2:]; to_remove.append(i)
 # scrub custom flags so setuptools doesn't see them
 for idx in reversed(to_remove):
     sys.argv.pop(idx)
 
-if variant not in {"", "v1","v2","v3","v4", "v5", "v6","v7"}:
-    raise SystemExit(f"[setup.py] invalid --variant={variant!r}; pick from v1|v2|v3|v4|v5|v6|v7")
+if variant not in {"", "v1","v2"}:
+    raise SystemExit(f"[setup.py] invalid --variant={variant!r}; pick from v1|v2")
 
 if not variant:
     variant = "v1"  # default
