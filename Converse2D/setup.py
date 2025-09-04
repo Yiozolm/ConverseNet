@@ -6,7 +6,7 @@ PKG_DIR = pathlib.Path(__file__).resolve().parent / "torch_converse2d"
 
 
 CPP = str(PKG_DIR / f"converse2d.cpp")
-CU  = str(PKG_DIR / f"converse2d.cu")
+CU  = str(PKG_DIR / f"converse2d_kernel.cu")
 has_cu = os.path.exists(CU) 
 
 extra_cflags = ["-O3"]
