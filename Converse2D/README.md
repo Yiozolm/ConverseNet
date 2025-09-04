@@ -29,7 +29,7 @@
 - NVIDIA RTX 4090
 - NVIDIA RTX 5060ti 16g
 
-**v7** fastest
+**v7** fastest, saving about 25% training time in my low-level task
 
 We highly recommend you to run `test/test_speed.py` first to choose the most suitable backend for GPU.
 
@@ -38,7 +38,7 @@ We highly recommend you to run `test/test_speed.py` first to choose the most sui
 ```python
 cd ./Converse2D
 # Remember to choose the wanted kernel version
-pip install . --no-build-isolation --config-settings=--variant=v7
+CONVERSE2D_VARIANT=v7 python setup.py
 ```
 
 **Usage**
