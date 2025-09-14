@@ -110,9 +110,8 @@ def worker_main(args):
         return
 
     from torch.utils.cpp_extension import load
-    vnum = int(args.variant.split("_v")[1])
-    cpp = PKG / f"converse2d_v{vnum}.cpp"
-    cu  = PKG / f"converse2d_v{vnum}.cu"
+    cpp = PKG / f"converse2d.cpp"
+    cu  = PKG / f"converse2d.cu"
     sources = [str(cpp)]
     if cu.exists(): sources.append(str(cu))
 
@@ -122,7 +121,7 @@ def worker_main(args):
     os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{arch_str}+PTX")
     extra_cuda = ["-O3", f"-gencode=arch=compute_{arch_num},code=sm_{arch_num}"] if (cu.exists() and device=="cuda") else []
 
-    ext_name = f"converse2d_v{vnum}_sm{arch_num}_ext"
+    ext_name = f"converse2d_sm{arch_num}_ext"
     print(f"[build] compiling {ext_name} (variant={args.variant}) ...", flush=True)
     load(name=ext_name, sources=sources, verbose=False, extra_cflags=["-O3"], extra_cuda_cflags=extra_cuda)
 
