@@ -44,22 +44,27 @@ class ConvReverseDataNet(nn.Module):
             x = nn.functional.pad(x, pad=[padding, padding, padding, padding], mode=padding_mode, value=0)
         self.biaseps = torch.sigmoid(self.alpha-9.0) + self.eps
         _, _, h, w = x.shape
-        STy = self.upsample(x, sf)
-        if sf != 1:
-            x = nn.functional.interpolate(x, scale_factor=sf, mode='nearest')
+        FY = torch.fft.fftn(x, dim=(-2, -1))
+        x0 = x if sf == 1 else F.interpolate(x, scale_factor=sf, mode='nearest')
+        FX0 = FY if sf == 1 else torch.fft.fftn(x0, dim=(-2, -1))
         
         FB = self.p2o(k, (h*sf, w*sf))
         FBC = torch.conj(FB)
         F2B = torch.pow(torch.abs(FB), 2)
 
-        FBFy = FBC*torch.fft.fftn(STy, dim=(-2, -1))
-        FR = FBFy + torch.fft.fftn(self.biaseps*x, dim=(-2,-1))
-        x1 = FB.mul(FR)
-        FBR = torch.mean(self.splits(x1, sf), dim=-1, keepdim=False)
-        invW = torch.mean(self.splits(F2B, sf), dim=-1, keepdim=False)
-        invWBR = FBR.div(invW + self.biaseps)
-        FCBinvWBR = FBC*invWBR.repeat(1, 1, sf, sf)
-        FX = (FR-FCBinvWBR)/self.biaseps
+        if sf == 1:
+            correction = (FY - FB * FX0) / (F2B + self.biaseps)
+        else:
+            prediction = torch.mean(
+                self.splits(FB * FX0, sf), dim=-1, keepdim=False
+            )
+            invW = torch.mean(
+                self.splits(F2B, sf), dim=-1, keepdim=False
+            )
+            correction = (FY - prediction) / (invW + self.biaseps)
+            correction = correction.repeat(1, 1, sf, sf)
+
+        FX = FX0 + FBC * correction
         out = torch.real(torch.fft.ifftn(FX, dim=(-2, -1)))
 
         if padding > 0:

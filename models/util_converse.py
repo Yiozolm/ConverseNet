@@ -168,22 +168,29 @@ class Converse2D(nn.Module):
                 x, x0, self.weight, self.bias, int(self.scale), float(self.eps)
             )
         else:
-            STy = self.upsample(x, scale=self.scale)
-            if self.scale != 1:
-                x = nn.functional.interpolate(x, scale_factor=self.scale, mode='nearest')
-
+            FY = torch.fft.fftn(x, dim=(-2, -1))
+            x0 = x if self.scale == 1 else F.interpolate(x, scale_factor=self.scale, mode='nearest')
+            FX0 = FY if self.scale == 1 else torch.fft.fftn(x0, dim=(-2, -1))
             FB = self.p2o(self.weight, (h*self.scale, w*self.scale))
             FBC = torch.conj(FB)
             F2B = torch.pow(torch.abs(FB), 2)
-            FBFy = FBC*torch.fft.fftn(STy, dim=(-2, -1))
-            
-            FR = FBFy + torch.fft.fftn(self.biaseps*x, dim=(-2,-1))
-            x1 = FB.mul(FR)
-            FBR = torch.mean(self.splits(x1, self.scale), dim=-1, keepdim=False)
-            invW = torch.mean(self.splits(F2B, self.scale), dim=-1, keepdim=False)
-            invWBR = FBR.div(invW + self.biaseps)
-            FCBinvWBR = FBC*invWBR.repeat(1, 1, self.scale, self.scale)
-            FX = (FR-FCBinvWBR)/self.biaseps
+
+            if self.scale == 1:
+                correction = (FY - FB * FX0) / (F2B + self.biaseps)
+            else:
+                prediction = torch.mean(
+                    self.splits(FB * FX0, self.scale), dim=-1, keepdim=False
+                )
+                invW = torch.mean(
+                    self.splits(F2B, self.scale), dim=-1, keepdim=False
+                )
+                correction = (FY - prediction) / (invW + self.biaseps)
+                correction = correction.repeat(1, 1, self.scale, self.scale)
+
+            # Residual form of the same closed-form solution.  It avoids the
+            # cancellation-prone (FR - FCBinvWBR) / lambda expression and the
+            # FFT of a zero-insertion-upsampled observation.
+            FX = FX0 + FBC * correction
             out = torch.real(torch.fft.ifftn(FX, dim=(-2, -1)))
 
         if self.padding > 0:

@@ -1,3 +1,17 @@
 TODO.md
 Optimization.md
 **/__pycache__/
+
+# Native/Python extension build artifacts
+**/build/
+*.egg-info/
+*.pyd
+*.so
+*.dll
+*.dylib
+*.o
+*.obj
+*.lib
+*.exp
+*.ptx
+*.cubin

@@ -101,23 +101,6 @@ static inline std::tuple<Tensor, Tensor, at::Tensor> p2o_cached(const Tensor &ps
     return std::make_tuple(FB, FBC, F2B);
 }
 
-static inline Tensor sfold_upsample_zero_insertion(const Tensor &x, int64_t s)
-{
-    TORCH_CHECK(s >= 1, "scale must be >= 1");
-    if (s == 1)
-        return x;
-    auto sizes = x.sizes().vec();
-    sizes[sizes.size() - 2] *= s;
-    sizes[sizes.size() - 1] *= s;
-    Tensor z = at::zeros(sizes, x.options());
-    z.index_put_(
-        {at::indexing::Slice(), at::indexing::Slice(),
-         at::indexing::Slice(0, z.size(-2), s),
-         at::indexing::Slice(0, z.size(-1), s)},
-        x);
-    return z;
-}
-
 static inline Tensor splits_mean_then_mean(const Tensor &a, int64_t s)
 {
     TORCH_CHECK(a.dim() >= 2, "tensor must have spatial dims");
@@ -184,25 +167,30 @@ Tensor converse2d_forward(Tensor x, Tensor x0, Tensor weight, Tensor bias, int64
     const int64_t Ws = W * scale;
 
     Tensor lambda_ = at::sigmoid(bias - 9.0) + eps;
-    Tensor STy = sfold_upsample_zero_insertion(x, scale);
 
     auto [FB, FBC, F2B] = p2o_cached(weight, Hs, Ws);
 
-    Tensor F_STy = at::fft_fftn(STy, c10::nullopt, {-2, -1}, c10::nullopt);
-    Tensor FBFy = FBC * F_STy;
-    Tensor FR = FBFy + at::fft_fftn(lambda_ * x0, c10::nullopt, {-2, -1}, c10::nullopt);
+    Tensor FY = at::fft_fftn(x, c10::nullopt, {-2, -1}, c10::nullopt);
+    Tensor FX0 = scale == 1
+                     ? FY
+                     : at::fft_fftn(x0, c10::nullopt, {-2, -1}, c10::nullopt);
+    Tensor correction;
+    if (scale == 1)
+    {
+        correction = (FY - FB * FX0) / (F2B + lambda_);
+    }
+    else
+    {
+        Tensor prediction = splits_mean_then_mean(FB * FX0, scale);
+        Tensor invW = splits_mean_then_mean(F2B, scale);
+        correction = (FY - prediction) / (invW + lambda_);
+        correction = correction.repeat({1, 1, scale, scale});
+    }
 
-    Tensor x1 = FB * FR;
-    Tensor FBR = splits_mean_then_mean(x1, scale);
-    Tensor invW = splits_mean_then_mean(F2B, scale);
-
-    Tensor invW_plus = invW + lambda_;
-    Tensor invWBR = FBR / invW_plus;
-
-    Tensor invWBR_rep = invWBR.repeat({1, 1, scale, scale});
-    Tensor FCBinvWBR = FBC * invWBR_rep;
-
-    Tensor FX = (FR - FCBinvWBR) / lambda_;
+    // Algebraically equivalent residual correction form.  This avoids both
+    // the zero-insertion HR FFT and cancellation followed by division by a
+    // potentially small lambda.
+    Tensor FX = FX0 + FBC * correction;
     Tensor out_c = at::fft_ifftn(FX, c10::nullopt, {-2, -1}, c10::nullopt);
     Tensor out = at::real(out_c);
     return out;
