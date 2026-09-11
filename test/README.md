@@ -1,88 +1,69 @@
-# Validation and profiling
+# Tests and profiling
 
-Run from the repository root with PyTorch and Ninja available. The scripts build
-the current checkout under `.build/`; no global extension install is required.
-On Windows, use the same Developer shell / CUDA toolkit configuration as for
-installation. Python's standard `unittest` is used; pytest is not required.
+Run commands from the repository root with PyTorch, Ninja and a configured
+compiler. Tests build the current extension under `.build/`; a global extension
+installation is not required. Set `CONVERSE2D_CPU_ONLY=1` for a CPU-only build.
+
+All generated results go under `artifacts/`, which is ignored by Git.
+
+## Correctness
 
 ```sh
 python test/test_error.py --device cuda
 python test/test_error.py --device cpu
+python test/test_batched_kernels.py
+python test/test_batched_kernels.py --cpu
 python test/test_cache.py
+```
+
+- `test_correctness.py` (also exposed by `test_error.py`): independent dense
+  spatial solves, forward/gradient agreement, first/second derivatives, odd/even
+  and singleton sizes, low precision, padding, mutation-aware caches and streams.
+- `test_batched_kernels.py`: per-sample/channel-shared kernels, dynamic-kernel
+  gradients, DataNet mixed precision and USRNet end-to-end training.
+- `test_cache.py`: focused cache invalidation and inference/training transitions.
+
+These use Python's standard unittest; pytest is not required.
+
+## Pretrained models
+
+```sh
 python test/test_pretrained_smoke.py
+python test/test_usrnet.py
 ```
 
-`test_error.py` is the entry point for `test_correctness.py`. The suite compares
-all v2–v7 labels on even/odd and singleton dimensions, scales 1/2/3, plus the
-generic scale=4 path. It checks a dense spatial linear-system solution independent
-of FFT, gradients of x/x0/weight/bias, gradcheck, gradgradcheck, low-precision
-promotion, rectangular kernels, noncontiguous inputs, padding, cache mutation,
-repeated training and non-default CUDA streams. Results are written to
-`analysis/correctness_cuda.json` and `analysis/correctness_cpu.json`.
+These load the repository's DnCNN, SRResNet and USRNet checkpoints and compare
+Python/CUDA outputs in float32/float64 with TF32 disabled. They verify integration
+on deterministic sample inputs, not dataset PSNR. Add `--installed` to test a
+package built in `Converse2D/` instead of the local JIT build.
 
-To test the build without CUDA kernels, set `CONVERSE2D_CPU_ONLY=1` before running
-the CPU suite. This builds a separate `.build/cpu` extension.
-
-The pretrained smoke test loads the repository's DnCNN and SRResNet checkpoints,
-then compares complete-model outputs in float32 and float64 using seeded random
-inputs. It disables cuDNN/matmul TF32 for a strict arithmetic comparison; it does
-not measure dataset PSNR. `--installed` tests an extension built in `Converse2D/`.
-
-Additional tests for the combined simplified/fused USRNet path:
+## Performance
 
 ```sh
-python test/test_combined.py
-python test/test_combined.py --cpu
-python test/test_usrnet_combined.py
-python test/benchmark_combined.py
+python test/test_speed.py
+python test/test_speed.py --training
+python test/test_speed.py --single --variant v7 --B 1 --C 32 --H 128 --W 128 --scale 2
 ```
 
-These cover per-sample kernels and channel broadcasting, dynamic kernel
-gradients, mixed precision in DataNet, and the original USRNet checkpoint.
-`test_usrnet_combined.py --installed` verifies a package built in `Converse2D/`.
-The DataNet benchmark clones the kernel each call to model freshly generated
-kernels, comparing the old Python formula, simplified Python formula and the
-combined v2/v7 implementations without assuming reusable kernel caches.
+`test_speed.py` invokes `benchmark.py`. The default grid compares the current v2,
+v6 and v7 paths using identical inputs and a float64 reference check. Timings
+include CUDA events, wall time and incremental peak allocated memory. Training
+includes forward plus gradients for x/x0/weight/bias.
 
-## Comparable benchmarks
-
-```sh
-python test/test_speed.py --legacy
-python test/test_speed.py --legacy --training --iters 10 --output analysis/gpu_training_benchmark.json
-```
-
-The optional legacy baseline is read from Git commit `c7eb880` and compiled under
-a separate operator namespace. It receives exactly the same tensors and padding
-as the corrected versions. No branch switch is performed. The benchmark covers
-v2, v6 (shared v3–v6 implementation), v7, and optionally legacy. Every corrected
-forward is checked against a float64 reference before timing.
-
-Timings are medians of five batches with CUDA events, with host wall time and
-incremental peak allocated memory also recorded. Training timing includes forward
-and gradients for all four independent inputs. Results are measurements on the
-current machine, not universal speedup guarantees.
-
-The old `grad_ok` speed-test field did not compare gradients and is no longer used
-as a correctness claim. The old grid/variant-per-build CLI is replaced by these
-commands; use `--help` for supported options.
+Use `--iters` to control repetitions and `--output` to select a result path.
+Defaults are `artifacts/benchmark.json` and `artifacts/benchmark_training.json`.
 
 ## Nsight
 
 ```sh
 python test/profile_nsight.py --kind systems --variant v7 --scale 2
-python test/profile_nsight.py --kind systems --variant legacy --scale 2
 python test/profile_nsight.py --kind compute --variant v7 --scale 2
 ```
 
-Use `--tool` for an explicit profiler executable, and `--C`, `--H`, `--W` to
-change the workload. The wrapper builds first, then profiles only the warmed
-CUDA/NVTX region using `cudaProfilerStart/Stop`. Reports and kernel/API summaries
-are saved under `analysis/profiles/` (ignored by Git).
+The wrapper builds first, then profiles the warmed CUDA/NVTX region. Reports go
+to `artifacts/profiles/`. Use `--tool` for an explicit profiler executable and
+`--C`, `--H`, `--W` for the workload. Nsight Compute requires access to the GPU
+performance counters; the scripts do not modify system permissions.
 
-`CONVERSE2D_SKIP_BUILD=1` loads an existing local build; use it only after building
-the current sources, particularly when invoking a profiler manually.
-
-On the tested machine Nsight Systems collected CUDA traces successfully. Nsight
-Compute connected but returned `ERR_NVGPUCTRPERM`; hardware-counter results are
-unavailable until the machine's NVIDIA performance-counter policy permits them.
-The scripts do not change system profiling permissions.
+`CONVERSE2D_SKIP_BUILD=1` loads the existing local extension without building.
+Only use it after compiling the current sources, for example inside a profiler.

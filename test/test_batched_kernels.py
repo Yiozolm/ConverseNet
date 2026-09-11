@@ -1,4 +1,4 @@
-"""Integration of stable residual form with fused kernels and dynamic USRNet PSFs."""
+"""Regression tests for batched/broadcast kernels and dynamic USRNet PSFs."""
 import copy
 import json
 import sys
@@ -43,7 +43,7 @@ def dense(data,s,eps):
     return torch.stack(batches)
 
 
-class Combined(unittest.TestCase):
+class BatchedKernels(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         load_extension()
@@ -166,5 +166,7 @@ if __name__=="__main__":
     result=unittest.main(exit=False,verbosity=2).result
     METRICS.update(device=DEVICE,tests=result.testsRun,passed=result.wasSuccessful(),
                    failures=len(result.failures),errors=len(result.errors))
-    (ROOT/"analysis"/f"combined_correctness_{DEVICE}.json").write_text(json.dumps(METRICS,indent=2),encoding="utf-8")
+    output=ROOT/"artifacts"/f"batched_kernels_{DEVICE}.json"
+    output.parent.mkdir(parents=True,exist_ok=True)
+    output.write_text(json.dumps(METRICS,indent=2),encoding="utf-8")
     sys.exit(not result.wasSuccessful())

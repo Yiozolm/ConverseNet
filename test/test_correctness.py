@@ -225,7 +225,7 @@ def main():
     result = unittest.main(module=__name__, argv=[sys.argv[0], *remaining], exit=False, verbosity=2).result
     METRICS.update(device=DEVICE, torch=torch.__version__, passed=result.wasSuccessful(),
                    tests=result.testsRun, failures=len(result.failures), errors=len(result.errors))
-    output = ROOT / "analysis" / f"correctness_{DEVICE}.json"
+    output = ROOT / "artifacts" / f"correctness_{DEVICE}.json"
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps(METRICS, indent=2), encoding="utf-8")
     sys.exit(not result.wasSuccessful())

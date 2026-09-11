@@ -7,15 +7,17 @@ import subprocess
 import sys
 
 from extension_loader import ROOT, load_extension
-from benchmark_corrected import load_legacy
 
 
 def find_tool(kind, explicit):
     if explicit:
-        return str(pathlib.Path(explicit).resolve())
+        path = pathlib.Path(explicit).resolve()
+        if os.name == "nt" and path.suffix.lower() in (".bat", ".cmd"):
+            raise ValueError("Pass the profiler .exe, not a batch wrapper")
+        return str(path)
     name = "nsys" if kind == "systems" else "ncu"
     found = shutil.which(name)
-    if found and not found.endswith(".bat"):
+    if found and not found.lower().endswith((".bat", ".cmd")):
         return found
     if os.name == "nt":
         vendor = pathlib.Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "NVIDIA Corporation"
@@ -31,22 +33,20 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--kind", choices=("systems", "compute"), default="systems")
     parser.add_argument("--tool", help="Explicit profiler executable")
-    parser.add_argument("--variant", choices=("v2", "v6", "v7", "legacy"), default="v7")
+    parser.add_argument("--variant", choices=("v2", "v6", "v7"), default="v7")
     parser.add_argument("--scale", type=int, default=2)
     parser.add_argument("--C", type=int, default=32)
     parser.add_argument("--H", type=int, default=128)
     parser.add_argument("--W", type=int, default=128)
     parser.add_argument("--iters", type=int, default=10)
-    parser.add_argument("--output", default="analysis/profiles")
+    parser.add_argument("--output", default="artifacts/profiles")
     args = parser.parse_args()
     load_extension()
-    if args.variant == "legacy":
-        load_legacy()
     tool = find_tool(args.kind, args.tool)
     folder = (ROOT / args.output).resolve()
     folder.mkdir(parents=True, exist_ok=True)
     stem = folder / f"{args.kind}_{args.variant}_s{args.scale}"
-    target = [sys.executable, str(ROOT / "test" / "benchmark_corrected.py"), "--profile",
+    target = [sys.executable, str(ROOT / "test" / "benchmark.py"), "--profile",
               "--variant",args.variant,"--scale",str(args.scale),"--C",str(args.C),
               "--H",str(args.H),"--W",str(args.W),"--iters",str(args.iters)]
     if args.kind == "systems":

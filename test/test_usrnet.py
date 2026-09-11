@@ -1,4 +1,4 @@
-"""Strict checkpoint integration test for combined residual/fused USRNet."""
+"""Check pretrained USRNet outputs across the Python and CUDA backends."""
 import json
 import sys
 
@@ -44,7 +44,9 @@ def main():
                 rows.append(row)
                 print(json.dumps(row),flush=True)
                 torch.ops.converse2d.clear_cache()
-    (ROOT/"analysis/combined_usrnet_checkpoint.json").write_text(json.dumps({"tf32":False,"results":rows},indent=2),encoding="utf-8")
+    output=ROOT/"artifacts/usrnet_pretrained.json"
+    output.parent.mkdir(parents=True,exist_ok=True)
+    output.write_text(json.dumps({"tf32":False,"results":rows},indent=2),encoding="utf-8")
 
 
 if __name__=="__main__": main()

@@ -51,7 +51,9 @@ def main():
                 torch.ops.converse2d.clear_cache()
     data = {"installed_package":args.installed,"tf32":False,
             "input":"seeded random [0,1], 24x32", "results":results}
-    (ROOT / "analysis" / "pretrained_smoke.json").write_text(json.dumps(data,indent=2),encoding="utf-8")
+    output=ROOT / "artifacts" / "pretrained_smoke.json"
+    output.parent.mkdir(parents=True,exist_ok=True)
+    output.write_text(json.dumps(data,indent=2),encoding="utf-8")
     print(json.dumps(data,indent=2))
 
 

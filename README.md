@@ -69,6 +69,9 @@ Models
 Codes
 ----------
 
+* [Converse2D](Converse2D/README.md): _Current C++/CUDA operator, installation and API_
+* [Tests and profiling](test/README.md): _Numerical regressions, pretrained-model checks and benchmarks_
+
 * [main_test_converse_dncnn.py](main_test_converse_dncnn.py):  _Code to denoise images by Converse-DnCNN_
 * [main_test_converse_srresnet.py](main_test_converse_srresnet.py):  _Code to super-resolve LR images by Converse-SRResNet_
 * [main_test_converse_usrnet.py](main_test_converse_usrnet.py):  _Code to super-resolve LR images by Converse-USRNet_
