@@ -1,6 +1,9 @@
+import os
 import torch
 import torch.nn as nn
-from models.util_converse import sequential, ConverseBlock, ConverseBlockAlphaVariant
+from models.util_converse import sequential, Converse2D, ConverseBlock, ConverseBlockAlphaVariant
+from models import util_converse as converse_utils
+from models.converse_core import converse2d_reference
 # from utils import utils_image as util
 import torch.fft
 import torch.nn.init as init
@@ -31,41 +34,52 @@ class MultiConverseBlockAlphaVariant(nn.Module):
 # --------------------------------------------
 """
 class ConvReverseDataNet(nn.Module):
-    def __init__(self,eps=1e-3):
+    def __init__(self,eps=1e-3,backend="auto",variant="v7"):
         super(ConvReverseDataNet, self).__init__()
         '''
         Converse2d operator for condition the kernel
         '''
         self.alpha = nn.Parameter(torch.zeros(1, 64, 1, 1))
         self.eps = eps
+        self.backend = backend.lower()
+        self.variant = variant.lower()
+        if self.backend not in ("auto", "cuda", "pytorch"):
+            raise ValueError("backend must be auto, cuda or pytorch")
+        if self.variant not in ("v2", "v3", "v4", "v5", "v6", "v7"):
+            raise ValueError("variant must be v2-v7")
     def forward(self, x, k, sf, padding = 0, padding_mode = 'circular'):
 
+        output_dtype = x.dtype
+        # Mixed precision from the surrounding network may leave alpha/kernel
+        # in float32. Promote before dispatch while preserving each gradient.
+        if k.dtype != x.dtype or self.alpha.dtype != x.dtype:
+            dtype = torch.promote_types(torch.promote_types(x.dtype, k.dtype), self.alpha.dtype)
+            if dtype in (torch.float16, torch.bfloat16):
+                dtype = torch.float32
+            x, k, alpha = x.to(dtype), k.to(dtype), self.alpha.to(dtype)
+        else:
+            alpha = self.alpha
         if padding > 0:
             x = nn.functional.pad(x, pad=[padding, padding, padding, padding], mode=padding_mode, value=0)
-        self.biaseps = torch.sigmoid(self.alpha-9.0) + self.eps
-        _, _, h, w = x.shape
-        STy = self.upsample(x, sf)
-        if sf != 1:
-            x = nn.functional.interpolate(x, scale_factor=sf, mode='nearest')
-        
-        FB = self.p2o(k, (h*sf, w*sf))
-        FBC = torch.conj(FB)
-        F2B = torch.pow(torch.abs(FB), 2)
-
-        FBFy = FBC*torch.fft.fftn(STy, dim=(-2, -1))
-        FR = FBFy + torch.fft.fftn(self.biaseps*x, dim=(-2,-1))
-        x1 = FB.mul(FR)
-        FBR = torch.mean(self.splits(x1, sf), dim=-1, keepdim=False)
-        invW = torch.mean(self.splits(F2B, sf), dim=-1, keepdim=False)
-        invWBR = FBR.div(invW + self.biaseps)
-        FCBinvWBR = FBC*invWBR.repeat(1, 1, sf, sf)
-        FX = (FR-FCBinvWBR)/self.biaseps
-        out = torch.real(torch.fft.ifftn(FX, dim=(-2, -1)))
+        x0 = x if sf == 1 else F.interpolate(x, scale_factor=sf, mode='nearest')
+        backend = (os.environ.get("CONVERSE2D_BACKEND", "") or self.backend).lower()
+        if backend not in ("auto", "cuda", "pytorch"):
+            raise ValueError("backend must be auto, cuda or pytorch")
+        available = False
+        if backend != "pytorch" and x.is_cuda:
+            converse_utils._try_import_converse2d_ext()
+            available = hasattr(torch.ops.converse2d, "forward")
+        if backend == "cuda" and not available:
+            raise RuntimeError("ConvReverseDataNet backend='cuda' but CUDA extension is unavailable")
+        if available:
+            out = torch.ops.converse2d.forward(x,x0,k,alpha,sf,float(self.eps),self.variant)
+        else:
+            out = converse2d_reference(x,x0,k,alpha,sf,self.eps)
 
         if padding > 0:
             out = out[..., padding*sf:-padding*sf, padding*sf:-padding*sf]
 
-        return out
+        return out.to(output_dtype)
     def splits(self, a, scale):
         '''
         Split tensor `a` into `scale x scale` distinct blocks.
@@ -176,11 +190,15 @@ class ConverseNet(nn.Module):
 # --------------------------------------------
 """
 class ConverseUSRNet(nn.Module):
-    def __init__(self, num_iterations=5, in_channels=64, num_blocks=7):
+    def __init__(self, num_iterations=5, in_channels=64, num_blocks=7, backend="auto", variant="v7"):
         super(ConverseUSRNet, self).__init__()
 
-        self.d = ConvReverseDataNet()
+        self.d = ConvReverseDataNet(backend=backend, variant=variant)
         self.p = MultiConverseBlockAlphaVariant(in_channels=in_channels, num_blocks=num_blocks)
+        for layer in self.p.modules():
+            if isinstance(layer, Converse2D):
+                layer.backend = self.d.backend
+                layer.variant = self.d.variant
         self.conv1 = nn.Conv2d(3, 64, 1, 1, 0)
         self.conv2 = nn.Conv2d(64, 3, 1, 1, 0)
         self.kernelnet = KernelNet()

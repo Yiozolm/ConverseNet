@@ -25,48 +25,54 @@ __device__ c10::complex<T> read_frequency(const c10::complex<T>* data,
 template <typename T>
 __global__ void correction_scale_one(const c10::complex<T>* fy,
     const c10::complex<T>* fx0, const c10::complex<T>* fb, const T* invw,
-    const T* lambda, c10::complex<T>* out, int64_t total, int64_t pixels, int64_t channels) {
+    const T* lambda, c10::complex<T>* out, int64_t total, int64_t pixels, int64_t channels,
+    int64_t kernel_batches, int64_t kernel_channels) {
     const int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= total) return;
-    const int64_t c = (i / pixels) % channels, p = i % (channels * pixels);
+    const int64_t bc = i / pixels, c = bc % channels;
+    const int64_t kc = (kernel_batches == 1 ? 0 : bc / channels) * kernel_channels +
+                       (kernel_channels == 1 ? 0 : c);
+    const int64_t p = kc * pixels + i % pixels;
     out[i] = fx0[i] + conjugate(fb[p]) * ((fy[i] - fb[p] * fx0[i]) / (invw[p] + lambda[c]));
 }
 
 template <typename T, bool HALF, int SCALE, typename I>
 __global__ void alias_correction(const c10::complex<T>* fy, const c10::complex<T>* fx0,
     const c10::complex<T>* fb, const T* invw, const T* lambda, c10::complex<T>* q,
-    I total, I C, I H, I W, I dynamic_scale) {
+    I total, I C, I H, I W, I dynamic_scale, I KB, I KC) {
     const I s = SCALE ? SCALE : dynamic_scale;
     const I i = I(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= total) return;
     const I stored_w = HALF ? W / 2 + 1 : W;
     const I w = i % stored_w, h = (i / stored_w) % H;
     const I bc = i / (H * stored_w), c = bc % C;
+    const I kc = (KB == 1 ? 0 : bc / C) * KC + (KC == 1 ? 0 : c);
     c10::complex<T> sum(0, 0);
     #pragma unroll
     for (I di = 0; di < s; ++di) {
         #pragma unroll
         for (I dj = 0; dj < s; ++dj) {
             const auto hh = h + di * H, ww = w + dj * W;
-            sum += read_frequency<T, HALF>(fb, c, hh, ww, H*s, W*s) *
+            sum += read_frequency<T, HALF>(fb, kc, hh, ww, H*s, W*s) *
                    read_frequency<T, HALF>(fx0, bc, hh, ww, H*s, W*s);
         }
     }
     // No float literal: double inputs retain double precision, including s=3.
-    q[i] = (fy[i] - sum / (T(s)*T(s))) / (invw[(c*H+h)*stored_w+w] + lambda[c]);
+    q[i] = (fy[i] - sum / (T(s)*T(s))) / (invw[(kc*H+h)*stored_w+w] + lambda[c]);
 }
 
 template <typename T, bool HALF, typename I>
 __global__ void apply_correction(const c10::complex<T>* fx0,
     const c10::complex<T>* fb, const c10::complex<T>* q, c10::complex<T>* out,
-    I total, I C, I H, I W, I s) {
+    I total, I C, I H, I W, I s, I KB, I KC) {
     const I i = I(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= total) return;
     const I Hs = H*s, Ws = W*s, stored_w = HALF ? Ws/2+1 : Ws;
     const I w = i % stored_w, h = (i / stored_w) % Hs;
     const I bc = i / (Hs * stored_w), c = bc % C;
+    const I kc = (KB == 1 ? 0 : bc / C) * KC + (KC == 1 ? 0 : c);
     auto correction = read_frequency<T, HALF>(q, bc, h % H, w % W, H, W);
-    out[i] = fx0[i] + conjugate(fb[(c*Hs+h)*stored_w+w]) * correction;
+    out[i] = fx0[i] + conjugate(fb[(kc*Hs+h)*stored_w+w]) * correction;
 }
 
 template <typename T, bool HALF, typename I>
@@ -78,23 +84,24 @@ void launch_scaled(const at::Tensor& y, const at::Tensor& prior, const at::Tenso
     constexpr int threads = 256;
     const I nq = I(q.numel()), n = I(prior.numel()), C = I(prior.size(1));
     const I H = I(h), W = I(w), s = I(scale);
+    const I KB = I(kernel.size(0)), KC = I(kernel.size(1));
     const auto blocks_q = (q.numel()+threads-1)/threads;
     // Specialize common scales to remove loop control and repeated address work.
     if (s == 2) {
         alias_correction<T,HALF,2,I><<<blocks_q, threads, 0, stream>>>(
             y.data_ptr<z>(), prior.data_ptr<z>(), kernel.data_ptr<z>(), denom.data_ptr<T>(),
-            lambda.data_ptr<T>(), q.data_ptr<z>(), nq, C, H, W, s);
+            lambda.data_ptr<T>(), q.data_ptr<z>(), nq, C, H, W, s, KB, KC);
     } else if (s == 3) {
         alias_correction<T,HALF,3,I><<<blocks_q, threads, 0, stream>>>(
             y.data_ptr<z>(), prior.data_ptr<z>(), kernel.data_ptr<z>(), denom.data_ptr<T>(),
-            lambda.data_ptr<T>(), q.data_ptr<z>(), nq, C, H, W, s);
+            lambda.data_ptr<T>(), q.data_ptr<z>(), nq, C, H, W, s, KB, KC);
     } else {
         alias_correction<T,HALF,0,I><<<blocks_q, threads, 0, stream>>>(
             y.data_ptr<z>(), prior.data_ptr<z>(), kernel.data_ptr<z>(), denom.data_ptr<T>(),
-            lambda.data_ptr<T>(), q.data_ptr<z>(), nq, C, H, W, s);
+            lambda.data_ptr<T>(), q.data_ptr<z>(), nq, C, H, W, s, KB, KC);
     }
     apply_correction<T,HALF,I><<<(prior.numel()+threads-1)/threads, threads, 0, stream>>>(
-        prior.data_ptr<z>(), kernel.data_ptr<z>(), q.data_ptr<z>(), out.data_ptr<z>(), n, C, H, W, s);
+        prior.data_ptr<z>(), kernel.data_ptr<z>(), q.data_ptr<z>(), out.data_ptr<z>(), n, C, H, W, s, KB, KC);
 }
 
 at::Tensor converse_spectral_cuda(const at::Tensor& fy, const at::Tensor& fx0,
@@ -113,7 +120,8 @@ at::Tensor converse_spectral_cuda(const at::Tensor& fy, const at::Tensor& fx0,
         if (s == 1) {
             correction_scale_one<scalar_t><<<(n+threads-1)/threads, threads, 0, stream>>>(
                 y.data_ptr<z>(), prior.data_ptr<z>(), kernel.data_ptr<z>(), denom.data_ptr<scalar_t>(),
-                lambda.data_ptr<scalar_t>(), out.data_ptr<z>(), n, n/(prior.size(0)*C), C);
+                lambda.data_ptr<scalar_t>(), out.data_ptr<z>(), n, n/(prior.size(0)*C), C,
+                kernel.size(0), kernel.size(1));
         } else {
             const bool small = n <= INT_MAX - threads && H*s <= INT_MAX && W*s <= INT_MAX;
             if (half) {

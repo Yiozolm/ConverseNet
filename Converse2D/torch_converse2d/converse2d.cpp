@@ -109,9 +109,10 @@ Tensor converse2d_forward(Tensor x, Tensor x0, Tensor weight, Tensor bias,
     TORCH_CHECK(H <= INT64_MAX / scale && W <= INT64_MAX / scale, "output size overflow");
     const int64_t Hs = H * scale, Ws = W * scale;
     TORCH_CHECK(x0.sizes() == at::IntArrayRef({B,C,Hs,Ws}), "x0 must be (B,C,H*scale,W*scale)");
-    TORCH_CHECK(weight.dim() == 4 && weight.size(0) == 1 && weight.size(1) == C &&
+    TORCH_CHECK(weight.dim() == 4 && (weight.size(0) == 1 || weight.size(0) == B) &&
+                (weight.size(1) == 1 || weight.size(1) == C) &&
                 weight.size(2) > 0 && weight.size(3) > 0 && weight.size(2) <= Hs && weight.size(3) <= Ws,
-                "weight must be (1,C,kh,kw) and kernel must fit output");
+                "weight must be (1|B,1|C,kh,kw) and kernel must fit output");
     TORCH_CHECK(bias.sizes() == at::IntArrayRef({1,C,1,1}), "bias must be (1,C,1,1)");
     TORCH_CHECK(x.is_floating_point() && (x.scalar_type() == at::kFloat || x.scalar_type() == at::kDouble ||
                 x.scalar_type() == at::kHalf || x.scalar_type() == at::kBFloat16), "unsupported input dtype");

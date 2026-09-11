@@ -22,8 +22,8 @@ def validate_inputs(x, x0, weight, bias, scale, eps):
     b, c, h, w = x.shape
     if x0.shape != (b, c, h * scale, w * scale):
         raise ValueError("x0 must have shape (B,C,H*scale,W*scale)")
-    if weight.ndim != 4 or weight.shape[:2] != (1, c):
-        raise ValueError("weight must have shape (1,C,kh,kw)")
+    if weight.ndim != 4 or weight.shape[0] not in (1, b) or weight.shape[1] not in (1, c):
+        raise ValueError("weight must have shape (1|B,1|C,kh,kw)")
     if not (0 < weight.shape[2] <= h * scale and 0 < weight.shape[3] <= w * scale):
         raise ValueError("kernel must fit within the output spatial dimensions")
     if bias.shape != (1, c, 1, 1):
