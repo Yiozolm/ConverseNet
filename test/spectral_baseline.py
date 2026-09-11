@@ -9,6 +9,15 @@ from extension_loader import ROOT
 BASELINE_REF = '19c1bfc7c98fbf8c6c4f9e07393d581431008103'
 
 
+class _FrozenBaseline:
+    """Adapt the historical ABI to the current six-argument test interface."""
+    def forward(self, x, x0, weight, bias, scale, eps=1e-5):
+        return torch.ops.baseline_converse2d.forward(x, x0, weight, bias, scale, eps, 'v7')
+
+    def __getattr__(self, name):
+        return getattr(torch.ops.baseline_converse2d, name)
+
+
 def load_baseline():
     build = ROOT / '.build' / 'spectral_baseline' / BASELINE_REF[:12]
     build.mkdir(parents=True, exist_ok=True)
@@ -17,7 +26,7 @@ def load_baseline():
         if not library.exists():
             raise RuntimeError('Build test/spectral_baseline.py before profiling with CONVERSE2D_SKIP_BUILD=1')
         torch.ops.load_library(str(library))
-        return torch.ops.baseline_converse2d
+        return _FrozenBaseline()
     sources = []
     for name in ('converse2d.cpp', 'converse2d_kernels.cu'):
         original = subprocess.check_output([
@@ -38,7 +47,7 @@ def load_baseline():
                        extra_cflags=flags + ['-DCONVERSE2D_WITH_CUDA=1'],
                        extra_cuda_cflags=['-O3', '-lineinfo'], with_cuda=True,
                        build_directory=str(build), verbose=False)
-    return torch.ops.baseline_converse2d
+    return _FrozenBaseline()
 
 
 if __name__ == '__main__':

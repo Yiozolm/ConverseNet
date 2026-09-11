@@ -16,7 +16,6 @@ sys.path.insert(0, str(ROOT))
 from extension_loader import load_extension
 from models.converse_core import converse2d_reference
 
-VARIANTS = tuple(f"v{i}" for i in range(2, 8))
 DEVICE = "cuda"
 METRICS = {"forward_cases": 0, "gradient_cases": 0, "max_abs": {}}
 
@@ -29,8 +28,8 @@ def inputs(s=2, h=5, w=6, c=2, b=2, dtype=torch.float64, grad=False):
     return tuple(t.requires_grad_(grad) for t in (x, prior, weight, bias))
 
 
-def op(args, s, variant="v7", eps=1e-5):
-    return torch.ops.converse2d.forward(*args, s, eps, variant)
+def op(args, s, eps=1e-5):
+    return torch.ops.converse2d.forward(*args, s, eps)
 
 
 def dense_spatial(args, s, eps):
@@ -62,7 +61,7 @@ class Correctness(unittest.TestCase):
     def setUp(self):
         torch.ops.converse2d.clear_cache()
 
-    def test_forward_all_variants(self):
+    def test_forward_shapes_and_dtypes(self):
         for dtype in (torch.float64, torch.float32):
             for h, w in ((5, 6), (6, 5), (5, 5), (6, 6), (1, 3), (3, 1), (1, 1)):
                 for s in (1, 2, 3):
@@ -70,15 +69,14 @@ class Correctness(unittest.TestCase):
                     if h*s < 3 or w*s < 3:
                         args = (*args[:2], args[2][..., :h*s, :w*s], args[3])
                     reference = converse2d_reference(*args, s)
-                    for variant in VARIANTS:
-                        with self.subTest(dtype=dtype, h=h, w=w, s=s, variant=variant), torch.no_grad():
-                            out = op(args, s, variant)
-                            tol = 2e-10 if dtype == torch.float64 else 3e-5
-                            torch.testing.assert_close(out, reference, atol=tol, rtol=tol)
-                            error = (out-reference).abs().max().item()
-                            key = f"{dtype}/{variant}"
-                            METRICS["max_abs"][key] = max(error, METRICS["max_abs"].get(key, 0))
-                            METRICS["forward_cases"] += 1
+                    with self.subTest(dtype=dtype, h=h, w=w, s=s), torch.no_grad():
+                        out = op(args, s)
+                        tol = 2e-10 if dtype == torch.float64 else 3e-5
+                        torch.testing.assert_close(out, reference, atol=tol, rtol=tol)
+                        error = (out-reference).abs().max().item()
+                        key = str(dtype)
+                        METRICS["max_abs"][key] = max(error, METRICS["max_abs"].get(key, 0))
+                        METRICS["forward_cases"] += 1
 
     def test_dense_solution_and_four_gradients(self):
         for s in (1, 2, 3):
@@ -86,43 +84,41 @@ class Correctness(unittest.TestCase):
             reference = dense_spatial(args, s, eps=1e-3)
             upstream = torch.randn_like(reference)
             expected_grads = torch.autograd.grad(reference, args, upstream)
-            for variant in VARIANTS:
-                with self.subTest(s=s, variant=variant):
-                    out = op(args, s, variant, eps=1e-3)
-                    actual_grads = torch.autograd.grad(out, args, upstream)
-                    torch.testing.assert_close(out, reference, atol=1e-9, rtol=1e-9)
-                    for actual, expected in zip(actual_grads, expected_grads):
-                        torch.testing.assert_close(actual, expected, atol=2e-8, rtol=2e-8)
-                    METRICS["gradient_cases"] += 1
+            with self.subTest(s=s):
+                out = op(args, s, eps=1e-3)
+                actual_grads = torch.autograd.grad(out, args, upstream)
+                torch.testing.assert_close(out, reference, atol=1e-9, rtol=1e-9)
+                for actual, expected in zip(actual_grads, expected_grads):
+                    torch.testing.assert_close(actual, expected, atol=2e-8, rtol=2e-8)
+                METRICS["gradient_cases"] += 1
 
     def test_gradcheck_and_gradgradcheck(self):
-        for variant, s in (("v6", 2), ("v7", 2), ("v7", 3)):
+        for s in (2, 3):
             args = inputs(s, h=2, w=3, c=1, b=1, grad=True)
-            f = lambda *a: op(a, s, variant, eps=1e-2)
+            f = lambda *a: op(a, s, eps=1e-2)
             self.assertTrue(torch.autograd.gradcheck(f, args, fast_mode=True, atol=2e-5, rtol=2e-4))
             self.assertTrue(torch.autograd.gradgradcheck(f, args, fast_mode=True, atol=2e-5, rtol=2e-4))
 
     def test_cache_mutation_and_training_transition(self):
-        for variant in VARIANTS:
-            args = inputs(2, grad=True)
-            with torch.inference_mode():
-                old = op(args, 2, variant).clone()
+        args = inputs(2, grad=True)
+        with torch.inference_mode():
+            old = op(args, 2).clone()
+        with torch.no_grad():
+            args[2].mul_(0.7)
+            args[2].add_(0.03)
+            new = op(args, 2)
+            expected = converse2d_reference(*args, 2)
+            torch.testing.assert_close(new, expected, atol=1e-10, rtol=1e-10)
+            self.assertGreater((new-old).abs().max().item(), 1e-3)
+        for _ in range(2):
+            out = op(args, 2)
+            reference = converse2d_reference(*args, 2)
+            actual = torch.autograd.grad(out.square().mean(), args)
+            expected = torch.autograd.grad(reference.square().mean(), args)
+            for a, e in zip(actual, expected):
+                torch.testing.assert_close(a, e, atol=1e-9, rtol=1e-9)
             with torch.no_grad():
-                args[2].mul_(0.7)
-                args[2].add_(0.03)
-                new = op(args, 2, variant)
-                expected = converse2d_reference(*args, 2)
-                torch.testing.assert_close(new, expected, atol=1e-10, rtol=1e-10)
-                self.assertGreater((new-old).abs().max().item(), 1e-3)
-            for _ in range(2):
-                out = op(args, 2, variant)
-                reference = converse2d_reference(*args, 2)
-                actual = torch.autograd.grad(out.square().mean(), args)
-                expected = torch.autograd.grad(reference.square().mean(), args)
-                for a, e in zip(actual, expected):
-                    torch.testing.assert_close(a, e, atol=1e-9, rtol=1e-9)
-                with torch.no_grad():
-                    args[2].add_(0.001)
+                args[2].add_(0.001)
 
     def test_cache_tensor_identity_and_inference_tensors(self):
         # Same-shaped new weights must not reuse another tensor's cached spectrum.
@@ -142,31 +138,28 @@ class Correctness(unittest.TestCase):
         args = inputs(3, h=5, w=7)
         args = tuple(t.transpose(-2, -1) for t in args)
         args = (*args[:2], args[2][..., :2, :], args[3])
-        for variant in VARIANTS:
-            with torch.no_grad():
-                torch.testing.assert_close(op(args, 3, variant), converse2d_reference(*args, 3), atol=1e-10, rtol=1e-10)
+        with torch.no_grad():
+            torch.testing.assert_close(op(args, 3), converse2d_reference(*args, 3), atol=1e-10, rtol=1e-10)
 
     def test_generic_scale_and_storage_replacement(self):
         args = inputs(4, h=3, w=5)
-        for variant in VARIANTS:
-            with torch.no_grad():
-                op(args, 4, variant)
-                replacement = torch.rand_like(args[2])
-                args[2].set_(replacement)
-                torch.testing.assert_close(op(args, 4, variant), converse2d_reference(*args, 4), atol=1e-10, rtol=1e-10)
+        with torch.no_grad():
+            op(args, 4)
+            replacement = torch.rand_like(args[2])
+            args[2].set_(replacement)
+            torch.testing.assert_close(op(args, 4), converse2d_reference(*args, 4), atol=1e-10, rtol=1e-10)
 
     def test_half_and_bfloat16_arbitrary_sizes(self):
         for dtype, tolerance in ((torch.float16, 0.008), (torch.bfloat16, 0.08)):
             for s in (1, 2, 3):
                 args = inputs(s, h=5, w=7, dtype=dtype, grad=True)
-                for variant in ("v2", "v6", "v7"):
-                    expected = converse2d_reference(*(t.float() for t in args), s)
-                    with torch.no_grad():
-                        out = op(args, s, variant)
-                    self.assertEqual(out.dtype, dtype)
-                    torch.testing.assert_close(out.float(), expected, atol=tolerance, rtol=tolerance)
-                    grads = torch.autograd.grad(op(args, s, variant).float().square().mean(), args)
-                    self.assertTrue(all(torch.isfinite(g).all() for g in grads))
+                expected = converse2d_reference(*(t.float() for t in args), s)
+                with torch.no_grad():
+                    out = op(args, s)
+                self.assertEqual(out.dtype, dtype)
+                torch.testing.assert_close(out.float(), expected, atol=tolerance, rtol=tolerance)
+                grads = torch.autograd.grad(op(args, s).float().square().mean(), args)
+                self.assertTrue(all(torch.isfinite(g).all() for g in grads))
 
     def test_nondefault_cuda_stream(self):
         if DEVICE != "cuda":
@@ -192,6 +185,20 @@ class Correctness(unittest.TestCase):
             op((args[0], args[1][..., :-1], *args[2:]), 2)
         with self.assertRaises(RuntimeError):
             op((args[0], args[1], args[2].float(), args[3]), 2)
+
+    def test_single_operator_api(self):
+        from models.util_converse import Converse2D
+        from models.converse_usrnet import ConvReverseDataNet, ConverseUSRNet
+        schema = torch.ops.converse2d.forward.default._schema
+        self.assertEqual([a.name for a in schema.arguments],
+                         ['x', 'x0', 'weight', 'bias', 'scale', 'eps'])
+        for constructor, arguments in ((Converse2D, (2,2,3)),
+                                       (ConvReverseDataNet, ()), (ConverseUSRNet, ())):
+            with self.assertRaises(TypeError):
+                constructor(*arguments, variant='v7')
+        args = inputs(2)
+        with self.assertRaises(RuntimeError):
+            torch.ops.converse2d.forward(*args, 2, 1e-5, 'v7')
 
     def test_module_padding_and_shared_prior(self):
         from models.util_converse import Converse2D

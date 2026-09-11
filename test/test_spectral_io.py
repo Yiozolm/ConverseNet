@@ -30,11 +30,11 @@ class SpectralIO(unittest.TestCase):
                     weight = torch.zeros(1, 2, 3, 3, device='cuda', dtype=dtype)
                     weight[..., 1, 1] = 1
                     bias = torch.zeros(1, 2, 1, 1, device='cuda', dtype=dtype)
-                    args = (x, x, weight, bias, 1, 1e-5, 'v7')
+                    args = (x, x, weight, bias, 1, 1e-5)
                     baseline = self.baseline.forward(*args)
                     actual = torch.ops.converse2d.forward(*args)
                     with torch.inference_mode():
-                        dynamic = torch.ops.converse2d.forward(x,x,weight.clone(),bias,1,1e-5,'v7')
+                        dynamic = torch.ops.converse2d.forward(x,x,weight.clone(),bias,1,1e-5)
                     # The exact closed form is x for an identity PSF and x0=x.
                     # Normalize before subtraction to measure subnormal errors.
                     multiplier = 1. / max(amplitude, 1e-300)
@@ -65,11 +65,11 @@ class SpectralIO(unittest.TestCase):
                             args = (x, prior, weight, bias, scale, 1e-8)
                             reference = converse2d_reference(*(t.double() if isinstance(t,torch.Tensor) else t for t in args))
                             with torch.no_grad():
-                                old = self.baseline.forward(*args, 'v7')
-                                cached = torch.ops.converse2d.forward(*args, 'v7')
+                                old = self.baseline.forward(*args)
+                                cached = torch.ops.converse2d.forward(*args)
                             with torch.inference_mode():
                                 # Inference tensors bypass the fixed-kernel cache.
-                                dynamic = torch.ops.converse2d.forward(x,prior,weight.clone(),bias,scale,1e-8,'v7')
+                                dynamic = torch.ops.converse2d.forward(x,prior,weight.clone(),bias,scale,1e-8)
                             tol = 1e-4 if dtype == torch.float32 else 1e-10
                             for result in (old, cached, dynamic):
                                 torch.testing.assert_close(result.double(),reference,atol=tol,rtol=tol)
@@ -83,7 +83,7 @@ class SpectralIO(unittest.TestCase):
                     bias = torch.zeros(1,2,1,1,device='cuda',dtype=dtype)
                     torch.ops.converse2d.begin_graph_cache()
                     try:
-                        torch.ops.converse2d.forward(x,x,weight,bias,1,1e-5,'v7')
+                        torch.ops.converse2d.forward(x,x,weight,bias,1,1e-5)
                     finally:
                         owned = torch.ops.converse2d.end_graph_cache()
                     padded = torch.nn.functional.pad(weight,(0,w-kw,0,h-kh))

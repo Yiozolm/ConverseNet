@@ -62,13 +62,12 @@ class BatchedKernels(unittest.TestCase):
                         data=data_for(s,kb,kc,dtype,h,w)
                         expected=converse2d_reference(*data,s)
                         with torch.no_grad():
-                            for variant in ("v2","v6","v7"):
-                                actual=torch.ops.converse2d.forward(*data,s,1e-5,variant)
-                                tol=2e-10 if dtype==torch.float64 else 5e-5
-                                torch.testing.assert_close(actual,expected,atol=tol,rtol=tol)
-                                METRICS["forward_cases"]+=1
-                                key=f"{dtype}/{variant}"
-                                METRICS["max_forward_error"][key]=max(METRICS["max_forward_error"].get(key,0),(actual-expected).abs().max().item())
+                            actual=torch.ops.converse2d.forward(*data,s,1e-5)
+                            tol=2e-10 if dtype==torch.float64 else 5e-5
+                            torch.testing.assert_close(actual,expected,atol=tol,rtol=tol)
+                            METRICS["forward_cases"]+=1
+                            key=str(dtype)
+                            METRICS["max_forward_error"][key]=max(METRICS["max_forward_error"].get(key,0),(actual-expected).abs().max().item())
 
     def test_dense_and_broadcast_gradients(self):
         for s in (1,2,3):
@@ -77,12 +76,11 @@ class BatchedKernels(unittest.TestCase):
                 expected=dense(data,s,1e-3)
                 upstream=torch.randn_like(expected)
                 eg=torch.autograd.grad(expected,data,upstream)
-                for variant in ("v2","v6","v7"):
-                    actual=torch.ops.converse2d.forward(*data,s,1e-3,variant)
-                    ag=torch.autograd.grad(actual,data,upstream)
-                    torch.testing.assert_close(actual,expected,atol=1e-9,rtol=1e-9)
-                    for a,e in zip(ag,eg): torch.testing.assert_close(a,e,atol=2e-8,rtol=2e-8)
-                    METRICS["gradient_cases"]+=1
+                actual=torch.ops.converse2d.forward(*data,s,1e-3)
+                ag=torch.autograd.grad(actual,data,upstream)
+                torch.testing.assert_close(actual,expected,atol=1e-9,rtol=1e-9)
+                for a,e in zip(ag,eg): torch.testing.assert_close(a,e,atol=2e-8,rtol=2e-8)
+                METRICS["gradient_cases"]+=1
 
     def test_dynamic_kernel_and_cache(self):
         for kb,kc in ((1,1),(2,2)):
@@ -149,7 +147,7 @@ class BatchedKernels(unittest.TestCase):
 
     def test_batch_gradcheck(self):
         data=tuple(t.requires_grad_() for t in data_for(2,2,1,h=2,w=3))
-        fn=lambda *args: torch.ops.converse2d.forward(*args,2,1e-2,"v7")
+        fn=lambda *args: torch.ops.converse2d.forward(*args,2,1e-2)
         self.assertTrue(torch.autograd.gradcheck(fn,data,fast_mode=True,atol=1e-5,rtol=1e-4))
         self.assertTrue(torch.autograd.gradgradcheck(fn,data,fast_mode=True,atol=1e-5,rtol=1e-4))
 

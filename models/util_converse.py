@@ -100,7 +100,7 @@ def sequential(*args):
 # --------------------------------------------
 """
 class Converse2D(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, scale=1, padding=2, padding_mode='circular', eps=1e-5, backend: str = "auto", variant: str = "v7"):
+    def __init__(self, in_channels, out_channels, kernel_size, scale=1, padding=2, padding_mode='circular', eps=1e-5, backend: str = "auto"):
         super(Converse2D, self).__init__()
         """
         Converse2D Operator for Image Restoration Tasks.
@@ -119,8 +119,6 @@ class Converse2D(nn.Module):
                                 Default is a small value like 1e-5.
             backend (str, optional): Backend for computing the convolution. One of {'auto', 'cuda', 'pytorch'}.
                                         Default is 'auto'.
-            variant (str, optional): Corrected CUDA implementation label, v2-v7.
-                                     Default v7 uses real FFT; v3-v6 share the full-FFT implementation.
 
         Returns:
             Tensor: Output tensor of shape (N, out_channels, H * scale, W * scale), where spatial dimensions
@@ -135,9 +133,6 @@ class Converse2D(nn.Module):
         self.padding_mode = padding_mode
         self.eps = eps
         self.backend = backend.lower()
-        self.variant = variant.lower()
-        if self.variant not in ("v2", "v3", "v4", "v5", "v6", "v7"):
-            raise ValueError("variant must be v2, v3, v4, v5, v6 or v7")
         if self.backend not in ("auto", "cuda", "pytorch"):
             raise ValueError(f"backend must be 'auto' | 'cuda' | 'pytorch', got: {self.backend}")    
 
@@ -172,7 +167,7 @@ class Converse2D(nn.Module):
         if use_cuda_backend:
             x0 = x if self.scale == 1 else F.interpolate(x, scale_factor=self.scale, mode='nearest')
             out = torch.ops.converse2d.forward(
-                x, x0, self.weight, self.bias, int(self.scale), float(self.eps), self.variant
+                x, x0, self.weight, self.bias, int(self.scale), float(self.eps)
             )
         else:
             x0 = x if self.scale == 1 else F.interpolate(x, scale_factor=self.scale, mode='nearest')

@@ -2,7 +2,15 @@ from setuptools import setup
 from torch.utils.cpp_extension import CppExtension, CUDAExtension, BuildExtension
 import os, pathlib
 import torch
+from torch.utils import cpp_extension
 from torch.utils.cpp_extension import CUDA_HOME
+
+if os.name == "nt":
+    if os.environ.get("CONVERSE2D_BUILD_PATH"):
+        os.environ["PATH"] = os.environ["CONVERSE2D_BUILD_PATH"]
+    os.environ.setdefault("VSLANG", "1033")
+    # Headless Windows shells may not provide a valid OEM code page.
+    cpp_extension.SUBPROCESS_DECODE_ARGS = ("utf-8", "replace")
 
 PKG_DIR = pathlib.Path(__file__).resolve().parent / "torch_converse2d"
 
@@ -44,7 +52,7 @@ print(f"[setup.py] TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST','
 
 setup(
     name="torch_converse2d",
-    version="0.3.0",
+    version="0.4.0",
     description="Converse2D CUDA extension for PyTorch",
     packages=["torch_converse2d"],
     ext_modules=[ext],

@@ -96,7 +96,7 @@ class USRNetCUDAGraph:
         if any(t.is_inference() for t in tensors):
             raise ValueError("create model tensors outside inference_mode for version tracking")
         # Public scalar/tuple attributes contain the built-in modules' eps,
-        # padding, iterations, backend, variant, normalization shape, etc.
+        # padding, iterations, backend, normalization shape, etc.
         config = tuple((id(m), type(m), tuple(
             (name, value) for name, value in vars(m).items()
             if not name.startswith('_') and isinstance(value, (str, int, float, bool, tuple, type(None)))

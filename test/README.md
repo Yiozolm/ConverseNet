@@ -19,7 +19,8 @@ python test/test_spectral_io.py
 ```
 
 - `test_correctness.py` (also exposed by `test_error.py`): independent dense
-  spatial solves, forward/gradient agreement, first/second derivatives, odd/even
+  spatial solves, the six-argument operator API, forward/gradient agreement,
+  first/second derivatives, odd/even
   and singleton sizes, low precision, padding, mutation-aware caches and streams.
 - `test_batched_kernels.py`: per-sample/channel-shared kernels, dynamic-kernel
   gradients, DataNet mixed precision and USRNet end-to-end training.
@@ -50,11 +51,11 @@ package built in `Converse2D/` instead of the local JIT build.
 ```sh
 python test/test_speed.py
 python test/test_speed.py --training
-python test/test_speed.py --single --variant v7 --B 1 --C 32 --H 128 --W 128 --scale 2
+python test/test_speed.py --single --B 1 --C 32 --H 128 --W 128 --scale 2
 ```
 
-`test_speed.py` invokes `benchmark.py`. The default grid compares the current v2,
-v6 and v7 paths using identical inputs and a float64 reference check. Timings
+`test_speed.py` invokes `benchmark.py`. The default grid measures the single
+fused solver across shapes and scales, with a float64 reference check. Timings
 include CUDA events, wall time and incremental peak allocated memory. Training
 includes forward plus gradients for x/x0/weight/bias.
 
@@ -90,8 +91,8 @@ emits baseline/optimized NVTX ranges for dynamic s2 inside a CUDA profiler range
 ## Nsight
 
 ```sh
-python test/profile_nsight.py --kind systems --variant v7 --scale 2
-python test/profile_nsight.py --kind compute --variant v7 --scale 2
+python test/profile_nsight.py --kind systems --scale 2
+python test/profile_nsight.py --kind compute --scale 2
 python test/profile_nsight.py --kind compute --set full --C 64 --scale 2
 python test/profile_nsight.py --kind compute --set basic --C 64 --scale 2 --cache-control none --replay-mode application --output artifacts/profiles/warm
 ```
@@ -107,8 +108,7 @@ memory, instruction and warp-stall analysis. Application replay with
 `--cache-control none` preserves the workload's preceding cache activity, at the
 cost of rerunning the process per pass. Compare like-for-like collection settings;
 NCU kernel durations are not end-to-end inference timings. Use distinct output
-directories to retain multiple shapes or collection policies for the same variant
-and scale.
+directories to retain multiple shapes or collection policies for the same scale.
 
 `CONVERSE2D_SKIP_BUILD=1` loads the existing local extension without building.
 Only use it after compiling the current sources, for example inside a profiler.

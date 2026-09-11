@@ -10,14 +10,14 @@
 #include <c10/cuda/CUDAGraphsC10Utils.h>
 #include <c10/cuda/CUDAStream.h>
 at::Tensor converse_spectral_cuda(const at::Tensor&, const at::Tensor&,
-    const at::Tensor&, const at::Tensor&, const at::Tensor&, int64_t, int64_t, int64_t, bool);
+    const at::Tensor&, const at::Tensor&, const at::Tensor&, int64_t, int64_t, int64_t);
 at::Tensor converse_psf_cuda(const at::Tensor&, int64_t, int64_t);
 #endif
 
 using at::Tensor;
 
-// v2 is ATen/full FFT; v3-v6 share fused full FFT inference;
-// v7 uses Hermitian half spectra. All labels share the corrected algebra.
+// Stable residual closed form with Hermitian half spectra.
+// Inference fuses CUDA work; training retains differentiable ATen operations.
 static Tensor alias_mean(const Tensor& a, int64_t s) {
     if (s == 1) return a;
     const auto h = a.size(-2) / s, w = a.size(-1) / s;
@@ -38,7 +38,7 @@ struct CacheEntry {
     const void* data;
     uint32_t version;
     int64_t h, w, scale, stream;
-    bool real_fft, inference;
+    bool inference;
     size_t bytes;
 };
 static std::list<CacheEntry> cache;
@@ -53,7 +53,7 @@ constexpr size_t CACHE_BYTES_LIMIT = 256 * 1024 * 1024;
 constexpr size_t CACHE_ENTRIES_LIMIT = 64;
 
 static std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& weight,
-                                         int64_t h, int64_t w, int64_t s, bool real_fft) {
+                                         int64_t h, int64_t w, int64_t s) {
     bool cacheable = !at::GradMode::is_enabled() && !source.is_inference() && source.is_leaf();
     int64_t stream = 0;
 #ifdef CONVERSE2D_WITH_CUDA
@@ -81,7 +81,7 @@ static std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& we
                     continue;
                 }
                 if (it->h == h && it->w == w && it->scale == s && it->stream == stream &&
-                    it->real_fft == real_fft && it->inference == inference &&
+                    it->inference == inference &&
                     it->fb.device() == weight.device()) {
                     auto result = std::make_pair(it->fb, it->invw);
                     entries.splice(entries.begin(), entries, it);
@@ -94,7 +94,7 @@ static std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& we
     const auto kh = weight.size(2), kw = weight.size(3);
     Tensor otf;
 #ifdef CONVERSE2D_WITH_CUDA
-    const bool fused_prepare = weight.is_cuda() && !at::GradMode::is_enabled() && real_fft;
+    const bool fused_prepare = weight.is_cuda() && !at::GradMode::is_enabled();
     if (fused_prepare) otf = converse_psf_cuda(weight, h, w);
     else
 #endif
@@ -102,7 +102,7 @@ static std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& we
         otf = at::constant_pad_nd(weight, {0, w - kw, 0, h - kh}, 0);
         otf = at::roll(otf, {-(kh / 2), -(kw / 2)}, {-2, -1});
     }
-    auto fb = real_fft ? at::fft_rfft2(otf) : at::fft_fft2(otf);
+    auto fb = at::fft_rfft2(otf);
     Tensor invw;
 #ifdef CONVERSE2D_WITH_CUDA
     // Uncached dynamic kernels form the denominator in the same loop that
@@ -112,14 +112,14 @@ static std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& we
     {
         // ATen keeps both derivative paths during training.
         auto power = at::real(fb).square() + at::imag(fb).square();
-        invw = alias_mean(real_fft && s > 1 ? full_spectrum(power, w) : power, s);
-        if (real_fft && s > 1) invw = invw.slice(-1, 0, w / s / 2 + 1).contiguous();
+        invw = alias_mean(s > 1 ? full_spectrum(power, w) : power, s);
+        if (s > 1) invw = invw.slice(-1, 0, w / s / 2 + 1).contiguous();
     }
     if (cacheable) {
         const size_t bytes = fb.nbytes() + invw.nbytes() + source.nbytes();
         if (graph_cache_active || bytes <= CACHE_BYTES_LIMIT) {
             std::lock_guard<std::mutex> lock(cache_mutex);
-            entries.push_front({source, fb, invw, source.const_data_ptr(), version, h, w, s, stream, real_fft, inference, bytes});
+            entries.push_front({source, fb, invw, source.const_data_ptr(), version, h, w, s, stream, inference, bytes});
             if (!graph_cache_active) {
                 cache_bytes += bytes;
                 while (cache.size() > CACHE_ENTRIES_LIMIT || cache_bytes > CACHE_BYTES_LIMIT) {
@@ -133,9 +133,7 @@ static std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& we
 }
 
 Tensor converse2d_forward(Tensor x, Tensor x0, Tensor weight, Tensor bias,
-                          int64_t scale, double eps, const std::string& variant) {
-    TORCH_CHECK(variant == "v2" || variant == "v3" || variant == "v4" ||
-                variant == "v5" || variant == "v6" || variant == "v7", "unknown Converse2D variant");
+                          int64_t scale, double eps) {
     TORCH_CHECK(scale >= 1 && std::isfinite(eps) && eps > 0, "scale >= 1 and finite eps > 0 required");
     TORCH_CHECK(x.dim() == 4 && x.numel() > 0, "x must be nonempty (B,C,H,W)");
     auto B = x.size(0), C = x.size(1), H = x.size(2), W = x.size(3);
@@ -165,32 +163,31 @@ Tensor converse2d_forward(Tensor x, Tensor x0, Tensor weight, Tensor bias,
     x0 = same_prior ? x : x0.to(compute_dtype).contiguous();
     weight = weight.to(compute_dtype);
     bias = bias.to(compute_dtype).contiguous();
-    const bool real_fft = variant == "v7";
     auto lambda = at::sigmoid(bias - 9.0) + eps;
-    auto spectra = spectrum(source, weight, Hs, Ws, scale, real_fft);
+    auto spectra = spectrum(source, weight, Hs, Ws, scale);
     auto fb = spectra.first, invw = spectra.second;
-    auto fy = real_fft ? at::fft_rfft2(x) : at::fft_fft2(x);
-    auto fx0 = same_prior ? fy : (real_fft ? at::fft_rfft2(x0) : at::fft_fft2(x0));
+    auto fy = at::fft_rfft2(x);
+    auto fx0 = same_prior ? fy : at::fft_rfft2(x0);
     Tensor fx;
 #ifdef CONVERSE2D_WITH_CUDA
-    if (x.is_cuda() && !at::GradMode::is_enabled() && variant != "v2") {
-        fx = converse_spectral_cuda(fy, fx0, fb, invw, lambda, H, W, scale, real_fft);
+    if (x.is_cuda() && !at::GradMode::is_enabled()) {
+        fx = converse_spectral_cuda(fy, fx0, fb, invw, lambda, H, W, scale);
     } else
 #endif
     {
         auto prediction = fb * fx0;
-        if (real_fft && scale > 1) prediction = full_spectrum(prediction, Ws);
+        if (scale > 1) prediction = full_spectrum(prediction, Ws);
         prediction = alias_mean(prediction, scale);
-        if (real_fft && scale > 1) prediction = prediction.slice(-1, 0, W / 2 + 1);
+        if (scale > 1) prediction = prediction.slice(-1, 0, W / 2 + 1);
         auto correction = (fy - prediction) / (invw + lambda);
         if (scale > 1) {
-            if (real_fft) correction = full_spectrum(correction, W);
+            correction = full_spectrum(correction, W);
             correction = correction.repeat({1,1,scale,scale});
-            if (real_fft) correction = correction.slice(-1, 0, Ws / 2 + 1);
+            correction = correction.slice(-1, 0, Ws / 2 + 1);
         }
         fx = fx0 + fb.conj() * correction;
     }
-    auto out = real_fft ? at::fft_irfft2(fx, at::IntArrayRef({Hs,Ws})) : at::real(at::fft_ifft2(fx));
+    auto out = at::fft_irfft2(fx, at::IntArrayRef({Hs,Ws}));
     return out.to(output_dtype);
 }
 
@@ -222,7 +219,7 @@ std::vector<Tensor> end_graph_cache() {
 }
 
 TORCH_LIBRARY(converse2d, m) {
-    m.def("forward(Tensor x, Tensor x0, Tensor weight, Tensor bias, int scale, float eps=1e-5, str variant='v7') -> Tensor");
+    m.def("forward(Tensor x, Tensor x0, Tensor weight, Tensor bias, int scale, float eps=1e-5) -> Tensor");
     m.def("clear_cache() -> ()");
     m.def("supports_cuda_graphs() -> bool");
     m.def("begin_graph_cache() -> ()");

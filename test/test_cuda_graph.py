@@ -147,30 +147,29 @@ class CUDAGraphTests(unittest.TestCase):
         # spectra. Mutating weights after capture exposes stale cached values.
         stream = torch.cuda.Stream()
         stream.wait_stream(torch.cuda.current_stream())
-        for variant in ('v2', 'v6', 'v7'):
-            for scale in (1, 2, 3):
-                with self.subTest(variant=variant, scale=scale):
-                    w = torch.rand(1, 2, 3, 3, device='cuda')
-                    b = torch.zeros(1, 2, 1, 1, device='cuda')
-                    x = torch.rand(1, 2, 8, 10, device='cuda')
-                    x0 = torch.nn.functional.interpolate(x, scale_factor=scale)
-                    stream.wait_stream(torch.cuda.current_stream())
-                    def forward():
-                        return torch.ops.converse2d.forward(x, x0, w, b, scale, 1e-5, variant)
-                    with torch.cuda.stream(stream), torch.no_grad():
-                        for _ in range(3): forward()
-                    stream.synchronize()
-                    graph = torch.cuda.CUDAGraph()
-                    with torch.no_grad(), torch.cuda.graph(graph, stream=stream):
-                        output = forward()
-                    with torch.no_grad():
-                        w.mul_(.9)
-                        torch.ops.converse2d.clear_cache()
-                        expected = forward()
-                        graph.replay()
-                    torch.cuda.synchronize()
-                    torch.testing.assert_close(output, expected, atol=3e-5, rtol=3e-5)
-                    graph.reset()
+        for scale in (1, 2, 3):
+            with self.subTest(scale=scale):
+                w = torch.rand(1, 2, 3, 3, device='cuda')
+                b = torch.zeros(1, 2, 1, 1, device='cuda')
+                x = torch.rand(1, 2, 8, 10, device='cuda')
+                x0 = torch.nn.functional.interpolate(x, scale_factor=scale)
+                stream.wait_stream(torch.cuda.current_stream())
+                def forward():
+                    return torch.ops.converse2d.forward(x, x0, w, b, scale, 1e-5)
+                with torch.cuda.stream(stream), torch.no_grad():
+                    for _ in range(3): forward()
+                stream.synchronize()
+                graph = torch.cuda.CUDAGraph()
+                with torch.no_grad(), torch.cuda.graph(graph, stream=stream):
+                    output = forward()
+                with torch.no_grad():
+                    w.mul_(.9)
+                    torch.ops.converse2d.clear_cache()
+                    expected = forward()
+                    graph.replay()
+                torch.cuda.synchronize()
+                torch.testing.assert_close(output, expected, atol=3e-5, rtol=3e-5)
+                graph.reset()
 
     def test_failed_capture_releases_spectrum_scope(self):
         forward = self.model.forward

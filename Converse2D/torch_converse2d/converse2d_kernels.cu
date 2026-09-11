@@ -49,11 +49,11 @@ __device__ c10::complex<T> conjugate(c10::complex<T> z) {
     return {z.real(), -z.imag()};
 }
 
-template <typename T, bool HALF, typename I>
+template <typename T, typename I>
 __device__ c10::complex<T> read_frequency(const c10::complex<T>* data,
     I channel, I h, I w, I height, I width) {
-    const I stored_w = HALF ? width / 2 + 1 : width;
-    bool mirror = HALF && w > width / 2;
+    const I stored_w = width / 2 + 1;
+    bool mirror = w > width / 2;
     if (mirror) { h = (height - h) % height; w = width - w; }
     auto value = data[(channel * height + h) * stored_w + w];
     return mirror ? conjugate(value) : value;
@@ -75,14 +75,14 @@ __global__ void correction_scale_one(const c10::complex<T>* fy,
     out[i] = fx0[i] + conjugate(filter) * ((fy[i] - filter * fx0[i]) / (power + lambda[c]));
 }
 
-template <typename T, bool HALF, int SCALE, typename I, bool INLINE_POWER>
+template <typename T, int SCALE, typename I, bool INLINE_POWER>
 __global__ void alias_correction(const c10::complex<T>* fy, const c10::complex<T>* fx0,
     const c10::complex<T>* fb, const T* invw, const T* lambda, c10::complex<T>* q,
     I total, I C, I H, I W, I dynamic_scale, I KB, I KC) {
     const I s = SCALE ? SCALE : dynamic_scale;
     const I i = I(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= total) return;
-    const I stored_w = HALF ? W / 2 + 1 : W;
+    const I stored_w = W / 2 + 1;
     const I w = i % stored_w, h = (i / stored_w) % H;
     const I bc = i / (H * stored_w), c = bc % C;
     const I kc = (KB == 1 ? 0 : bc / C) * KC + (KC == 1 ? 0 : c);
@@ -93,8 +93,8 @@ __global__ void alias_correction(const c10::complex<T>* fy, const c10::complex<T
         #pragma unroll
         for (I dj = 0; dj < s; ++dj) {
             const auto hh = h + di * H, ww = w + dj * W;
-            const auto filter = read_frequency<T, HALF>(fb, kc, hh, ww, H*s, W*s);
-            sum += filter * read_frequency<T, HALF>(fx0, bc, hh, ww, H*s, W*s);
+            const auto filter = read_frequency<T>(fb, kc, hh, ww, H*s, W*s);
+            sum += filter * read_frequency<T>(fx0, bc, hh, ww, H*s, W*s);
             if constexpr (INLINE_POWER) power_sum += squared_norm(filter);
         }
     }
@@ -103,21 +103,21 @@ __global__ void alias_correction(const c10::complex<T>* fy, const c10::complex<T
     q[i] = (fy[i] - sum / (T(s)*T(s))) / (power + lambda[c]);
 }
 
-template <typename T, bool HALF, typename I>
+template <typename T, typename I>
 __global__ void apply_correction(const c10::complex<T>* fx0,
     const c10::complex<T>* fb, const c10::complex<T>* q, c10::complex<T>* out,
     I total, I C, I H, I W, I s, I KB, I KC) {
     const I i = I(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= total) return;
-    const I Hs = H*s, Ws = W*s, stored_w = HALF ? Ws/2+1 : Ws;
+    const I Hs = H*s, Ws = W*s, stored_w = Ws/2+1;
     const I w = i % stored_w, h = (i / stored_w) % Hs;
     const I bc = i / (Hs * stored_w), c = bc % C;
     const I kc = (KB == 1 ? 0 : bc / C) * KC + (KC == 1 ? 0 : c);
-    auto correction = read_frequency<T, HALF>(q, bc, h % H, w % W, H, W);
+    auto correction = read_frequency<T>(q, bc, h % H, w % W, H, W);
     out[i] = fx0[i] + conjugate(fb[(kc*Hs+h)*stored_w+w]) * correction;
 }
 
-template <typename T, bool HALF, typename I, bool INLINE_POWER = false>
+template <typename T, typename I, bool INLINE_POWER = false>
 void launch_scaled(const at::Tensor& y, const at::Tensor& prior, const at::Tensor& kernel,
                    const at::Tensor& denom, const at::Tensor& lambda,
                    at::Tensor& q, at::Tensor& out, int64_t h, int64_t w, int64_t scale,
@@ -131,25 +131,25 @@ void launch_scaled(const at::Tensor& y, const at::Tensor& prior, const at::Tenso
     const T* power = INLINE_POWER ? nullptr : denom.data_ptr<T>();
     // Specialize common scales to remove loop control and repeated address work.
     if (s == 2) {
-        alias_correction<T,HALF,2,I,INLINE_POWER><<<blocks_q, threads, 0, stream>>>(
+        alias_correction<T,2,I,INLINE_POWER><<<blocks_q, threads, 0, stream>>>(
             y.data_ptr<z>(), prior.data_ptr<z>(), kernel.data_ptr<z>(), power,
             lambda.data_ptr<T>(), q.data_ptr<z>(), nq, C, H, W, s, KB, KC);
     } else if (s == 3) {
-        alias_correction<T,HALF,3,I,INLINE_POWER><<<blocks_q, threads, 0, stream>>>(
+        alias_correction<T,3,I,INLINE_POWER><<<blocks_q, threads, 0, stream>>>(
             y.data_ptr<z>(), prior.data_ptr<z>(), kernel.data_ptr<z>(), power,
             lambda.data_ptr<T>(), q.data_ptr<z>(), nq, C, H, W, s, KB, KC);
     } else {
-        alias_correction<T,HALF,0,I,INLINE_POWER><<<blocks_q, threads, 0, stream>>>(
+        alias_correction<T,0,I,INLINE_POWER><<<blocks_q, threads, 0, stream>>>(
             y.data_ptr<z>(), prior.data_ptr<z>(), kernel.data_ptr<z>(), power,
             lambda.data_ptr<T>(), q.data_ptr<z>(), nq, C, H, W, s, KB, KC);
     }
-    apply_correction<T,HALF,I><<<(prior.numel()+threads-1)/threads, threads, 0, stream>>>(
+    apply_correction<T,I><<<(prior.numel()+threads-1)/threads, threads, 0, stream>>>(
         prior.data_ptr<z>(), kernel.data_ptr<z>(), q.data_ptr<z>(), out.data_ptr<z>(), n, C, H, W, s, KB, KC);
 }
 
 at::Tensor converse_spectral_cuda(const at::Tensor& fy, const at::Tensor& fx0,
     const at::Tensor& fb, const at::Tensor& invw, const at::Tensor& lambda,
-    int64_t H, int64_t W, int64_t s, bool half) {
+    int64_t H, int64_t W, int64_t s) {
     // FFT output stride is not assumed: PyTorch may return transposed FFT storage.
     auto y = fy.contiguous(), prior = fx0.contiguous(), kernel = fb.contiguous();
     auto denom = invw.defined() ? invw.contiguous() : at::Tensor();
@@ -168,17 +168,12 @@ at::Tensor converse_spectral_cuda(const at::Tensor& fy, const at::Tensor& fx0,
                 kernel.size(0), kernel.size(1));
         } else {
             const bool small = n <= INT_MAX - threads && H*s <= INT_MAX && W*s <= INT_MAX;
-            if (half) {
-                if (!denom.defined()) {
-                    if (small) launch_scaled<scalar_t,true,int,true>(y,prior,kernel,denom,lambda,q,out,H,W,s,stream);
-                    else launch_scaled<scalar_t,true,int64_t,true>(y,prior,kernel,denom,lambda,q,out,H,W,s,stream);
-                } else {
-                    if (small) launch_scaled<scalar_t,true,int>(y,prior,kernel,denom,lambda,q,out,H,W,s,stream);
-                    else launch_scaled<scalar_t,true,int64_t>(y,prior,kernel,denom,lambda,q,out,H,W,s,stream);
-                }
+            if (!denom.defined()) {
+                if (small) launch_scaled<scalar_t,int,true>(y,prior,kernel,denom,lambda,q,out,H,W,s,stream);
+                else launch_scaled<scalar_t,int64_t,true>(y,prior,kernel,denom,lambda,q,out,H,W,s,stream);
             } else {
-                if (small) launch_scaled<scalar_t,false,int>(y,prior,kernel,denom,lambda,q,out,H,W,s,stream);
-                else launch_scaled<scalar_t,false,int64_t>(y,prior,kernel,denom,lambda,q,out,H,W,s,stream);
+                if (small) launch_scaled<scalar_t,int>(y,prior,kernel,denom,lambda,q,out,H,W,s,stream);
+                else launch_scaled<scalar_t,int64_t>(y,prior,kernel,denom,lambda,q,out,H,W,s,stream);
             }
         }
     });

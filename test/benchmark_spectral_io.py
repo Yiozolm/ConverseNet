@@ -71,7 +71,7 @@ def main():
         bias = torch.zeros(1,64,1,1,device='cuda')
         with torch.inference_mode():
             def step(ns):
-                return ns.forward(x,prior,weight.clone(),bias,2,1e-5,'v7')
+                return ns.forward(x,prior,weight.clone(),bias,2,1e-5)
             torch.testing.assert_close(step(optimized),step(baseline),atol=1e-4,rtol=5e-5)
             for _ in range(5): step(baseline); step(optimized)
             torch.cuda.synchronize()
@@ -95,7 +95,7 @@ def main():
                 reference = converse2d_reference(x.double(),prior.double(),weight.double(),bias.double(),s,1e-5)
                 def call(ns):
                     k = weight.clone() if dynamic else weight
-                    return ns.forward(x,prior,k,bias,s,1e-5,'v7')
+                    return ns.forward(x,prior,k,bias,s,1e-5)
                 old, new = call(baseline), call(optimized)
                 for out in (old,new):
                     torch.testing.assert_close(out.double(),reference,atol=1e-4,rtol=5e-5)

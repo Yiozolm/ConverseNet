@@ -40,9 +40,8 @@ def measure(fn, warmup, iters):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", action="store_true")
-    parser.add_argument("--single", action="store_true", help="Benchmark only the requested shape and variant")
+    parser.add_argument("--single", action="store_true", help="Benchmark only the requested shape")
     parser.add_argument("--training", action="store_true", help="Time forward plus gradients for all four inputs")
-    parser.add_argument("--variant", default="v7", choices=("v2", "v3", "v4", "v5", "v6", "v7"))
     parser.add_argument("--scale", type=int, default=2)
     parser.add_argument("--B", type=int, default=1)
     parser.add_argument("--C", type=int, default=32)
@@ -70,30 +69,28 @@ def main():
             for tensor in (x,x0,weight,bias):
                 tensor.requires_grad_(True)
         data = (x,x0,weight,bias,s,1e-5)
-        variants = [args.variant] if args.profile or args.single else ["v2","v6","v7"]
         with torch.no_grad():
             reference = converse2d_reference(*(t.double() if isinstance(t,torch.Tensor) else t for t in data)).float()
         with (torch.enable_grad() if args.training else torch.no_grad()):
-            for variant in variants:
-                forward = lambda v=variant: torch.ops.converse2d.forward(*data,v)
-                output = forward().detach()
-                max_error = (output-reference).abs().max().item()
-                torch.testing.assert_close(output, reference, atol=1e-4, rtol=5e-5)
-                fn = (lambda: torch.autograd.grad(forward().square().mean(), (x,x0,weight,bias))) if args.training else forward
-                if args.profile:
-                    for _ in range(5): fn()
-                    torch.cuda.synchronize()
-                    torch.cuda.cudart().cudaProfilerStart()
-                    with torch.cuda.nvtx.range(f"Converse2D_{variant}_s{s}"):
-                        for _ in range(args.iters): fn()
-                    torch.cuda.synchronize()
-                    torch.cuda.cudart().cudaProfilerStop()
-                    print(json.dumps({"profile":variant,"max_abs_error":max_error}))
-                else:
-                    row = dict(variant=variant,B=b,C=c,H=h,W=w,scale=s,max_abs_error=max_error,
-                               **measure(fn,5,args.iters))
-                    rows.append(row)
-                    print(json.dumps(row),flush=True)
+            forward = lambda: torch.ops.converse2d.forward(*data)
+            output = forward().detach()
+            max_error = (output-reference).abs().max().item()
+            torch.testing.assert_close(output, reference, atol=1e-4, rtol=5e-5)
+            fn = (lambda: torch.autograd.grad(forward().square().mean(), (x,x0,weight,bias))) if args.training else forward
+            if args.profile:
+                for _ in range(5): fn()
+                torch.cuda.synchronize()
+                torch.cuda.cudart().cudaProfilerStart()
+                with torch.cuda.nvtx.range(f"Converse2D_s{s}"):
+                    for _ in range(args.iters): fn()
+                torch.cuda.synchronize()
+                torch.cuda.cudart().cudaProfilerStop()
+                print(json.dumps({"profile":"fused","max_abs_error":max_error}))
+            else:
+                row = dict(B=b,C=c,H=h,W=w,scale=s,max_abs_error=max_error,
+                           **measure(fn,5,args.iters))
+                rows.append(row)
+                print(json.dumps(row),flush=True)
         torch.ops.converse2d.clear_cache()
     if not args.profile:
         default = "artifacts/benchmark_training.json" if args.training else "artifacts/benchmark.json"

@@ -33,7 +33,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--kind", choices=("systems", "compute"), default="systems")
     parser.add_argument("--tool", help="Explicit profiler executable")
-    parser.add_argument("--variant", choices=("v2", "v6", "v7"), default="v7")
     parser.add_argument("--scale", type=int, default=2)
     parser.add_argument("--C", type=int, default=32)
     parser.add_argument("--H", type=int, default=128)
@@ -50,9 +49,9 @@ def main():
     tool = find_tool(args.kind, args.tool)
     folder = (ROOT / args.output).resolve()
     folder.mkdir(parents=True, exist_ok=True)
-    stem = folder / f"{args.kind}_{args.variant}_s{args.scale}"
+    stem = folder / f"{args.kind}_s{args.scale}"
     target = [sys.executable, str(ROOT / "test" / "benchmark.py"), "--profile",
-              "--variant",args.variant,"--scale",str(args.scale),"--C",str(args.C),
+              "--scale",str(args.scale),"--C",str(args.C),
               "--H",str(args.H),"--W",str(args.W),"--iters",str(args.iters)]
     if args.kind == "systems":
         command = [tool,"profile","--trace=cuda,nvtx","--sample=none","--cpuctxsw=none",

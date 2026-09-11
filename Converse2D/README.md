@@ -24,7 +24,7 @@ import torch
 import torch_converse2d
 from models.util_converse import Converse2D
 
-layer = Converse2D(32, 32, 3, scale=2, backend="cuda", variant="v7").cuda().eval()
+layer = Converse2D(32, 32, 3, scale=2, backend="cuda").cuda().eval()
 x = torch.randn(1, 32, 128, 128, device="cuda")
 with torch.inference_mode():
     y = layer(x)
@@ -53,11 +53,11 @@ connections and return the input dtype, including for arbitrary FFT sizes.
 `backend="auto"` uses the extension on CUDA when available; `"cuda"` requires it;
 `"pytorch"` selects the stable full-FFT Python reference.
 
-| Variant | Inference | Training |
-|---|---|---|
-| `v7` (default) | Real FFT with fused CUDA correction | Differentiable real-FFT ATen |
-| `v2` | Full-FFT ATen reference | Differentiable ATen |
-| `v3`–`v6` | Compatibility aliases for shared full-FFT fused code | Differentiable ATen |
+The native extension has one solver: the stable residual simplification with
+real FFT, fused CUDA correction, fused PSF preparation, dynamic power accumulation
+and graph-safe caches. Autograd-enabled calls use the differentiable real-FFT
+ATen implementation of the same formula. The Python full-FFT path is retained
+as an independent reference and a fallback when the extension is unavailable.
 
 Fusion requires `no_grad()` or `inference_mode()`; `.eval()` alone does not
 disable autograd. Training supports first and second derivatives for all four
@@ -68,7 +68,7 @@ USRNet's dynamic-kernel data module uses the same operator:
 ```python
 from models.converse_usrnet import ConverseUSRNet
 
-model = ConverseUSRNet(backend="cuda", variant="v7").cuda().eval()
+model = ConverseUSRNet(backend="cuda").cuda().eval()
 # Existing state_dict parameter names are preserved.
 image = torch.rand(1, 3, 32, 40, device="cuda")
 k = torch.ones(1, 1, 7, 7, device="cuda") / 49
@@ -79,13 +79,13 @@ with torch.inference_mode():
 For strict complete-model comparisons, disable cuDNN/matmul TF32 in the caller;
 the library leaves application-wide precision settings unchanged.
 
-### Spectral preparation in v7 inference
+### Spectral preparation
 
-CUDA v7 inference writes the zero-padded, centered PSF in one kernel. For
+CUDA inference writes the zero-padded, centered PSF in one kernel. For
 uncached dynamic kernels, the correction kernel also accumulates `|FB|²` while
 reading FB; it does not build and reconstruct a separate full power spectrum.
-Fixed kernels still cache their prepared spectra and denominators. CPU,
-autograd-enabled calls and v2-v6 keep their existing preparation paths.
+Fixed kernels still cache their prepared spectra and denominators. CPU and
+autograd-enabled calls keep their differentiable ATen preparation paths.
 
 The IFFT normalization remains after the transform. Moving it before the IFFT
 was rejected because it worsened near-underflow precision. No fast-math or
@@ -142,6 +142,15 @@ computed inside the graph. Neither path depends on eager-cache entries, so later
 eviction cannot invalidate captured pointers. The extension exposes
 `torch.ops.converse2d.supports_cuda_graphs()` for detecting graph cache support;
 the runner also checks for its graph-owned cache operations in the loaded binary.
+
+## Migrating to 0.4
+
+Remove the `variant` keyword from model constructors and the trailing version
+string from direct operator calls. There is no version selector or legacy
+full-spectrum CUDA branch. Rebuild the extension after updating the source;
+previously built binaries still expose the old ABI. Existing checkpoint keys
+are unchanged. Historical reports retain their original version labels, and
+frozen comparison code is loaded only by tests into a separate namespace.
 
 After raw storage writes or `.data` mutations that bypass PyTorch's version
 counter, explicitly clear it:
