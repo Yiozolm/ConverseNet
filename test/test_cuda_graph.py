@@ -58,6 +58,44 @@ class CUDAGraphTests(unittest.TestCase):
         self.compare()
         del churn
 
+    def test_optional_switch_releases_and_recaptures(self):
+        self.compare()
+        self.assertEqual(self.runner.cached_graphs, 1)
+        self.runner.enabled = False
+        self.assertEqual(self.runner.cached_graphs, 0)
+        with patch.object(self.runner, '_capture', side_effect=AssertionError('unexpected capture')):
+            self.compare(self.x + .1)
+        self.assertEqual(self.runner.captures, 1)
+        self.runner.enabled = True
+        self.compare(self.x + .2)
+        self.assertEqual(self.runner.captures, 2)
+
+    def test_disabled_runner_preserves_training(self):
+        self.runner.enabled = False
+        self.model.train()
+        x = self.x.detach().requires_grad_()
+        expected = self.model(x, self.k, 2)
+        actual = self.runner(x, self.k, 2)
+        torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+        parameters = (x, self.model.kernelnet.fc1.weight, self.model.d.alpha)
+        reference_grads = torch.autograd.grad(expected.square().mean(), parameters)
+        grads = torch.autograd.grad(actual.square().mean(), parameters)
+        for grad, reference in zip(grads, reference_grads):
+            torch.testing.assert_close(grad, reference, atol=0, rtol=0)
+        self.assertEqual(self.runner.captures, 0)
+
+    def test_disabled_constructor_runs_on_cpu(self):
+        model = self.model_type(num_iterations=1, num_blocks=1, backend='pytorch').eval()
+        runner = self.runner_type(model, enabled=False)
+        x, kernel = self.x.cpu(), self.k.cpu()
+        with patch.object(runner, '_validate', side_effect=AssertionError('graph-only validation')):
+            actual = runner(x, kernel, 2)
+        torch.testing.assert_close(actual, model(x, kernel, 2), atol=0, rtol=0)
+        self.assertEqual(runner.cached_graphs, 0)
+        self.assertEqual(runner.captures, 0)
+        with self.assertRaises(TypeError):
+            runner.enabled = 'false'
+
     def test_parameter_updates_and_configuration(self):
         self.compare()
         with torch.no_grad():

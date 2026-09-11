@@ -27,7 +27,8 @@ python test/test_spectral_io.py
 - `test_cache.py`: focused cache invalidation and inference/training transitions.
 - `test_cuda_graph.py`: capture with a warm eager cache, graph eviction, changed
   inputs and weights, shape/batch/scale/dtype changes, independent outputs and
-  sequential calls on different CUDA streams.
+  sequential calls on different CUDA streams; optional enable/disable, cache
+  release, and CPU/training passthrough when disabled.
 - `test_spectral_io.py`: v7 spectral I/O changes against the frozen pre-change
   kernel and float64 reference, including subnormal inputs, rectangular PSFs,
   broadcast kernels and bitwise-equivalent PSF spectra. Requires CUDA and Git.

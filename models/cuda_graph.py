@@ -33,6 +33,11 @@ class _Entry:
 class USRNetCUDAGraph:
     """Opt-in inference callable with an LRU of fixed-shape CUDA graphs.
 
+    Set enabled=False to call the model directly, preserving autograd, autocast
+    and CPU execution. Switching off also clears any captured graphs. Explicit
+    construction defaults to enabled=True for compatibility; model(...) itself
+    never enables CUDA Graphs.
+
     Use an eval-mode ConverseUSRNet with FP32/FP64 CUDA inputs inside no_grad
     or inference_mode. Each call copies inputs and returns an independent output.
     A miss warms up and captures synchronously; only hits have replay latency.
@@ -46,7 +51,7 @@ class USRNetCUDAGraph:
     clear() waits for pending work and releases all graph-owned references.
     """
 
-    def __init__(self, model, *, max_graphs=1, warmup=3):
+    def __init__(self, model, *, enabled=True, max_graphs=1, warmup=3):
         if type(model) is not ConverseUSRNet:
             raise TypeError("model must be a ConverseUSRNet")
         if type(max_graphs) is not int or max_graphs < 1:
@@ -59,6 +64,20 @@ class USRNetCUDAGraph:
         self._entries = OrderedDict()
         self._signature = None
         self.captures = 0
+        self.enabled = enabled
+
+    @property
+    def enabled(self):
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value):
+        if type(value) is not bool:
+            raise TypeError("enabled must be a bool")
+        with _GRAPH_LOCK:
+            if not value:
+                self.clear()
+            self._enabled = value
 
     @property
     def cached_graphs(self):
@@ -177,6 +196,8 @@ class USRNetCUDAGraph:
 
     def __call__(self, x, kernel, scale):
         with _GRAPH_LOCK:
+            if not self._enabled:
+                return self.model(x, kernel, scale)
             self._validate(x, kernel, scale)
             with torch.cuda.device(x.device):
                 if torch.cuda.is_current_stream_capturing():

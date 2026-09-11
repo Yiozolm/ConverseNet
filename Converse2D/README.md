@@ -94,9 +94,29 @@ reduced-precision arithmetic is enabled by these changes. See
 
 ## CUDA Graph inference
 
-For repeated USRNet inference, use the optional bounded graph runner. Rebuild
-the extension first: old binaries do not have the capture-aware spectrum cache.
-Load the checkpoint and move the model to CUDA before constructing the runner.
+For repeated USRNet inference, use the optional bounded graph runner. Before
+enabling graphs, rebuild the extension if needed: old binaries do not have the
+capture-aware spectrum cache. Load the checkpoint and move the model to CUDA
+before the first enabled call.
+
+CUDA Graph is optional: `model(...)` always uses ordinary execution. A shared
+call site can switch modes through `enabled`:
+
+```python
+from models.cuda_graph import USRNetCUDAGraph
+
+use_cuda_graph = False  # Application configuration; no capture when disabled.
+run = USRNetCUDAGraph(model, enabled=use_cuda_graph, max_graphs=1)
+with torch.inference_mode():
+    y = run(image, k, scale=2)
+
+run.enabled = True   # Capture on the next supported inference call.
+run.enabled = False  # Wait for pending replays and release graph caches.
+```
+
+When disabled, the wrapper calls the model directly, preserving CPU execution,
+autograd and autocast. The graph constraints below apply when enabled. Explicit
+`USRNetCUDAGraph(model)` construction still defaults to enabled for compatibility.
 
 ```python
 from models.cuda_graph import USRNetCUDAGraph
