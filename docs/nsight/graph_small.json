@@ -1,0 +1,96 @@
+{
+  "max_abs_errors": [
+    0.0,
+    0.0
+  ],
+  "reserved_growth_mib": 0.0,
+  "timings": {
+    "eager": {
+      "gpu_ms": 30.153945922851562,
+      "wall_ms": 30.15617499986547,
+      "rounds": [
+        {
+          "gpu_ms": 32.951666259765624,
+          "wall_ms": 32.95374000008451
+        },
+        {
+          "gpu_ms": 31.57268371582031,
+          "wall_ms": 31.574340000224765
+        },
+        {
+          "gpu_ms": 30.153945922851562,
+          "wall_ms": 30.15617499986547
+        },
+        {
+          "gpu_ms": 29.90947570800781,
+          "wall_ms": 29.91127499990398
+        },
+        {
+          "gpu_ms": 29.7178466796875,
+          "wall_ms": 29.720755000016652
+        }
+      ]
+    },
+    "graph_replay": {
+      "gpu_ms": 10.86189956665039,
+      "wall_ms": 10.882870000205003,
+      "rounds": [
+        {
+          "gpu_ms": 10.531886291503906,
+          "wall_ms": 10.5467100001988
+        },
+        {
+          "gpu_ms": 10.204022216796876,
+          "wall_ms": 10.228020000067772
+        },
+        {
+          "gpu_ms": 10.872726440429688,
+          "wall_ms": 10.882870000205003
+        },
+        {
+          "gpu_ms": 10.910842895507812,
+          "wall_ms": 10.920274999807589
+        },
+        {
+          "gpu_ms": 10.86189956665039,
+          "wall_ms": 10.892500000045402
+        }
+      ]
+    },
+    "graph_with_gpu_io": {
+      "gpu_ms": 10.801023864746094,
+      "wall_ms": 10.862264999741456,
+      "rounds": [
+        {
+          "gpu_ms": 10.861033630371093,
+          "wall_ms": 10.869600000296487
+        },
+        {
+          "gpu_ms": 10.856804656982423,
+          "wall_ms": 10.872190000372939
+        },
+        {
+          "gpu_ms": 10.801023864746094,
+          "wall_ms": 10.81010999987484
+        },
+        {
+          "gpu_ms": 10.450091552734374,
+          "wall_ms": 10.45897000003606
+        },
+        {
+          "gpu_ms": 10.786280059814453,
+          "wall_ms": 10.862264999741456
+        }
+      ]
+    }
+  },
+  "shape": [
+    1,
+    3,
+    32,
+    40
+  ],
+  "scale": 2,
+  "capture": "cold spectrum cache; cleared cache after capture; two changed inputs validated",
+  "memory_note": "reserved_growth_mib is a net snapshot delta; graph capture may release eager cached allocations. It is not total graph-pool memory or production memory overhead."
+}
