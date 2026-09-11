@@ -39,6 +39,11 @@ def main():
     parser.add_argument("--H", type=int, default=128)
     parser.add_argument("--W", type=int, default=128)
     parser.add_argument("--iters", type=int, default=10)
+    parser.add_argument("--set", dest="compute_set", choices=("basic", "detailed", "full"), default="basic",
+                        help="Nsight Compute section set")
+    parser.add_argument("--clock-control", choices=("none", "base", "boost"), default="none")
+    parser.add_argument("--cache-control", choices=("all", "none"), default="all")
+    parser.add_argument("--replay-mode", choices=("kernel", "application"), default="kernel")
     parser.add_argument("--output", default="artifacts/profiles")
     args = parser.parse_args()
     load_extension()
@@ -54,7 +59,9 @@ def main():
                    "--capture-range=cudaProfilerApi","--capture-range-end=stop",
                    "--force-overwrite=true","-o",str(stem),*target]
     else:
-        command = [tool,"--target-processes","all","--set","basic","--profile-from-start","off",
+        command = [tool,"--target-processes","all","--set",args.compute_set,"--profile-from-start","off",
+                   "--clock-control",args.clock_control,"--cache-control",args.cache_control,
+                   "--replay-mode",args.replay_mode,"--import-source","yes",
                    "--kernel-name","regex:.*(alias_correction|apply_correction|correction_scale_one).*",
                    "--launch-count","2","--force-overwrite","-o",str(stem),*target]
     env = os.environ.copy()

@@ -79,6 +79,19 @@ with torch.inference_mode():
 For strict complete-model comparisons, disable cuDNN/matmul TF32 in the caller;
 the library leaves application-wide precision settings unchanged.
 
+### Spectral preparation in v7 inference
+
+CUDA v7 inference writes the zero-padded, centered PSF in one kernel. For
+uncached dynamic kernels, the correction kernel also accumulates `|FB|²` while
+reading FB; it does not build and reconstruct a separate full power spectrum.
+Fixed kernels still cache their prepared spectra and denominators. CPU,
+autograd-enabled calls and v2-v6 keep their existing preparation paths.
+
+The IFFT normalization remains after the transform. Moving it before the IFFT
+was rejected because it worsened near-underflow precision. No fast-math or
+reduced-precision arithmetic is enabled by these changes. See
+[precision and performance measurements](../docs/nsight/spectral_io_optimization.md).
+
 ## CUDA Graph inference
 
 For repeated USRNet inference, use the optional bounded graph runner. Rebuild

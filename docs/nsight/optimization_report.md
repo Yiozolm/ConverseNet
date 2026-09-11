@@ -1,5 +1,10 @@
 # Nsight 优化分析
 
+后续更新：[CUDA Graph 实现与验证](cuda_graph_implementation.md) ·
+[计数器开放后的 Nsight Compute 分析](compute_analysis.md)。下文保留原始采样时的状态与结论。
+
+实现进展：[v7 频谱读写优化与精度验证](spectral_io_optimization.md)。
+
 归档日期：2026-09-11。采样代码为 main 提交 `5be56ef7d9dd526b7d1b5be905e835636ab0e5f9`；本报告保存于 dev 分支，数据不代表 dev 当前代码的性能。源码链接固定到采样提交，文件指纹见 [manifest.json](manifest.json)。
 
 当前最值得做的是：固定形状推理的 CUDA Graph、恢复块里的 LayerNorm/逐元素融合，然后再优化动态频谱准备和 FFT 搬运。只继续打磨 DataNet 内核，对整网收益会受到恢复块占比的限制。

@@ -11,6 +11,7 @@
 #include <c10/cuda/CUDAStream.h>
 at::Tensor converse_spectral_cuda(const at::Tensor&, const at::Tensor&,
     const at::Tensor&, const at::Tensor&, const at::Tensor&, int64_t, int64_t, int64_t, bool);
+at::Tensor converse_psf_cuda(const at::Tensor&, int64_t, int64_t);
 #endif
 
 using at::Tensor;
@@ -91,13 +92,29 @@ static std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& we
         }
     }
     const auto kh = weight.size(2), kw = weight.size(3);
-    auto otf = at::constant_pad_nd(weight, {0, w - kw, 0, h - kh}, 0);
-    otf = at::roll(otf, {-(kh / 2), -(kw / 2)}, {-2, -1});
+    Tensor otf;
+#ifdef CONVERSE2D_WITH_CUDA
+    const bool fused_prepare = weight.is_cuda() && !at::GradMode::is_enabled() && real_fft;
+    if (fused_prepare) otf = converse_psf_cuda(weight, h, w);
+    else
+#endif
+    {
+        otf = at::constant_pad_nd(weight, {0, w - kw, 0, h - kh}, 0);
+        otf = at::roll(otf, {-(kh / 2), -(kw / 2)}, {-2, -1});
+    }
     auto fb = real_fft ? at::fft_rfft2(otf) : at::fft_fft2(otf);
-    // ATen keeps both derivative paths during training.
-    auto power = at::real(fb).square() + at::imag(fb).square();
-    auto invw = alias_mean(real_fft && s > 1 ? full_spectrum(power, w) : power, s);
-    if (real_fft && s > 1) invw = invw.slice(-1, 0, w / s / 2 + 1).contiguous();
+    Tensor invw;
+#ifdef CONVERSE2D_WITH_CUDA
+    // Uncached dynamic kernels form the denominator in the same loop that
+    // already reads FB. Cached fixed kernels still prepare it only once.
+    if (!(fused_prepare && !cacheable))
+#endif
+    {
+        // ATen keeps both derivative paths during training.
+        auto power = at::real(fb).square() + at::imag(fb).square();
+        invw = alias_mean(real_fft && s > 1 ? full_spectrum(power, w) : power, s);
+        if (real_fft && s > 1) invw = invw.slice(-1, 0, w / s / 2 + 1).contiguous();
+    }
     if (cacheable) {
         const size_t bytes = fb.nbytes() + invw.nbytes() + source.nbytes();
         if (graph_cache_active || bytes <= CACHE_BYTES_LIMIT) {

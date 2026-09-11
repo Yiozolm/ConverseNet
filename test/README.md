@@ -15,6 +15,7 @@ python test/test_batched_kernels.py
 python test/test_batched_kernels.py --cpu
 python test/test_cache.py
 python test/test_cuda_graph.py
+python test/test_spectral_io.py
 ```
 
 - `test_correctness.py` (also exposed by `test_error.py`): independent dense
@@ -26,6 +27,9 @@ python test/test_cuda_graph.py
 - `test_cuda_graph.py`: capture with a warm eager cache, graph eviction, changed
   inputs and weights, shape/batch/scale/dtype changes, independent outputs and
   sequential calls on different CUDA streams.
+- `test_spectral_io.py`: v7 spectral I/O changes against the frozen pre-change
+  kernel and float64 reference, including subnormal inputs, rectangular PSFs,
+  broadcast kernels and bitwise-equivalent PSF spectra. Requires CUDA and Git.
 
 These use Python's standard unittest; pytest is not required.
 
@@ -71,17 +75,40 @@ input/kernel pairs per size are checked against eager output. Results go to
 override the defaults. This measures steady-state inference, not training or
 dataset PSNR.
 
+```sh
+python test/benchmark_spectral_io.py
+python test/benchmark_spectral_io.py --operators-only --iters 100 --rounds 7
+```
+
+These build the baseline from commit `19c1bfc` in an isolated namespace and
+alternate baseline/current timing on identical inputs in the same process.
+They cover cached and dynamic kernels, odd sizes, and pretrained USRNet eager
+and graph inference. Baseline sources/build files stay under `.build/`;
+results default to `artifacts/spectral_io_benchmark.json`. A `--profile` mode
+emits baseline/optimized NVTX ranges for dynamic s2 inside a CUDA profiler range.
+
 ## Nsight
 
 ```sh
 python test/profile_nsight.py --kind systems --variant v7 --scale 2
 python test/profile_nsight.py --kind compute --variant v7 --scale 2
+python test/profile_nsight.py --kind compute --set full --C 64 --scale 2
+python test/profile_nsight.py --kind compute --set basic --C 64 --scale 2 --cache-control none --replay-mode application --output artifacts/profiles/warm
 ```
 
 The wrapper builds first, then profiles the warmed CUDA/NVTX region. Reports go
 to `artifacts/profiles/`. Use `--tool` for an explicit profiler executable and
 `--C`, `--H`, `--W` for the workload. Nsight Compute requires access to the GPU
 performance counters; the scripts do not modify system permissions.
+
+Compute defaults to `--set basic`, kernel replay, cache flushing and
+`--clock-control none` (leaves GPU clock policy unchanged). Use `--set full` for
+memory, instruction and warp-stall analysis. Application replay with
+`--cache-control none` preserves the workload's preceding cache activity, at the
+cost of rerunning the process per pass. Compare like-for-like collection settings;
+NCU kernel durations are not end-to-end inference timings. Use distinct output
+directories to retain multiple shapes or collection policies for the same variant
+and scale.
 
 `CONVERSE2D_SKIP_BUILD=1` loads the existing local extension without building.
 Only use it after compiling the current sources, for example inside a profiler.
