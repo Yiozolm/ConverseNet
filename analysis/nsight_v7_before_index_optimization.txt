@@ -1,0 +1,27 @@
+Generating SQLite file analysis/profiles/nsys_v7.sqlite from analysis/profiles/nsys_v7.nsys-rep
+Processing [analysis/profiles/nsys_v7.sqlite] with [C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.2\host-windows-x64\reports\cuda_gpu_kern_sum.py]... 
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+22.1,348347,20,17417.3,17488.0,16608,18496,515.7,"void regular_fft<(unsigned int)256, EPT<(unsigned int)16>, (unsigned int)8, (unsigned int)9, (padding_t)14, (twiddle_t)0, (loadstore_modifier_t)2, (layout_t)1, unsigned int, float, HostConfigPlaceholder>(kernel_arguments_t<T9>)"
+19.9,313625,10,31362.5,31247.5,30655,32224,508.5,"void alias_correction<float, (bool)1>(const c10::complex<T1> *, const c10::complex<T1> *, const c10::complex<T1> *, const T1 *, const T1 *, c10::complex<T1> *, long long, long long, long long, long long, long long)"
+18.3,288031,10,28803.1,28688.0,28480,29376,331.1,"void apply_correction<float, (bool)1>(const c10::complex<T1> *, const c10::complex<T1> *, const c10::complex<T1> *, c10::complex<T1> *, long long, long long, long long, long long, long long)"
+15.6,245726,10,24572.6,24176.0,23584,29183,1643.6,"void vector_fft_symm_r2c<(unsigned int)256, EPT<(unsigned int)8>, (unsigned int)2, (unsigned int)32, (padding_t)70, (twiddle_t)0, (loadstore_modifier_t)2, (layout_t)0, unsigned int, float>(kernel_arguments_t<T9>)"
+8.9,141149,10,14114.9,14207.5,13631,14592,320.0,"void vector_fft_symm_c2r<(unsigned int)256, EPT<(unsigned int)8>, (unsigned int)2, (unsigned int)32, (padding_t)70, (twiddle_t)0, (loadstore_modifier_t)2, (layout_t)0, unsigned int, float>(kernel_arguments_t<T9>)"
+5.5,86816,10,8681.6,8736.0,8384,8960,212.3,"void at::native::vectorized_elementwise_kernel<(int)4, at::native::AUnaryFunctor<float, float, float, at::native::binary_internal::MulFunctor<float>>, std::array<char *, (unsigned long long)2>>(int, T2, T3)"
+4.8,76319,10,7631.9,7600.0,7488,7936,144.1,"void vector_fft_symm_r2c<(unsigned int)128, EPT<(unsigned int)8>, (unsigned int)8, (unsigned int)32, (padding_t)14, (twiddle_t)0, (loadstore_modifier_t)2, (layout_t)0, unsigned int, float>(kernel_arguments_t<T9>)"
+3.3,52575,10,5257.5,5279.5,5024,5536,175.3,"void regular_fft<(unsigned int)128, EPT<(unsigned int)16>, (unsigned int)32, (unsigned int)4, (padding_t)6, (twiddle_t)0, (loadstore_modifier_t)2, (layout_t)1, unsigned int, float, HostConfigPlaceholder>(kernel_arguments_t<T9>)"
+1.0,15648,20,782.4,736.0,576,1280,199.8,"void at::native::vectorized_elementwise_kernel<(int)4, at::native::CUDAFunctorOnSelf_add<float>, std::array<char *, (unsigned long long)2>>(int, T2, T3)"
+0.6,9536,10,953.6,928.0,896,1152,73.6,"void at::native::vectorized_elementwise_kernel<(int)4, at::native::sigmoid_kernel_cuda(at::TensorIteratorBase &)::[lambda() (instance 2)]::operator ()() const::[lambda() (instance 2)]::operator ()() const::[lambda(float) (instance 1)], std::array<char *, (unsigned long long)2>>(int, T2, T3)"
+
+Processing [analysis/profiles/nsys_v7.sqlite] with [C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.2\host-windows-x64\reports\cuda_api_sum.py]... 
+Time (%),Total Time (ns),Num Calls,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+99.7,549063443,1,549063443.0,549063443.0,549063443,549063443,0.0,cudaProfilerStart
+0.1,648707,60,10811.8,6760.5,4655,115816,15737.4,cudaLaunchKernel
+0.1,411145,60,6852.4,5773.5,4315,25397,3515.1,cuLaunchKernel
+0.1,287642,1,287642.0,287642.0,287642,287642,0.0,cudaDeviceSynchronize
+0.0,123970,10,12397.0,9585.0,8328,24815,6545.5,cudaMemcpyAsync
+0.0,8025,60,133.8,108.0,91,714,92.0,cuKernelGetName
+
+Processing [analysis/profiles/nsys_v7.sqlite] with [C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.2\host-windows-x64\reports\nvtx_sum.py]... 
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Style,Range
+100.0,2368389,1,2368389.0,2368389.0,2368389,2368389,0.0,PushPop,:Converse2D_v7_s2
+

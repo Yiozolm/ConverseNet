@@ -1,0 +1,8 @@
+==WARNING== Could not deploy stock section files to "C:\Users\Boyce\Documents/NVIDIA Nsight Compute/2026.1.0/Sections".
+Set the HOME environment variable to a writable directory.
+==WARNING== Using "C:\Program Files\NVIDIA Corporation\Nsight Compute 2026.1.0\target\windows-desktop-win7-x64\..\..\sections" instead.
+==WARNING== See https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#faq.
+==PROF== Connected to process 46512 (D:\anaconda3\envs\vllm\python.exe)
+==ERROR== ERR_NVGPUCTRPERM - The user does not have permission to access NVIDIA GPU Performance Counters on the target device 0. For instructions on enabling permissions and to get more information see https://developer.nvidia.com/ERR_NVGPUCTRPERM
+{"profile": "v7", "max_abs_error": 4.291534423828125e-06}
+==PROF== Disconnected from process 46512

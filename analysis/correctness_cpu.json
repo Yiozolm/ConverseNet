@@ -1,0 +1,24 @@
+{
+  "forward_cases": 252,
+  "gradient_cases": 18,
+  "max_abs": {
+    "torch.float64/v2": 0.0,
+    "torch.float64/v3": 0.0,
+    "torch.float64/v4": 0.0,
+    "torch.float64/v5": 0.0,
+    "torch.float64/v6": 0.0,
+    "torch.float64/v7": 7.327471962526033e-15,
+    "torch.float32/v2": 0.0,
+    "torch.float32/v3": 0.0,
+    "torch.float32/v4": 0.0,
+    "torch.float32/v5": 0.0,
+    "torch.float32/v6": 0.0,
+    "torch.float32/v7": 1.33514404296875e-05
+  },
+  "device": "cpu",
+  "torch": "2.11.0+cu130",
+  "passed": true,
+  "tests": 11,
+  "failures": 0,
+  "errors": 0
+}

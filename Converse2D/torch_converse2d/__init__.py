@@ -1,7 +1,4 @@
-import os
-try:
-    import converse2d_ext
-except Exception as e:
-    print("[torch_converse2d] extension import failed:", e)
+import torch  # Load PyTorch's shared-library dependencies first.
+import converse2d_ext
 
 __all__ = ["converse2d_ext"]

@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
+from models.converse_core import converse2d_reference
 
 
 _HAS_CONVERSE2D_EXT = False
@@ -10,6 +11,9 @@ _HAS_CONVERSE2D_EXT = False
 def _try_import_converse2d_ext():
     global _HAS_CONVERSE2D_EXT
     if _HAS_CONVERSE2D_EXT:
+        return
+    if hasattr(torch.ops.converse2d, "forward"):
+        _HAS_CONVERSE2D_EXT = True
         return
 
     candidates = [
@@ -96,7 +100,7 @@ def sequential(*args):
 # --------------------------------------------
 """
 class Converse2D(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, scale=1, padding=2, padding_mode='circular', eps=1e-5, backend: str = "auto"):
+    def __init__(self, in_channels, out_channels, kernel_size, scale=1, padding=2, padding_mode='circular', eps=1e-5, backend: str = "auto", variant: str = "v7"):
         super(Converse2D, self).__init__()
         """
         Converse2D Operator for Image Restoration Tasks.
@@ -115,6 +119,8 @@ class Converse2D(nn.Module):
                                 Default is a small value like 1e-5.
             backend (str, optional): Backend for computing the convolution. One of {'auto', 'cuda', 'pytorch'}.
                                         Default is 'auto'.
+            variant (str, optional): Corrected CUDA implementation label, v2-v7.
+                                     Default v7 uses real FFT; v3-v6 share the full-FFT implementation.
 
         Returns:
             Tensor: Output tensor of shape (N, out_channels, H * scale, W * scale), where spatial dimensions
@@ -129,6 +135,9 @@ class Converse2D(nn.Module):
         self.padding_mode = padding_mode
         self.eps = eps
         self.backend = backend.lower()
+        self.variant = variant.lower()
+        if self.variant not in ("v2", "v3", "v4", "v5", "v6", "v7"):
+            raise ValueError("variant must be v2, v3, v4, v5, v6 or v7")
         if self.backend not in ("auto", "cuda", "pytorch"):
             raise ValueError(f"backend must be 'auto' | 'cuda' | 'pytorch', got: {self.backend}")    
 
@@ -144,12 +153,10 @@ class Converse2D(nn.Module):
         if self.padding > 0:
             x = nn.functional.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode, value=0)
 
-        self.biaseps = torch.sigmoid(self.bias-9.0) + self.eps
-        _, _, h, w = x.shape
-
         backend = (os.environ.get("CONVERSE2D_BACKEND", "") or self.backend).lower()
 
         def _can_use_cuda_backend():
+            _try_import_converse2d_ext()
             return (_HAS_CONVERSE2D_EXT and x.is_cuda)
 
         use_cuda_backend = False
@@ -164,27 +171,12 @@ class Converse2D(nn.Module):
 
         if use_cuda_backend:
             x0 = x if self.scale == 1 else F.interpolate(x, scale_factor=self.scale, mode='nearest')
-            out = converse2d_CUDA(
-                x, x0, self.weight, self.bias, int(self.scale), float(self.eps)
+            out = torch.ops.converse2d.forward(
+                x, x0, self.weight, self.bias, int(self.scale), float(self.eps), self.variant
             )
         else:
-            STy = self.upsample(x, scale=self.scale)
-            if self.scale != 1:
-                x = nn.functional.interpolate(x, scale_factor=self.scale, mode='nearest')
-
-            FB = self.p2o(self.weight, (h*self.scale, w*self.scale))
-            FBC = torch.conj(FB)
-            F2B = torch.pow(torch.abs(FB), 2)
-            FBFy = FBC*torch.fft.fftn(STy, dim=(-2, -1))
-            
-            FR = FBFy + torch.fft.fftn(self.biaseps*x, dim=(-2,-1))
-            x1 = FB.mul(FR)
-            FBR = torch.mean(self.splits(x1, self.scale), dim=-1, keepdim=False)
-            invW = torch.mean(self.splits(F2B, self.scale), dim=-1, keepdim=False)
-            invWBR = FBR.div(invW + self.biaseps)
-            FCBinvWBR = FBC*invWBR.repeat(1, 1, self.scale, self.scale)
-            FX = (FR-FCBinvWBR)/self.biaseps
-            out = torch.real(torch.fft.ifftn(FX, dim=(-2, -1)))
+            x0 = x if self.scale == 1 else F.interpolate(x, scale_factor=self.scale, mode='nearest')
+            out = converse2d_reference(x, x0, self.weight, self.bias, self.scale, self.eps)
 
         if self.padding > 0:
             out = out[..., self.padding*self.scale:-self.padding*self.scale, self.padding*self.scale:-self.padding*self.scale]

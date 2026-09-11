@@ -1,3 +1,9 @@
 TODO.md
 Optimization.md
 **/__pycache__/
+.build/
+Converse2D/build/
+Converse2D/*.egg-info/
+Converse2D/*.pyd
+Converse2D/*.so
+analysis/profiles/

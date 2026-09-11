@@ -1,0 +1,55 @@
+{
+  "installed_package": true,
+  "tf32": false,
+  "input": "seeded random [0,1], 24x32",
+  "results": [
+    {
+      "model": "converse_dncnn",
+      "dtype": "torch.float32",
+      "output_shape": [
+        1,
+        1,
+        24,
+        32
+      ],
+      "max_abs_vs_pytorch": 2.980232238769531e-07,
+      "mean_abs_vs_pytorch": 5.5656226294331645e-08
+    },
+    {
+      "model": "converse_dncnn",
+      "dtype": "torch.float64",
+      "output_shape": [
+        1,
+        1,
+        24,
+        32
+      ],
+      "max_abs_vs_pytorch": 4.440892098500626e-16,
+      "mean_abs_vs_pytorch": 8.950088933867839e-17
+    },
+    {
+      "model": "converse_srresnet",
+      "dtype": "torch.float32",
+      "output_shape": [
+        1,
+        3,
+        96,
+        128
+      ],
+      "max_abs_vs_pytorch": 1.3113021850585938e-06,
+      "mean_abs_vs_pytorch": 1.5713112588855438e-07
+    },
+    {
+      "model": "converse_srresnet",
+      "dtype": "torch.float64",
+      "output_shape": [
+        1,
+        3,
+        96,
+        128
+      ],
+      "max_abs_vs_pytorch": 3.2751579226442118e-15,
+      "mean_abs_vs_pytorch": 3.71526908931488e-16
+    }
+  ]
+}

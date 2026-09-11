@@ -1,0 +1,146 @@
+[
+  {
+    "name": "converse_dncnn",
+    "dtype": "torch.float32",
+    "tf32": true,
+    "variant": "v2",
+    "max_abs": 0.0,
+    "mean_abs": 0.0
+  },
+  {
+    "name": "converse_dncnn",
+    "dtype": "torch.float32",
+    "tf32": true,
+    "variant": "v6",
+    "max_abs": 0.00010150671005249023,
+    "mean_abs": 2.1446254322654568e-05
+  },
+  {
+    "name": "converse_dncnn",
+    "dtype": "torch.float32",
+    "tf32": true,
+    "variant": "v7",
+    "max_abs": 8.094310760498047e-05,
+    "mean_abs": 2.0582685465342365e-05
+  },
+  {
+    "name": "converse_dncnn",
+    "dtype": "torch.float32",
+    "tf32": false,
+    "variant": "v2",
+    "max_abs": 0.0,
+    "mean_abs": 0.0
+  },
+  {
+    "name": "converse_dncnn",
+    "dtype": "torch.float32",
+    "tf32": false,
+    "variant": "v6",
+    "max_abs": 1.7881393432617188e-07,
+    "mean_abs": 4.0299106274233054e-08
+  },
+  {
+    "name": "converse_dncnn",
+    "dtype": "torch.float32",
+    "tf32": false,
+    "variant": "v7",
+    "max_abs": 2.980232238769531e-07,
+    "mean_abs": 5.5656226294331645e-08
+  },
+  {
+    "name": "converse_dncnn",
+    "dtype": "torch.float64",
+    "tf32": false,
+    "variant": "v2",
+    "max_abs": 0.0,
+    "mean_abs": 0.0
+  },
+  {
+    "name": "converse_dncnn",
+    "dtype": "torch.float64",
+    "tf32": false,
+    "variant": "v6",
+    "max_abs": 4.440892098500626e-16,
+    "mean_abs": 7.618327265331477e-17
+  },
+  {
+    "name": "converse_dncnn",
+    "dtype": "torch.float64",
+    "tf32": false,
+    "variant": "v7",
+    "max_abs": 4.440892098500626e-16,
+    "mean_abs": 8.950088933867839e-17
+  },
+  {
+    "name": "converse_srresnet",
+    "dtype": "torch.float32",
+    "tf32": true,
+    "variant": "v2",
+    "max_abs": 0.0,
+    "mean_abs": 0.0
+  },
+  {
+    "name": "converse_srresnet",
+    "dtype": "torch.float32",
+    "tf32": true,
+    "variant": "v6",
+    "max_abs": 0.0008336901664733887,
+    "mean_abs": 0.0001067543780663982
+  },
+  {
+    "name": "converse_srresnet",
+    "dtype": "torch.float32",
+    "tf32": true,
+    "variant": "v7",
+    "max_abs": 0.0008054077625274658,
+    "mean_abs": 0.00010739517892943695
+  },
+  {
+    "name": "converse_srresnet",
+    "dtype": "torch.float32",
+    "tf32": false,
+    "variant": "v2",
+    "max_abs": 0.0,
+    "mean_abs": 0.0
+  },
+  {
+    "name": "converse_srresnet",
+    "dtype": "torch.float32",
+    "tf32": false,
+    "variant": "v6",
+    "max_abs": 9.834766387939453e-07,
+    "mean_abs": 1.299947882671404e-07
+  },
+  {
+    "name": "converse_srresnet",
+    "dtype": "torch.float32",
+    "tf32": false,
+    "variant": "v7",
+    "max_abs": 1.3113021850585938e-06,
+    "mean_abs": 1.5713112588855438e-07
+  },
+  {
+    "name": "converse_srresnet",
+    "dtype": "torch.float64",
+    "tf32": false,
+    "variant": "v2",
+    "max_abs": 0.0,
+    "mean_abs": 0.0
+  },
+  {
+    "name": "converse_srresnet",
+    "dtype": "torch.float64",
+    "tf32": false,
+    "variant": "v6",
+    "max_abs": 1.887379141862766e-15,
+    "mean_abs": 2.5003019704322573e-16
+  },
+  {
+    "name": "converse_srresnet",
+    "dtype": "torch.float64",
+    "tf32": false,
+    "variant": "v7",
+    "max_abs": 3.2751579226442118e-15,
+    "mean_abs": 3.71526908931488e-16
+  }
+]
