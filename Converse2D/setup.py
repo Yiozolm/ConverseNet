@@ -52,7 +52,7 @@ print(f"[setup.py] TORCH_CUDA_ARCH_LIST={os.environ.get('TORCH_CUDA_ARCH_LIST','
 
 setup(
     name="torch_converse2d",
-    version="0.4.0",
+    version="1.0.0",
     description="Converse2D CUDA extension for PyTorch",
     packages=["torch_converse2d"],
     ext_modules=[ext],

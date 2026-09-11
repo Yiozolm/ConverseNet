@@ -1,4 +1,6 @@
-# Converse2D
+# Converse2D 1.0
+
+[Release notes](https://github.com/Yiozolm/ConverseNet/releases/tag/v1.0.0)
 
 A differentiable regularized circular-convolution solver using a stable residual
 formula. One C++ implementation provides the operator and cache; one CUDA source
@@ -89,8 +91,8 @@ autograd-enabled calls keep their differentiable ATen preparation paths.
 
 The IFFT normalization remains after the transform. Moving it before the IFFT
 was rejected because it worsened near-underflow precision. No fast-math or
-reduced-precision arithmetic is enabled by these changes. See
-[precision and performance measurements](../docs/nsight/spectral_io_optimization.md).
+reduced-precision arithmetic is enabled by these changes. Precision and performance
+measurements are summarized in the GitHub release notes.
 
 ## CUDA Graph inference
 
@@ -163,7 +165,7 @@ eviction cannot invalidate captured pointers. The extension exposes
 `torch.ops.converse2d.supports_cuda_graphs()` for detecting graph cache support;
 the runner also checks for its graph-owned cache operations in the loaded binary.
 
-## Migrating to 0.4
+## Migrating to 1.0
 
 Remove the `variant` keyword from model constructors and the trailing version
 string from direct operator calls. There is no version selector or legacy
