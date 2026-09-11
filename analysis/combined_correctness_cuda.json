@@ -1,0 +1,17 @@
+{
+  "forward_cases": 192,
+  "gradient_cases": 36,
+  "max_forward_error": {
+    "torch.float64/v2": 0,
+    "torch.float64/v6": 4.440892098500626e-15,
+    "torch.float64/v7": 2.4868995751603507e-14,
+    "torch.float32/v2": 0,
+    "torch.float32/v6": 3.5762786865234375e-06,
+    "torch.float32/v7": 1.430511474609375e-05
+  },
+  "device": "cuda",
+  "tests": 8,
+  "passed": true,
+  "failures": 0,
+  "errors": 0
+}

@@ -28,6 +28,22 @@ then compares complete-model outputs in float32 and float64 using seeded random
 inputs. It disables cuDNN/matmul TF32 for a strict arithmetic comparison; it does
 not measure dataset PSNR. `--installed` tests an extension built in `Converse2D/`.
 
+Additional tests for the combined simplified/fused USRNet path:
+
+```sh
+python test/test_combined.py
+python test/test_combined.py --cpu
+python test/test_usrnet_combined.py
+python test/benchmark_combined.py
+```
+
+These cover per-sample kernels and channel broadcasting, dynamic kernel
+gradients, mixed precision in DataNet, and the original USRNet checkpoint.
+`test_usrnet_combined.py --installed` verifies a package built in `Converse2D/`.
+The DataNet benchmark clones the kernel each call to model freshly generated
+kernels, comparing the old Python formula, simplified Python formula and the
+combined v2/v7 implementations without assuming reusable kernel caches.
+
 ## Comparable benchmarks
 
 ```sh

@@ -145,7 +145,7 @@ class KernelNet(nn.Module):
         self.fc3 = nn.Linear(64, 16 * (kernel_size**2))
         self.gelu = nn.GELU()
     def forward(self, k):
-        k = k.to(torch.float)
+        k = k.to(self.fc1.weight.dtype)
         b,_,_,_ = k.shape
         k = k.view(b, -1) # flatten
         # fully connected

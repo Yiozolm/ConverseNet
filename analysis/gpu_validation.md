@@ -1,5 +1,7 @@
 # Converse2D 修复与 GPU 验证报告
 
+本报告记录第一轮 v2–v7 修复；后续动态核与 USRNet 的整合见 [数值简化与优化整合](combined_optimization.md)。
+
 日期：2026-09-11。修复基于 main 的 `c7eb880`，代码保留在当前工作区，未创建提交或推送。
 
 ## 实现
