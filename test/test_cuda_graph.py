@@ -1,0 +1,196 @@
+"""Graph lifetime, invalidation, input changes and stream regression tests."""
+import os
+import sys
+import unittest
+from unittest.mock import patch
+
+import torch
+from extension_loader import ROOT, load_extension
+sys.path.insert(0, str(ROOT))
+
+
+class CUDAGraphTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not torch.cuda.is_available():
+            raise unittest.SkipTest('CUDA is required')
+        load_extension()
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+        from models.converse_usrnet import ConverseUSRNet
+        from models.cuda_graph import USRNetCUDAGraph
+        cls.model_type = ConverseUSRNet
+        cls.runner_type = USRNetCUDAGraph
+
+    def setUp(self):
+        torch.manual_seed(781)
+        self.model = self.model_type(num_iterations=2, num_blocks=1, backend='cuda').cuda().eval()
+        self.runner = self.runner_type(self.model, warmup=2)
+        self.x = torch.rand(1, 3, 8, 10, device='cuda')
+        self.k = torch.rand(1, 1, 7, 7, device='cuda')
+        self.k /= self.k.sum()
+
+    def tearDown(self):
+        self.runner.clear()
+        torch.ops.converse2d.clear_cache()
+
+    def compare(self, x=None, k=None, scale=2):
+        x = self.x if x is None else x
+        k = self.k if k is None else k
+        with torch.inference_mode():
+            expected = self.model(x, k, scale)
+            actual = self.runner(x, k, scale)
+        tol = 1e-10 if x.dtype == torch.float64 else 3e-5
+        torch.testing.assert_close(actual, expected, atol=tol, rtol=tol)
+        return actual
+
+    def test_changed_inputs_and_independent_outputs(self):
+        first = self.compare()
+        saved = first.clone()
+        self.compare(self.x + .1, self.k.flip(-1))
+        # Contiguous static buffers also accept noncontiguous caller tensors.
+        wide = torch.rand(1, 3, 8, 20, device='cuda')
+        self.compare(wide[..., ::2], self.k.transpose(-1, -2))
+        torch.testing.assert_close(first, saved, atol=0, rtol=0)
+        self.assertEqual(self.runner.captures, 1)
+        torch.ops.converse2d.clear_cache()
+        churn = torch.empty(8 * 1024 * 1024, device='cuda').fill_(123)
+        self.compare()
+        del churn
+
+    def test_parameter_updates_and_configuration(self):
+        self.compare()
+        with torch.no_grad():
+            self.model.conv2.bias.add_(.2)
+        self.compare()
+        self.assertEqual(self.runner.captures, 2)
+        state = {k: v.clone() for k, v in self.model.state_dict().items()}
+        state['conv2.bias'].add_(.1)
+        self.model.load_state_dict(state)
+        self.compare()
+        self.assertEqual(self.runner.captures, 3)
+        self.model.conv2.bias = torch.nn.Parameter(self.model.conv2.bias.detach().clone() + .1)
+        self.compare()
+        self.assertEqual(self.runner.captures, 4)
+        self.model.conv2.bias.data = self.model.conv2.bias.detach().clone() + .1
+        self.compare()
+        self.assertEqual(self.runner.captures, 5)
+        self.model.d.eps *= 2
+        self.compare()
+        self.assertEqual(self.runner.captures, 6)
+        layer = next(m for m in self.model.modules() if type(m).__name__ == 'Converse2D')
+        with torch.no_grad():
+            layer.weight.mul_(.95)
+        self.compare()
+        self.assertEqual(self.runner.captures, 7)
+        with patch.dict(os.environ, {'CONVERSE2D_BACKEND': 'pytorch'}):
+            self.compare()
+        self.assertEqual(self.runner.captures, 8)
+
+    def test_lru_shape_scale_batch_dtype(self):
+        self.runner.max_graphs = 2
+        self.compare(scale=1)
+        self.compare(scale=2)
+        self.compare(scale=1)
+        self.assertEqual(self.runner.captures, 2)
+        self.compare(scale=3)
+        self.assertEqual(self.runner.cached_graphs, 2)
+        self.compare(scale=2)
+        self.assertEqual(self.runner.captures, 4)
+        self.compare(self.x.repeat(2, 1, 1, 1), self.k.repeat(2, 1, 1, 1))
+        self.compare(self.x.repeat(2, 1, 1, 1))  # shared kernel
+        self.model.double()
+        self.compare(self.x.double(), self.k.double())
+        self.assertEqual(self.runner.cached_graphs, 1)
+        self.runner.clear()
+        self.assertEqual(self.runner.cached_graphs, 0)
+
+    def test_sequential_calls_on_different_streams(self):
+        self.compare()
+        streams = [torch.cuda.Stream(), torch.cuda.Stream()]
+        outputs = []
+        for i, stream in enumerate(streams):
+            stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(stream), torch.inference_mode():
+                x = self.x + i * .1
+                outputs.append((self.runner(x, self.k, 2), self.model(x, self.k, 2)))
+        for stream in streams:
+            torch.cuda.current_stream().wait_stream(stream)
+        for actual, expected in outputs:
+            torch.testing.assert_close(actual, expected, atol=3e-5, rtol=3e-5)
+        self.assertEqual(self.runner.captures, 1)
+        # Clear also waits for queued copies/replays before releasing their pool.
+        self.runner.clear()
+
+    def test_invalid_modes_and_training_after_inference(self):
+        with self.assertRaisesRegex(RuntimeError, 'no_grad'):
+            self.runner(self.x, self.k, 2)
+        self.compare()
+        with torch.no_grad(), torch.autocast('cuda'):
+            with self.assertRaisesRegex(RuntimeError, 'autocast'):
+                self.runner(self.x, self.k, 2)
+        self.model.train()
+        with torch.no_grad(), self.assertRaisesRegex(RuntimeError, 'eval'):
+            self.runner(self.x, self.k, 2)
+        self.assertEqual(self.runner.cached_graphs, 0)
+        self.model(self.x, self.k, 2).square().mean().backward()
+        self.assertTrue(all(p.grad is not None and torch.isfinite(p.grad).all() for p in self.model.parameters()))
+        self.model.eval()
+        with self.model.register_forward_hook(lambda m, a, o: o):
+            with torch.no_grad(), self.assertRaisesRegex(RuntimeError, 'hooks'):
+                self.runner(self.x, self.k, 2)
+        with torch.no_grad(), self.assertRaisesRegex(ValueError, 'CUDA device'):
+            self.runner(self.x.cpu(), self.k.cpu(), 2)
+
+    def test_operator_capture_ignores_warm_cache(self):
+        # A warm eager cache on the SAME capture stream must not supply graph
+        # spectra. Mutating weights after capture exposes stale cached values.
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        for variant in ('v2', 'v6', 'v7'):
+            for scale in (1, 2, 3):
+                with self.subTest(variant=variant, scale=scale):
+                    w = torch.rand(1, 2, 3, 3, device='cuda')
+                    b = torch.zeros(1, 2, 1, 1, device='cuda')
+                    x = torch.rand(1, 2, 8, 10, device='cuda')
+                    x0 = torch.nn.functional.interpolate(x, scale_factor=scale)
+                    stream.wait_stream(torch.cuda.current_stream())
+                    def forward():
+                        return torch.ops.converse2d.forward(x, x0, w, b, scale, 1e-5, variant)
+                    with torch.cuda.stream(stream), torch.no_grad():
+                        for _ in range(3): forward()
+                    stream.synchronize()
+                    graph = torch.cuda.CUDAGraph()
+                    with torch.no_grad(), torch.cuda.graph(graph, stream=stream):
+                        output = forward()
+                    with torch.no_grad():
+                        w.mul_(.9)
+                        torch.ops.converse2d.clear_cache()
+                        expected = forward()
+                        graph.replay()
+                    torch.cuda.synchronize()
+                    torch.testing.assert_close(output, expected, atol=3e-5, rtol=3e-5)
+                    graph.reset()
+
+    def test_failed_capture_releases_spectrum_scope(self):
+        forward = self.model.forward
+        calls = 0
+
+        def fail_during_capture(*args):
+            nonlocal calls
+            calls += 1
+            result = forward(*args)
+            if calls > self.runner.warmup:
+                raise RuntimeError('intentional capture failure')
+            return result
+
+        with patch.object(self.model, 'forward', side_effect=fail_during_capture):
+            with torch.inference_mode(), self.assertRaisesRegex(RuntimeError, 'intentional'):
+                self.runner(self.x, self.k, 2)
+        self.assertEqual(self.runner.cached_graphs, 0)
+        self.compare()
+        self.assertEqual(self.runner.captures, 1)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

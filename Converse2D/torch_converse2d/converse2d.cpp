@@ -7,6 +7,7 @@
 
 #ifdef CONVERSE2D_WITH_CUDA
 #include <c10/cuda/CUDAGuard.h>
+#include <c10/cuda/CUDAGraphsC10Utils.h>
 #include <c10/cuda/CUDAStream.h>
 at::Tensor converse_spectral_cuda(const at::Tensor&, const at::Tensor&,
     const at::Tensor&, const at::Tensor&, const at::Tensor&, int64_t, int64_t, int64_t, bool);
@@ -42,6 +43,11 @@ struct CacheEntry {
 static std::list<CacheEntry> cache;
 static std::mutex cache_mutex;
 static size_t cache_bytes = 0;
+// A graph runner can own a separate warmup cache. End returns all tensors to
+// the caller, which retains them until pending replays finish. This scope never
+// shares entries with the evictable eager cache or with another runner/thread.
+static thread_local bool graph_cache_active = false;
+static thread_local std::list<CacheEntry> graph_cache;
 constexpr size_t CACHE_BYTES_LIMIT = 256 * 1024 * 1024;
 constexpr size_t CACHE_ENTRIES_LIMIT = 64;
 
@@ -50,26 +56,34 @@ static std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& we
     bool cacheable = !at::GradMode::is_enabled() && !source.is_inference() && source.is_leaf();
     int64_t stream = 0;
 #ifdef CONVERSE2D_WITH_CUDA
-    if (weight.is_cuda()) stream = c10::cuda::getCurrentCUDAStream(weight.get_device()).id();
+    if (weight.is_cuda()) {
+        stream = c10::cuda::getCurrentCUDAStream(weight.get_device()).id();
+        // Captured nodes must own their spectra through the graph memory pool.
+        // Never read an evictable eager-cache tensor or publish a graph-private
+        // allocation into the global cache, including when warmup hit the cache.
+        if (cacheable && !graph_cache_active && c10::cuda::currentStreamCaptureStatusMayInitCtx() !=
+                c10::cuda::CaptureStatus::None) cacheable = false;
+    }
 #else
     if (weight.is_cuda()) cacheable = false;
 #endif
     const bool inference = c10::InferenceMode::is_enabled();
     const uint32_t version = cacheable ? source._version() : 0;
+    auto& entries = graph_cache_active ? graph_cache : cache;
     if (cacheable) {
         std::lock_guard<std::mutex> lock(cache_mutex);
-        for (auto it = cache.begin(); it != cache.end();) {
+        for (auto it = entries.begin(); it != entries.end();) {
             if (it->source.is_same(source)) {
                 if (it->version != version || it->data != source.const_data_ptr()) {
-                    cache_bytes -= it->bytes;
-                    it = cache.erase(it);
+                    if (!graph_cache_active) cache_bytes -= it->bytes;
+                    it = entries.erase(it);
                     continue;
                 }
                 if (it->h == h && it->w == w && it->scale == s && it->stream == stream &&
                     it->real_fft == real_fft && it->inference == inference &&
                     it->fb.device() == weight.device()) {
                     auto result = std::make_pair(it->fb, it->invw);
-                    cache.splice(cache.begin(), cache, it);
+                    entries.splice(entries.begin(), entries, it);
                     return result;
                 }
             }
@@ -86,13 +100,15 @@ static std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& we
     if (real_fft && s > 1) invw = invw.slice(-1, 0, w / s / 2 + 1).contiguous();
     if (cacheable) {
         const size_t bytes = fb.nbytes() + invw.nbytes() + source.nbytes();
-        if (bytes <= CACHE_BYTES_LIMIT) {
+        if (graph_cache_active || bytes <= CACHE_BYTES_LIMIT) {
             std::lock_guard<std::mutex> lock(cache_mutex);
-            cache.push_front({source, fb, invw, source.const_data_ptr(), version, h, w, s, stream, real_fft, inference, bytes});
-            cache_bytes += bytes;
-            while (cache.size() > CACHE_ENTRIES_LIMIT || cache_bytes > CACHE_BYTES_LIMIT) {
-                cache_bytes -= cache.back().bytes;
-                cache.pop_back();
+            entries.push_front({source, fb, invw, source.const_data_ptr(), version, h, w, s, stream, real_fft, inference, bytes});
+            if (!graph_cache_active) {
+                cache_bytes += bytes;
+                while (cache.size() > CACHE_ENTRIES_LIMIT || cache_bytes > CACHE_BYTES_LIMIT) {
+                    cache_bytes -= cache.back().bytes;
+                    cache.pop_back();
+                }
             }
         }
     }
@@ -167,12 +183,39 @@ void clear_fb_cache() {
     cache_bytes = 0;
 }
 
+bool supports_cuda_graphs() { return true; }
+
+void begin_graph_cache() {
+    TORCH_CHECK(!graph_cache_active, "graph cache scopes cannot be nested");
+    graph_cache.clear();
+    graph_cache_active = true;
+}
+
+std::vector<Tensor> end_graph_cache() {
+    TORCH_CHECK(graph_cache_active, "no graph cache scope is active");
+    std::vector<Tensor> owned;
+    for (const auto& entry : graph_cache) {
+        owned.push_back(entry.source);
+        owned.push_back(entry.fb);
+        owned.push_back(entry.invw);
+    }
+    graph_cache.clear();
+    graph_cache_active = false;
+    return owned;
+}
+
 TORCH_LIBRARY(converse2d, m) {
     m.def("forward(Tensor x, Tensor x0, Tensor weight, Tensor bias, int scale, float eps=1e-5, str variant='v7') -> Tensor");
     m.def("clear_cache() -> ()");
+    m.def("supports_cuda_graphs() -> bool");
+    m.def("begin_graph_cache() -> ()");
+    m.def("end_graph_cache() -> Tensor[]");
 }
 TORCH_LIBRARY_IMPL(converse2d, CompositeImplicitAutograd, m) {
     m.impl("forward", TORCH_FN(converse2d_forward));
     m.impl("clear_cache", TORCH_FN(clear_fb_cache));
+    m.impl("supports_cuda_graphs", TORCH_FN(supports_cuda_graphs));
+    m.impl("begin_graph_cache", TORCH_FN(begin_graph_cache));
+    m.impl("end_graph_cache", TORCH_FN(end_graph_cache));
 }
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {}

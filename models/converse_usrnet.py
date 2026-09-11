@@ -147,7 +147,7 @@ class KernelNet(nn.Module):
     def forward(self, k):
         k = k.to(self.fc1.weight.dtype)
         b,_,_,_ = k.shape
-        k = k.view(b, -1) # flatten
+        k = k.reshape(b, -1) # accept noncontiguous caller kernels
         # fully connected
         k = self.gelu(self.fc1(k))
         k = self.gelu(self.fc2(k))

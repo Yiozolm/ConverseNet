@@ -14,6 +14,7 @@ python test/test_error.py --device cpu
 python test/test_batched_kernels.py
 python test/test_batched_kernels.py --cpu
 python test/test_cache.py
+python test/test_cuda_graph.py
 ```
 
 - `test_correctness.py` (also exposed by `test_error.py`): independent dense
@@ -22,6 +23,9 @@ python test/test_cache.py
 - `test_batched_kernels.py`: per-sample/channel-shared kernels, dynamic-kernel
   gradients, DataNet mixed precision and USRNet end-to-end training.
 - `test_cache.py`: focused cache invalidation and inference/training transitions.
+- `test_cuda_graph.py`: capture with a warm eager cache, graph eviction, changed
+  inputs and weights, shape/batch/scale/dtype changes, independent outputs and
+  sequential calls on different CUDA streams.
 
 These use Python's standard unittest; pytest is not required.
 
@@ -52,6 +56,20 @@ includes forward plus gradients for x/x0/weight/bias.
 
 Use `--iters` to control repetitions and `--output` to select a result path.
 Defaults are `artifacts/benchmark.json` and `artifacts/benchmark_training.json`.
+
+```sh
+python test/benchmark_cuda_graph.py
+```
+
+This compares the pretrained USRNet eager path with the full graph runner on
+32x40 and 64x80 inputs at scale 2, FP32 and TF32 disabled. The graph timing
+includes signature checks, input copies, replay and an independent output copy.
+Five alternating rounds of 20 calls report both CUDA-event and wall medians;
+first-call setup and memory snapshots are recorded separately. Two changed
+input/kernel pairs per size are checked against eager output. Results go to
+`artifacts/benchmark_cuda_graph.json`; `--iters`, `--rounds` and `--output` can
+override the defaults. This measures steady-state inference, not training or
+dataset PSNR.
 
 ## Nsight
 
