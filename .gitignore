@@ -10,6 +10,8 @@ Optimization.md
 build/
 dist/
 *.egg-info/
+*.egg
+*.whl
 *.exp
 *.pdb
 *.ilk
