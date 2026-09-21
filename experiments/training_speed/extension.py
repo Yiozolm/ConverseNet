@@ -54,16 +54,17 @@ def load(include_checkout=False, verbose=False):
     if include_checkout and 'checkout_sources' not in _loaded[1]:
         folder = BUILD/'checkout'
         folder.mkdir(parents=True, exist_ok=True)
-        sources = []
+        sources, headers = [], []
         hashes = {}
-        for name in ('converse2d.cpp','converse2d_kernels.cu'):
+        for name in ('converse2d.cpp','converse2d_kernels.cu',
+                     'converse2d_training.cu','converse2d_training.h'):
             source = SOURCE/name
             hashes[name] = hashlib.sha256(source.read_bytes()).hexdigest()
             content = source.read_text(encoding='utf-8').replace('converse','training_checkout_converse')
-            dest = folder/name
+            dest = folder/name.replace('converse','training_checkout_converse')
             _write(dest, content)
-            sources.append(dest)
-        _build('training_speed_checkout', folder, sources, verbose=verbose)
+            (headers if name.endswith('.h') else sources).append(dest)
+        _build('training_speed_checkout', folder, sources, headers, verbose=verbose)
         _loaded[1]['checkout_sources'] = hashes
     return _loaded
 

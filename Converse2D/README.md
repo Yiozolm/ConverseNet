@@ -1,8 +1,8 @@
 # Converse2D
 
 A differentiable regularized circular-convolution solver using a stable residual
-formula. One C++ implementation provides the operator and cache; one CUDA source
-provides fused inference kernels.
+formula. One C++ implementation provides the operator and cache; CUDA sources
+provide fused inference and FP32 training kernels.
 
 ## Build
 
@@ -45,7 +45,7 @@ y = torch.ops.converse2d.forward(x, x0, weight, bias, scale, eps)
 
 Inputs share device and dtype; the kernel must fit the output dimensions.
 `scale` is a positive integer and `eps` is finite and positive. Float32/float64
-compute natively. Float16/bfloat16 compute in float32, retain their gradient
+retain their activation FFT and solve precision. Float16/bfloat16 compute in float32, retain their gradient
 connections and return the input dtype, including for arbitrary FFT sizes.
 
 ## Backends
@@ -55,13 +55,40 @@ connections and return the input dtype, including for arbitrary FFT sizes.
 
 | Variant | Inference | Training |
 |---|---|---|
-| `v7` (default) | Real FFT with fused CUDA correction | Differentiable real-FFT ATen |
+| `v7` (default) | Real FFT with fused CUDA correction | FP32 CUDA fused solve/VJP; ATen otherwise |
 | `v2` | Full-FFT ATen reference | Differentiable ATen |
 | `v3`–`v6` | Compatibility aliases for shared full-FFT fused code | Differentiable ATen |
 
-Fusion requires `no_grad()` or `inference_mode()`; `.eval()` alone does not
-disable autograd. Training supports first and second derivatives for all four
-tensor inputs. Floating-point outputs need not match bit for bit across FFT paths.
+The FP32 CUDA v7 training backend is selected when gradients are enabled and
+any input needs a gradient; `.eval()` alone does not disable autograd. Its
+half-spectrum solve uses an analytic first-order backward, with differentiable
+ATen recomputation for higher derivatives. The trainable kernel FFT is prepared
+in FP64 and cast to complex64 to reduce kernel-rounding error; activation FFTs
+and the solve remain FP32. For grids of at least 16,384 pixels, or at least
+1,048,576 elements across all actual batch/channel kernels, with kernel height
+at most one quarter of the grid height, preparation uses a horizontal real FFT
+on just the kernel rows, then a vertical complex FFT. Its autograd backward
+crops the padded rows before the horizontal adjoint, reducing full-grid FP64
+work and temporary memory. Other shapes retain the 2-D kernel FFT. The cast to
+complex64 also produces contiguous storage, avoiding repeated layout copies.
+Scale-one training with at least 65,536 spatial pixels uses a specialized
+forward/VJP kernel; smaller shapes retain the generic solve.
+FFT/IFFT, PSF pad/roll, casts and lambda
+parameterization retain autograd. Trainable spectra are rebuilt on every call,
+so optimizer updates cannot reuse stale or detached kernels. CPU, FP64 and
+low-precision training retain their ATen paths. Inference fusion requires
+`no_grad()` or `inference_mode()`. All four tensor inputs support first and
+second derivatives; floating-point outputs need not match bit for bit across
+FFT paths.
+
+`ConverseUSRNet(..., reuse_training_spectra=True)` is an experimental eager
+training option, **disabled by default**. It reuses only repeated fixed weights
+within one forward, retaining an FP64 preparation graph and casting separately
+for each use. Version, storage, autograd graph, gradient requirement, shape and
+stream changes invalidate reuse; nested scopes and exceptions release their
+references. It never persists spectra across forwards or optimizer steps.
+Full-model precision and short-training stress gates remain open, so this is
+not a convergence-validated default. See [refinement results](../docs/training_refinements.md).
 
 USRNet's dynamic-kernel data module uses the same operator:
 

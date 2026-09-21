@@ -1,13 +1,9 @@
-"""Complex half-spectrum VJP and end-to-end low-precision training regressions."""
+"""Production half-spectrum VJP, boundaries and higher-order regressions."""
 import itertools
-import sys
 import unittest
 
 import torch
-from extension_loader import ROOT, load_extension
-
-sys.path.insert(0,str(ROOT))
-from models.converse_core import converse2d_reference, converse2d_reference_nearest
+from extension_loader import load_extension
 
 
 def full(t,width):
@@ -124,40 +120,20 @@ class TrainingFusion(unittest.TestCase):
                 data[1].mul_(1e-5)
                 data[2].mul_(amplitude)
                 data[3].fill_(1e-8)
-            expected=spectral_reference(*data,3,4,3)
+            reference_data=tuple(t.detach().to(torch.complex128 if t.is_complex() else torch.float64)
+                                 .requires_grad_() for t in data)
+            expected=spectral_reference(*reference_data,3,4,3)
             actual=self.op(*data,3,4,3)
             upstream=torch.randn_like(actual)*1e-5
-            eg=torch.autograd.grad(expected,data,upstream)
+            eg=torch.autograd.grad(expected,reference_data,upstream.to(torch.complex128))
             ag=torch.autograd.grad(actual,data,upstream)
-            torch.testing.assert_close(actual,expected,atol=1e-6,rtol=1e-5)
+            torch.testing.assert_close(actual.to(expected.dtype),expected,atol=1e-6,rtol=1e-5)
             for a,e in zip(ag,eg):
                 self.assertTrue(torch.isfinite(a).all())
                 # Normalize the comparison so large lambda gradients do not
                 # require an arbitrary, magnitude-dependent absolute tolerance.
                 divisor=e.abs().max().clamp_min(1e-30)
-                torch.testing.assert_close(a/divisor,e/divisor,atol=2e-5,rtol=2e-5)
-
-    def test_spatial_master_parameter_gradients(self):
-        for dtype in (torch.float16,torch.bfloat16):
-            for s in (1,2,3,4):
-                for nearest in (False,True):
-                    x=torch.randn(2,3,5,7,device="cuda",dtype=dtype).requires_grad_()
-                    prior=torch.randn(2,3,5*s,7*s,device="cuda",dtype=dtype).requires_grad_()
-                    k=(torch.rand(2,1,3,3,device="cuda")/9).requires_grad_()
-                    b=torch.zeros(1,3,1,1,device="cuda",requires_grad=True)
-                    args=(x,k,b) if nearest else (x,prior,k,b)
-                    op=torch.ops.converse2d.forward_nearest if nearest else torch.ops.converse2d.forward
-                    ref=converse2d_reference_nearest if nearest else converse2d_reference
-                    expected=ref(*args,s,1e-3)
-                    actual=op(*args,s,1e-3)
-                    upstream=torch.randn_like(actual)/100
-                    ag=torch.autograd.grad(actual,args,upstream)
-                    eg=torch.autograd.grad(expected,args,upstream)
-                    tol=0.008 if dtype==torch.float16 else 0.06
-                    torch.testing.assert_close(actual,expected,atol=tol,rtol=tol)
-                    for a,e in zip(ag,eg):
-                        self.assertEqual(a.dtype,e.dtype)
-                        torch.testing.assert_close(a,e,atol=tol/10,rtol=tol)
+                torch.testing.assert_close(a.to(e.dtype)/divisor,e/divisor,atol=2e-5,rtol=2e-5)
 
     def test_saved_input_mutation_is_rejected(self):
         data=self.data(2,3,2)

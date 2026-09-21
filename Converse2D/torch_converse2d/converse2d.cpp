@@ -1,5 +1,6 @@
 #include <torch/extension.h>
 #include <ATen/ATen.h>
+#include <ATen/record_function.h>
 #include <c10/core/InferenceMode.h>
 #include <cmath>
 #include <list>
@@ -32,6 +33,10 @@ static Tensor full_spectrum(const Tensor& half, int64_t width) {
     return at::cat({half, tail}, -1);
 }
 
+#define CONVERSE2D_TRAINING_SPECTRAL_ONLY
+#include "converse2d_training.h"
+#undef CONVERSE2D_TRAINING_SPECTRAL_ONLY
+
 struct CacheEntry {
     // Holding the source prevents TensorImpl address reuse by a new weight.
     Tensor source, fb, invw;
@@ -52,9 +57,112 @@ static thread_local std::list<CacheEntry> graph_cache;
 constexpr size_t CACHE_BYTES_LIMIT = 256 * 1024 * 1024;
 constexpr size_t CACHE_ENTRIES_LIMIT = 64;
 
+struct TrainingCacheEntry {
+    Tensor source, fb;
+    std::shared_ptr<torch::autograd::Node> grad_fn;
+    const void* data;
+    int64_t version;
+    int64_t h, w, stream;
+    bool requires_grad;
+};
+struct TrainingCacheScope {
+    std::list<TrainingCacheEntry> entries;
+    std::vector<Tensor> allowed;
+    bool restrict_weights = false;
+    int64_t hits = 0, misses = 0;
+};
+// Explicit, nested scopes belong to one model forward, never to an optimizer
+// step or the inference cache. Holding fb preserves its differentiable graph.
+static thread_local std::list<TrainingCacheScope> training_scopes;
+
+static Tensor prepare_training_kernel(const Tensor& weight, int64_t h, int64_t w) {
+    RECORD_FUNCTION("converse2d::prepare_training_kernel", std::vector<c10::IValue>());
+    const auto kh = weight.size(2), kw = weight.size(3);
+    const auto filters = weight.size(0) * weight.size(1);
+    const auto area = h * w;
+    // Small spatial grids can still have expensive FP64 adjoints when every
+    // batch/channel has its own kernel. Use total transformed work as well.
+    const bool many_filters = area >= (1048576 - 1) / filters + 1;
+    Tensor fb;
+    if ((area >= 16384 || many_filters) && kh <= h / 4) {
+        auto rows = at::constant_pad_nd(weight.to(at::kDouble), {0, w - kw}, 0);
+        rows = at::roll(rows, {-(kw / 2)}, {-1});
+        auto horizontal = at::fft_rfft(rows, c10::nullopt, -1);
+        auto columns = at::constant_pad_nd(horizontal, {0, 0, 0, h - kh}, 0);
+        columns = at::roll(columns, {-(kh / 2)}, {-2});
+        fb = at::fft_fft(columns, c10::nullopt, -2);
+    } else {
+        auto psf = at::constant_pad_nd(weight.to(at::kDouble), {0, w - kw, 0, h - kh}, 0);
+        fb = at::fft_rfft2(at::roll(psf, {-(kh / 2), -(kw / 2)}, {-2, -1}));
+    }
+    return fb;
+}
+
+static Tensor training_spectrum_cast(const Tensor& fb) {
+    // Each use has its own cast node: shared preparation gradients accumulate
+    // in FP64 before the FFT adjoint, rather than summing complex64 VJPs first.
+    // Layout conversion is fused with the cast so the solve needs no copies.
+    return fb.to(fb.options().dtype(at::kComplexFloat), false, false, at::MemoryFormat::Contiguous);
+}
+
+static Tensor training_spectrum(const Tensor& source, const Tensor& weight, int64_t h, int64_t w) {
+    if (training_scopes.empty() || source.is_inference())
+        return training_spectrum_cast(prepare_training_kernel(weight, h, w));
+    auto& scope = training_scopes.back();
+    // Models may declare only weights that are reused. Do not retain large
+    // per-example dynamic spectra that are consumed once in the forward.
+    if (scope.restrict_weights) {
+        bool allowed = false;
+        for (const auto& candidate : scope.allowed) if (candidate.is_same(source)) { allowed = true; break; }
+        if (!allowed) return training_spectrum_cast(prepare_training_kernel(weight, h, w));
+    }
+    int64_t stream = 0;
+#ifdef CONVERSE2D_WITH_CUDA
+    if (weight.is_cuda()) stream = c10::cuda::getCurrentCUDAStream(weight.get_device()).id();
+#endif
+    const auto version = source._version();
+    const auto data = source.const_data_ptr();
+    const bool requires_grad = source.requires_grad();
+    const auto grad_fn = source.grad_fn();
+    for (auto it = scope.entries.begin(); it != scope.entries.end();) {
+        if (it->source.is_same(source)) {
+            if (it->version != version || it->data != data || it->requires_grad != requires_grad ||
+                it->grad_fn != grad_fn) {
+                it = scope.entries.erase(it);
+                continue;
+            }
+            if (it->h == h && it->w == w && it->stream == stream && it->fb.device() == weight.device()) {
+                ++scope.hits;
+                return training_spectrum_cast(it->fb);
+            }
+        }
+        ++it;
+    }
+    auto fb = prepare_training_kernel(weight, h, w);
+    scope.entries.push_back({source, fb, grad_fn, data, version, h, w, stream, requires_grad});
+    ++scope.misses;
+    return training_spectrum_cast(fb);
+}
+
+void begin_training_cache() { training_scopes.emplace_back(); }
+
+void begin_training_cache_for(std::vector<Tensor> weights) {
+    training_scopes.emplace_back();
+    training_scopes.back().allowed = std::move(weights);
+    training_scopes.back().restrict_weights = true;
+}
+
+std::vector<int64_t> end_training_cache() {
+    TORCH_CHECK(!training_scopes.empty(), "no training cache scope is active");
+    auto result = std::vector<int64_t>{training_scopes.back().hits, training_scopes.back().misses};
+    training_scopes.pop_back();
+    return result;
+}
+
 static std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& weight,
-                                         int64_t h, int64_t w, int64_t s, bool real_fft) {
-    bool cacheable = !at::GradMode::is_enabled() && !source.is_inference() && source.is_leaf();
+                                         int64_t h, int64_t w, int64_t s, bool real_fft,
+                                         bool need_power = true) {
+    bool cacheable = need_power && !at::GradMode::is_enabled() && !source.is_inference() && source.is_leaf();
     int64_t stream = 0;
 #ifdef CONVERSE2D_WITH_CUDA
     if (weight.is_cuda()) {
@@ -92,6 +200,9 @@ static std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& we
         }
     }
     const auto kh = weight.size(2), kw = weight.size(3);
+    if (!need_power) {
+        return {training_spectrum(source, weight, h, w), Tensor()};
+    }
     Tensor otf;
 #ifdef CONVERSE2D_WITH_CUDA
     const bool fused_prepare = weight.is_cuda() && !at::GradMode::is_enabled() && real_fft;
@@ -166,14 +277,25 @@ Tensor converse2d_forward(Tensor x, Tensor x0, Tensor weight, Tensor bias,
     weight = weight.to(compute_dtype);
     bias = bias.to(compute_dtype).contiguous();
     const bool real_fft = variant == "v7";
+    bool fused_training = false;
+#ifdef CONVERSE2D_WITH_CUDA
+    fused_training = x.is_cuda() && output_dtype == at::kFloat && real_fft &&
+        at::GradMode::is_enabled() &&
+        (x.requires_grad() || x0.requires_grad() || weight.requires_grad() || bias.requires_grad());
+#endif
     auto lambda = at::sigmoid(bias - 9.0) + eps;
-    auto spectra = spectrum(source, weight, Hs, Ws, scale, real_fft);
+    // The fused solve forms its denominator while reading the kernel spectrum.
+    // Keep FFT/pad/roll and lambda differentiable, without building a duplicate
+    // power/alias graph or caching trainable spectra across parameter updates.
+    auto spectra = spectrum(source, weight, Hs, Ws, scale, real_fft, !fused_training);
     auto fb = spectra.first, invw = spectra.second;
     auto fy = real_fft ? at::fft_rfft2(x) : at::fft_fft2(x);
     auto fx0 = same_prior ? fy : (real_fft ? at::fft_rfft2(x0) : at::fft_fft2(x0));
     Tensor fx;
 #ifdef CONVERSE2D_WITH_CUDA
-    if (x.is_cuda() && !at::GradMode::is_enabled() && variant != "v2") {
+    if (fused_training) {
+        fx = converse2d::training::spectral(fy, fx0, fb, lambda, H, W, scale);
+    } else if (x.is_cuda() && !at::GradMode::is_enabled() && variant != "v2") {
         fx = converse_spectral_cuda(fy, fx0, fb, invw, lambda, H, W, scale, real_fft);
     } else
 #endif
@@ -223,6 +345,10 @@ std::vector<Tensor> end_graph_cache() {
 
 TORCH_LIBRARY(converse2d, m) {
     m.def("forward(Tensor x, Tensor x0, Tensor weight, Tensor bias, int scale, float eps=1e-5, str variant='v7') -> Tensor");
+    m.def("_training_spectral(Tensor y, Tensor p, Tensor k, Tensor regularizer, int H, int W, int scale) -> Tensor");
+    m.def("_begin_training_cache() -> ()");
+    m.def("_begin_training_cache_for(Tensor[] weights) -> ()");
+    m.def("_end_training_cache() -> int[]");
     m.def("clear_cache() -> ()");
     m.def("supports_cuda_graphs() -> bool");
     m.def("begin_graph_cache() -> ()");
@@ -230,6 +356,10 @@ TORCH_LIBRARY(converse2d, m) {
 }
 TORCH_LIBRARY_IMPL(converse2d, CompositeImplicitAutograd, m) {
     m.impl("forward", TORCH_FN(converse2d_forward));
+    m.impl("_training_spectral", TORCH_FN(converse2d::training::spectral));
+    m.impl("_begin_training_cache", TORCH_FN(begin_training_cache));
+    m.impl("_begin_training_cache_for", TORCH_FN(begin_training_cache_for));
+    m.impl("_end_training_cache", TORCH_FN(end_training_cache));
     m.impl("clear_cache", TORCH_FN(clear_fb_cache));
     m.impl("supports_cuda_graphs", TORCH_FN(supports_cuda_graphs));
     m.impl("begin_graph_cache", TORCH_FN(begin_graph_cache));

@@ -1,4 +1,5 @@
 import os
+from contextlib import contextmanager
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -36,6 +37,34 @@ _try_import_converse2d_ext()
 converse2d_CUDA = torch.ops.converse2d.forward if (
     hasattr(torch.ops, "converse2d") and hasattr(torch.ops.converse2d, "forward")
 ) else None
+
+
+@contextmanager
+def _training_kernel_scope(x, backend, weights=None):
+    """Reuse differentiable spectra only within one enclosing model forward."""
+    backend = (os.environ.get("CONVERSE2D_BACKEND", "") or backend).lower()
+    if not torch.is_grad_enabled() or not x.is_cuda or backend not in ("auto", "cuda"):
+        yield
+        return
+    if weights is not None and not weights:
+        yield
+        return
+    _try_import_converse2d_ext()
+    ops = torch.ops.converse2d
+    begin = getattr(ops, "_begin_training_cache" if weights is None else "_begin_training_cache_for", None)
+    end = getattr(ops, "_end_training_cache", None)
+    # Frozen baselines and older installed extensions have no private scope
+    # API; they retain their original behavior without a Python-side cache.
+    if begin is None or end is None:
+        yield
+        return
+    begin() if weights is None else begin(weights)
+    try:
+        yield
+    finally:
+        # C++ owns a thread-local stack, so nested forwards release only their
+        # own references and exceptions cannot leak spectra into a later step.
+        end()
 
 
 """

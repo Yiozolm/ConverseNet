@@ -1,8 +1,8 @@
 #pragma once
 
-// Included after the shared alias helpers. FP32 and low-precision CUDA public
-// training paths select this backend. FP64 support in the internal spectral
-// entry exists for independent complex gradcheck/gradgradcheck validation.
+// Included after the shared alias helpers. The public CUDA FP32 v7 training
+// path selects the spectral backend. FP64 support in the internal entry exists
+// for independent complex gradcheck/gradgradcheck validation.
 #include <torch/csrc/autograd/custom_function.h>
 #include <torch/csrc/autograd/autograd.h>
 
@@ -91,6 +91,10 @@ static Tensor spectral(Tensor y,Tensor p,Tensor k,Tensor lambda,int64_t H,int64_
     return reference(y,p,k,lambda,H,W,s);
 }
 
+// The standalone experiments also use this spatial adapter, after providing
+// native_fft helpers. Production includes only the spectral core so its
+// existing input/FFT precision contract does not depend on experimental AMP.
+#ifndef CONVERSE2D_TRAINING_SPECTRAL_ONLY
 static Tensor forward(Tensor x,Tensor x0,Tensor weight,Tensor bias,int64_t scale,double eps,bool nearest) {
     const auto output_dtype=x.scalar_type();
     const bool same=nearest?scale==1:x.is_same(x0);
@@ -111,4 +115,5 @@ static Tensor forward(Tensor x,Tensor x0,Tensor weight,Tensor bias,int64_t scale
     return (low?native_fft::real_ifft(out,H*scale,W*scale,output_dtype):
                 at::fft_irfft2(out,at::IntArrayRef({H*scale,W*scale}))).to(output_dtype);
 }
+#endif
 } // namespace converse2d::training

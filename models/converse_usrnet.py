@@ -190,7 +190,8 @@ class ConverseNet(nn.Module):
 # --------------------------------------------
 """
 class ConverseUSRNet(nn.Module):
-    def __init__(self, num_iterations=5, in_channels=64, num_blocks=7, backend="auto", variant="v7"):
+    def __init__(self, num_iterations=5, in_channels=64, num_blocks=7, backend="auto", variant="v7",
+                 reuse_training_spectra=False):
         super(ConverseUSRNet, self).__init__()
 
         self.d = ConvReverseDataNet(backend=backend, variant=variant)
@@ -203,6 +204,8 @@ class ConverseUSRNet(nn.Module):
         self.conv2 = nn.Conv2d(64, 3, 1, 1, 0)
         self.kernelnet = KernelNet()
         self.num_iterations = num_iterations
+        # Explicit candidate until full-model quality/convergence gates pass.
+        self.reuse_training_spectra = bool(reuse_training_spectra)
         
         self.convs = nn.ModuleList([nn.Conv2d(16, 64, 1, 1, 0) for _ in range(num_iterations)])
 
@@ -214,6 +217,15 @@ class ConverseUSRNet(nn.Module):
         sf: integer, 1
         sigma: tensor, Nx1x1x1
         '''
+        if not self.reuse_training_spectra or not torch.is_grad_enabled() or not x.is_cuda:
+            return self._forward_impl(x, k, sf)
+        # Only these parameters recur across iterations. Dynamic DataNet PSFs
+        # are consumed once and should not extend the forward's live memory.
+        weights = [layer.weight for layer in self.p.modules() if isinstance(layer, Converse2D)]
+        with converse_utils._training_kernel_scope(x, self.d.backend, weights):
+            return self._forward_impl(x, k, sf)
+
+    def _forward_impl(self, x, k, sf):
         b,c,h,w = k.shape
         k = self.kernelnet(k)
         x = self.conv1(x)

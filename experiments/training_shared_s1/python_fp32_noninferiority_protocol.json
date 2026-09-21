@@ -1,0 +1,17 @@
+{
+  "version": "shared-s1-python-fp32-numerical-noninferiority-v1",
+  "scope": "One original native s1_module seed17 synthetic fixture; operator forward plus complete VJP. Not a training-quality or global-release gate.",
+  "fixture": "benchmark_native_deconv.cpu_data(CASES['s1_module'], seed=17), verified against immutable native_baseline.json config and tensor hashes",
+  "oracle": "Independent original full-FFT converse2d_reference evaluated in FP64 on the same FP32-rounded input, weight, bias and upstream, with native circular pad2/slice crop2",
+  "baseline": "Original full-FFT converse2d_reference evaluated in FP32 on that same fixture",
+  "tensors": ["output", "dx", "dw", "db"],
+  "metrics": ["max_abs", "relative_l2"],
+  "acceptance": "For every tensor, candidate max_abs <= baseline max_abs AND candidate relative_l2 <= baseline relative_l2 against the same FP64 oracle. All values must be finite. No tolerance, percentage, margin or rounding-floor credit is added.",
+  "relative_l2_denominator": "max(norm(FP64_reference), 1e-30), inherited diagnostic convention",
+  "pointwise": "Original output 3e-5/3e-5 and VJP 5e-5/5e-5 comparisons against FP64 and Python FP32 are diagnostics only, not acceptance gates",
+  "representation_floor": "FP64 oracle rounded to FP32, then compared with the FP64 oracle; diagnostic only and never added to the gate",
+  "selection": "Exclude each failing production/candidate route from timing independently. A failing production control does not block passing candidates. Always retain failed metrics. Python FP32 and native_dense are timed as local baselines after finite/shape checks.",
+  "native": "Native dense ConvTranspose2d has different mathematics, boundary conditions, bias semantics and parameter count; it is a timing target, not a quality-equivalent solver",
+  "measurement": {"warmup": 5, "rounds": 6, "iterations_per_round": 30, "tf32": false, "global_deterministic": false, "cudnn_deterministic": true, "amp": false, "cuda_graphs": false, "profiler": false},
+  "release": "Local numerical noninferiority alone does not establish model accuracy, training quality, convergence, broader-shape coverage or production eligibility"
+}
