@@ -310,3 +310,7 @@ changes; stale binaries are rejected. This is useful inside a profiler.
 ## Build layout regression
 
 Run python test/test_build_layout.py to verify the explicit production source set, nested-header fingerprint invalidation, and current-source legacy exports. See ../Converse2D/REFACTOR.md for archived source-patching experiments and supported adapters.
+
+## Refactored small-s1 training study
+
+`study_training_small_s1.py` compares frozen control, s1 dispatch, pad/crop, and their combination; full-model modes use real-image FP32 Adam steps. `profile_small_s1_nsight.py` captures verified warm binaries separately from timing, and `check_small_s1_contract.py` runs existing CUDA gradient contracts against the isolated candidate. `summarize_small_s1_study.py` audits the fixed saved campaign without a GPU. Defaults remain unchanged because inherited Python FP32 noninferiority failures remain. Scope, commands and evidence: [small-s1 report](../docs/training_small_s1.md).

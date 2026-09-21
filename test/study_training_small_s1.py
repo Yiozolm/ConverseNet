@@ -11,6 +11,7 @@ from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import statistics
 import sys
@@ -27,6 +28,9 @@ def sha(path):
 
 def frozen(args):
     manifest = json.loads((args.snapshot / "before_manifest.json").read_text())
+    supplement = args.snapshot / "adapter_manifest.json"
+    if supplement.exists():
+        manifest = dict(manifest, files={**manifest["files"], **json.loads(supplement.read_text())})
     for name, expected in manifest["files"].items():
         if sha(args.snapshot / "before" / name) != expected:
             raise RuntimeError(f"Frozen source changed: {name}")
@@ -41,26 +45,45 @@ def load_ops(args):
     import torch
     import probe_training_s1_shapes as probe
     texts, manifest = frozen(args)
+    if args.warm_builds:
+        saved = json.loads(args.warm_builds.read_text())
+        if saved["environment"]["torch"] != str(torch.__version__) or saved["environment"]["cuda"] != torch.version.cuda:
+            raise RuntimeError("Warm binary runtime mismatch")
+        result = {}
+        for name, build in saved["identity"]["builds"].items():
+            original = {n: hashlib.sha256(t.encode()).hexdigest() for n, t in texts.items()}
+            if original != build["source_sha256"]:
+                raise RuntimeError("Warm binary source mismatch")
+            for n, expected in build["namespaced_source_sha256"].items():
+                # The established research loader records UTF-8 text hashes;
+                # Windows write_text emits CRLF. Do not compare that identity
+                # to raw disk bytes. Binary identity below is always raw bytes.
+                text = (Path(build["build_directory"]) / n).read_text(encoding="utf-8")
+                if hashlib.sha256(text.encode()).hexdigest() != expected:
+                    raise RuntimeError("Warm derived source changed")
+            if sha(Path(build["library"])) != build["binary_sha256"]:
+                raise RuntimeError("Warm binary changed")
+            torch.ops.load_library(build["library"])
+            result[name] = getattr(torch.ops, build["namespace"])
+        return result, saved["identity"]
     result, builds = {}, {}
     # Reuse the checked research loader, but derive both builds from the same
     # immutable refactor snapshot. No production source string is rewritten.
     with patch.object(probe, "legacy_source_texts", return_value=texts):
         with patch.object(probe, "FORCED_SELECTOR", probe.SELECTOR):
             result["before"], builds["before"] = probe.load_forced()
-        if not args.production:
-            result["candidate"], builds["candidate"] = probe.load_forced()
-    if args.production:
-        from extension_loader import load_extension
-        load_extension()
-        result["candidate"] = torch.ops.converse2d
-        builds["candidate"] = json.loads((ROOT / ".build/cuda/source_manifest.json").read_text())
+        result["candidate"], builds["candidate"] = probe.load_forced()
+    for name, build in builds.items():
+        if "build_directory" in build:
+            library = Path(build["build_directory"]) / (build["extension"] + (".pyd" if os.name == "nt" else ".so"))
+            build.update(library=str(library.resolve()), binary_sha256=sha(library))
     return result, dict(builds=builds, frozen=manifest)
 
 
 def same(a, b):
     import torch
-    return a.dtype == b.dtype and a.shape == b.shape and torch.equal(
-        a.contiguous().view(torch.uint8), b.contiguous().view(torch.uint8))
+    return a.dtype == b.dtype and a.shape == b.shape and bool(torch.isfinite(a).all()) and bool(torch.isfinite(b).all()) and torch.equal(
+        a.contiguous().reshape(-1).view(torch.uint8), b.contiguous().reshape(-1).view(torch.uint8))
 
 
 def errors(actual, reference):
@@ -154,11 +177,8 @@ def model_route(args, ops, route):
 
     selected = ops["before" if route == "before" else "candidate"]
     with patch.object(torch.ops, "converse2d", selected):
-        if args.production and route != "before":
+        with patch.object(util_converse.Converse2D, "forward", original if route == "before" else combined):
             yield
-        else:
-            with patch.object(util_converse.Converse2D, "forward", original if route == "before" else combined):
-                yield
 
 
 def model_study(args, report, save, ops):
@@ -242,6 +262,8 @@ def model_study(args, report, save, ops):
     if not all(all(v.values()) for v in report["validation"].values()):
         raise RuntimeError("Full model changed output/gradient/Adam/parameter bits")
     del control, candidate
+    if args.phase == "validation":
+        return
     for index in range(args.rounds):
         order = ["before", "combined"] if index % 2 == 0 else ["combined", "before"]
         values = {route: execute(route) for route in order}
@@ -256,8 +278,8 @@ def main():
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("--snapshot", type=Path, default=ROOT / "artifacts/small_s1_20260921")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--phase", choices=("operators", "model", "profile", "build"), required=True)
-    parser.add_argument("--production", action="store_true")
+    parser.add_argument("--phase", choices=("operators", "model", "validation", "profile", "build"), required=True)
+    parser.add_argument("--warm-builds", type=Path, help="Verified study build report; load libraries without compiler probes")
     parser.add_argument("--batch", type=int, default=4)
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iters", type=int, default=20)
@@ -267,6 +289,8 @@ def main():
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Refusing to overwrite evidence")
+    if min(args.batch, args.warmup, args.iters, args.rounds, args.check_steps) < 1:
+        parser.error("Counts must be positive")
     import torch
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
@@ -282,6 +306,9 @@ def main():
     def save():
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
+        archive = args.output.parent / ("study_source_" + report["script_sha256"] + ".py")
+        if not archive.exists():
+            archive.write_bytes(Path(__file__).read_bytes())
     save()
     try:
         if args.phase == "operators":

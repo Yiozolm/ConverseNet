@@ -4,7 +4,7 @@
 
 ## 目标
 
-实现 torch.nn.ConvTranspose2d 类似的训练速度。
+实现 torch.nn.ConvTranspose2d 类似的训练速度。不管与Converse kernel之外的如Layernorm等kernel
 
 ## 精度与速度 trade-off
 
