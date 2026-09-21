@@ -24,6 +24,10 @@ from torch.utils import cpp_extension
 
 
 ROOT = Path(__file__).resolve().parents[2]
+import sys as _layout_sys
+_layout_sys.path.insert(0,str(ROOT/"test"))
+from extension_loader import legacy_source_texts, production_source_hashes
+
 HERE = Path(__file__).resolve().parent
 SOURCE = ROOT / "Converse2D" / "torch_converse2d"
 BUILD = ROOT / ".build" / "nearest_spectral"
@@ -38,7 +42,7 @@ from models.converse_core import converse2d_reference
 def load(*, verbose=True):
     """Compile without changing production registration or installed modules."""
     BUILD.mkdir(parents=True, exist_ok=True)
-    private = (SOURCE / "converse2d.cpp").read_text(encoding="utf-8")
+    private = legacy_source_texts()["converse2d.cpp"]
     for before, after in {
         "TORCH_LIBRARY(converse2d, m)": f"TORCH_LIBRARY({NAMESPACE}, m)",
         "TORCH_LIBRARY_IMPL(converse2d, CompositeImplicitAutograd, m)":
@@ -58,7 +62,7 @@ def load(*, verbose=True):
         os.environ.setdefault("VSLANG", "1033")
     # MSVC's localized include output can hide dependencies from Ninja.
     digest = hashlib.sha256(private.encode("utf-8") +
-                            (SOURCE / "converse2d_kernels.cu").read_bytes()).hexdigest()
+                            json.dumps(production_source_hashes(),sort_keys=True).encode()).hexdigest()
     dependency_flag = f"-DNEAREST_SPECTRAL_BASELINE_SHA256_{digest}=1"
     flags.extend(["-DCONVERSE2D_WITH_CUDA=1", dependency_flag])
     cuda_flags = ["-O3", "-lineinfo", dependency_flag]
@@ -68,7 +72,7 @@ def load(*, verbose=True):
     os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{major}.{minor}")
     cpp_extension.load(
         name="converse2d_nearest_spectral_experiment_ext",
-        sources=[str(HERE / "bindings.cpp"), str(HERE / "kernels.cu")],
+        sources=[str(HERE / "bindings.cpp"), str(HERE / "kernels.cu"), str(SOURCE / "converse2d_training.cu")],
         extra_include_paths=[str(BUILD)], extra_cflags=flags,
         extra_cuda_cflags=cuda_flags, with_cuda=True, is_python_module=False,
         build_directory=str(BUILD), verbose=verbose,
@@ -486,7 +490,7 @@ def main():
     try:
         load(verbose=not args.quiet_build)
         result["environment"] = environment()
-        result["source_sha256"] = source_hashes()
+        result["source_sha256"] = {**production_source_hashes(), **source_hashes()}
         if not args.benchmark_only and not args.profile_only:
             print("Validating against independent float64 full-spectrum reference...", flush=True)
             result["validation"] = validate()

@@ -178,3 +178,7 @@ torch.ops.converse2d.clear_cache()
 ```
 
 See [tests and profiling](../test/README.md) for verification commands.
+
+## Source organization
+
+See [REFACTOR.md](REFACTOR.md) for the training/inference and scale layout, explicit build inputs, and compatibility with isolated experiments.

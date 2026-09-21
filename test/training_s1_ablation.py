@@ -16,17 +16,24 @@ from torch.utils import cpp_extension
 
 import benchmark_fp32_training as common
 from benchmark_training_refinements import report_metadata, training_case
-from extension_loader import load_extension
-from training_refinement_baseline import ROOT, SOURCE, SOURCE_NAMES
+from extension_loader import load_extension, legacy_source_texts, production_source_hashes
+from training_refinement_baseline import ROOT, SOURCE
 
 SELECTOR = "bool use_scale1(I H,I W,I s) { return s==1 && H*W>=65536; }"
 DISABLED_SELECTOR = "bool use_scale1(I H,I W,I s) { return false; }"
 _loaded = {}
 
 
+def amalgamation_hashes():
+    """Hash the exported text actually used by this isolated build."""
+    return {f"{SOURCE}/{name}": hashlib.sha256(text.encode("utf-8")).hexdigest()
+            for name, text in legacy_source_texts().items()}
+
+
 def load_scale1_disabled(verbose=False):
     """Verify and patch one known selector in an isolated current-source copy."""
-    originals = {name: (ROOT / SOURCE / name).read_bytes() for name in SOURCE_NAMES}
+    production_hashes = production_source_hashes()
+    originals = {name: value.encode("utf-8") for name,value in legacy_source_texts().items()}
     original_hashes = {name: hashlib.sha256(value).hexdigest() for name, value in originals.items()}
     content = {name: value.decode("utf-8").replace("\r\n", "\n")
                for name, value in originals.items()}
@@ -36,7 +43,8 @@ def load_scale1_disabled(verbose=False):
         raise RuntimeError(f"Expected one exact current use_scale1 selector, found {occurrences}; inspect the source before updating this ablation")
     content[target] = content[target].replace(SELECTOR, DISABLED_SELECTOR, 1)
     patched_hashes = {name: hashlib.sha256(value.encode()).hexdigest() for name, value in content.items()}
-    fingerprint = hashlib.sha256(json.dumps(dict(original=original_hashes, patched=patched_hashes),
+    fingerprint = hashlib.sha256(json.dumps(dict(original=original_hashes, patched=patched_hashes,
+                                                production=production_hashes),
                                            sort_keys=True).encode()).hexdigest()[:16]
     if fingerprint in _loaded:
         return _loaded[fingerprint]
@@ -67,6 +75,8 @@ def load_scale1_disabled(verbose=False):
                        build_directory=str(build), verbose=verbose)
     manifest = dict(ref="current-with-s1-disabled:" + fingerprint,
                     source_sha256={f"{SOURCE}/{name}": value for name, value in original_hashes.items()},
+                    source_identity_kind="current legacy amalgamation text, not on-disk facades",
+                    production_source_sha256=production_hashes,
                     patched_source_sha256=patched_hashes, namespaced_source_sha256=transformed_hashes,
                     patch=dict(file=f"{SOURCE}/{target}", occurrence_count=1,
                                before=SELECTOR, after=DISABLED_SELECTOR),
@@ -93,8 +103,8 @@ def main():
     if os.environ.get("CONVERSE2D_BACKEND", "").lower() not in ("", "auto", "cuda"):
         parser.error("CONVERSE2D_BACKEND must not select a reference backend")
     # Reject a source change between loading the production and derived builds.
-    source_hashes = {name: hashlib.sha256((ROOT / SOURCE / name).read_bytes()).hexdigest()
-                     for name in SOURCE_NAMES}
+    source_hashes = amalgamation_hashes()
+    production_hashes = production_source_hashes()
     skipped = os.environ.pop("CONVERSE2D_SKIP_BUILD", None)
     try:
         load_extension(verbose=args.verbose_build)
@@ -103,11 +113,10 @@ def main():
             os.environ["CONVERSE2D_SKIP_BUILD"] = skipped
     current = torch.ops.converse2d
     disabled, baseline = load_scale1_disabled(args.verbose_build)
-    after_hashes = {name: hashlib.sha256((ROOT / SOURCE / name).read_bytes()).hexdigest()
-                    for name in SOURCE_NAMES}
-    if source_hashes != after_hashes or any(
-            source_hashes[name] != baseline["source_sha256"][f"{SOURCE}/{name}"]
-            for name in SOURCE_NAMES):
+    if (source_hashes != amalgamation_hashes()
+            or source_hashes != baseline["source_sha256"]
+            or production_hashes != production_source_hashes()
+            or production_hashes != baseline["production_source_sha256"]):
         raise RuntimeError("Source changed during ablation setup; restart in a fresh process")
     variants = dict(dev=disabled, current=current)
     dispatch = {name: common.verify_fused_dispatch(ops) for name, ops in variants.items()}
@@ -121,6 +130,7 @@ def main():
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cudnn.benchmark = False
     report = report_metadata(args, baseline, dispatch)
+    report["production_source_sha256"] = production_hashes
     report["variant_labels"] = dict(dev="current with s1 selector disabled", current="current production s1 selector enabled")
     report["model_scope"] = "Identical current model forwards, kernel preparation and within-forward reuse; only CUDA use_scale1 selector differs"
     report["benchmark_sha256"]["training_s1_ablation.py"] = hashlib.sha256(

@@ -1,0 +1,2 @@
+include build_config.py
+recursive-include torch_converse2d *.h *.cuh *.cpp *.cu

@@ -1,0 +1,30 @@
+{
+  "scope": "Post-refactor FP32 small-s1 dispatch and circular pad/crop only",
+  "baseline": "artifacts/small_s1_20260921/before_manifest.json",
+  "operator": {
+    "warmup": 5,
+    "rounds": 4,
+    "iterations_per_round": 20,
+    "order": "Rotate before, dispatch, boundary, combined",
+    "prior_shape": "B in [1,4,8,32], C128, H96, W96, circular pad2, k3",
+    "comparison": "Full forward and x/weight/bias VJPs, no optimizer",
+    "numeric": "Require bitwise compatibility with frozen production; separately report zero-margin max_abs and relative_L2 noninferiority versus Python FP32 against identical FP64 reference",
+    "failure_policy": "Preserve inherited numerical failures; bitwise compatibility alone does not establish Python noninferiority"
+  },
+  "model": {
+    "model": "pretrained full USRNet, 5 iterations, 7 prior blocks, C64, HR96, s3",
+    "batches": [1,4],
+    "warmup": 5,
+    "rounds": 4,
+    "iterations_per_round": 6,
+    "validation_steps": 3,
+    "order": "AB/BA/AB/BA; one GPU model at a time",
+    "optimizer": "Adam lr1e-5, foreach=false, fused=false; MSE",
+    "numeric": "Bitwise output, all final gradients, parameters, and Adam state after identical real-image batches",
+    "timing_scope": "Resident inputs; includes zero_grad, forward, MSE, backward, Adam; excludes H2D, validation, IO, JIT and profiling",
+    "performance": "At least 3% median paired improvement at B4, at least 3/4 B4 pairs improve, and no >5% median B1 regression; otherwise remain experimental"
+  },
+  "runtime": "FP32, no AMP/TF32, cudnn deterministic=true, benchmark=false, no Graph, no spectrum reuse",
+  "profiling": "Nsight Systems warm complete steps separately from formal timing; collect before and selected candidate",
+  "rollout": "Only measured shapes; retain fallback. A path that fails Python noninferiority is not promoted solely because it matches current production. Longer quality/time-to-quality remains a separate claim."
+}

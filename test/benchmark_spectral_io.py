@@ -9,7 +9,7 @@ import time
 from unittest.mock import patch
 
 import torch
-from extension_loader import ROOT, load_extension
+from extension_loader import production_source_hashes, ROOT, load_extension
 from spectral_baseline import BASELINE_REF, load_baseline
 sys.path.insert(0, str(ROOT))
 from models.converse_core import converse2d_reference
@@ -134,7 +134,7 @@ def main():
                 for runner in runners: runner.clear()
             baseline.clear_cache(); optimized.clear_cache()
     sources = ['Converse2D/torch_converse2d/converse2d.cpp','Converse2D/torch_converse2d/converse2d_kernels.cu']
-    result = {'baseline_ref':BASELINE_REF,'gpu':torch.cuda.get_device_name(),
+    result = {'production_source_sha256':production_source_hashes(), 'baseline_ref':BASELINE_REF,'gpu':torch.cuda.get_device_name(),
               'torch':torch.__version__,'dtype':'float32','tf32':False,
               'iters':args.iters,'round_count':args.rounds,
               'method':'Same-process alternating frozen baseline/optimized, warmed caches; no profiler.',

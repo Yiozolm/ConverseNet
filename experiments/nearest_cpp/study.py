@@ -23,6 +23,10 @@ from torch.utils import cpp_extension
 
 
 ROOT = Path(__file__).resolve().parents[2]
+import sys as _layout_sys
+_layout_sys.path.insert(0,str(ROOT/"test"))
+from extension_loader import legacy_source_texts, production_source_hashes
+
 HERE = Path(__file__).resolve().parent
 SOURCE = ROOT / "Converse2D" / "torch_converse2d"
 BUILD = ROOT / ".build" / "nearest_cpp"
@@ -39,7 +43,7 @@ TOLERANCES = {
 def load(*, cpu_only=False, verbose=True):
     """Build a separate library containing an unchanged, renamed baseline."""
     BUILD.mkdir(parents=True, exist_ok=True)
-    original = (SOURCE / "converse2d.cpp").read_text(encoding="utf-8")
+    original = legacy_source_texts()["converse2d.cpp"]
     replacements = {
         "TORCH_LIBRARY(converse2d, m)": f"TORCH_LIBRARY({NAMESPACE}, m)",
         "TORCH_LIBRARY_IMPL(converse2d, CompositeImplicitAutograd, m)":
@@ -63,15 +67,15 @@ def load(*, cpu_only=False, verbose=True):
     flags = ["/O2", "/std:c++17"] if os.name == "nt" else ["-O3", "-std=c++17"]
     # A command-line dependency is reliable even when localized MSVC
     # /showIncludes output prevents Ninja from discovering baseline.cpp.
-    baseline_hash = hashlib.sha256(private.encode("utf-8")).hexdigest()
+    baseline_hash = hashlib.sha256(private.encode("utf-8")+json.dumps(production_source_hashes(),sort_keys=True).encode()).hexdigest()
     flags.append(f"-DNEAREST_CPP_BASELINE_SHA256_{baseline_hash}=1")
-    cuda_flags = ["-O3", "-lineinfo"]
+    cuda_flags = ["-O3", "-lineinfo", f"-DNEAREST_CPP_BASELINE_SHA256_{baseline_hash}=1"]
     if os.name == "nt":
         cuda_flags.extend(["-Xcompiler", "/Zc:preprocessor"])
     sources = [str(HERE / "bindings.cpp")]
     if cuda:
         flags.append("-DCONVERSE2D_WITH_CUDA=1")
-        sources.append(str(HERE / "kernels.cu"))
+        sources.extend([str(HERE / "kernels.cu"),str(SOURCE / "converse2d_training.cu")])
         major, minor = torch.cuda.get_device_capability()
         os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{major}.{minor}")
     cpp_extension.load(
@@ -334,7 +338,7 @@ def main():
     }
     try:
         load(cpu_only=args.cpu, verbose=not args.quiet_build)
-        result["source_sha256"] = source_hashes()
+        result["source_sha256"] = {**production_source_hashes(), **source_hashes()}
         print("Validating forward, inference, gradients, and higher derivatives...", flush=True)
         result["validation"] = validate(device)
         save(args.output, result)

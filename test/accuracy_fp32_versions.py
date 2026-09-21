@@ -22,6 +22,10 @@ import torch.nn.functional as F
 from torch.utils import cpp_extension
 
 ROOT = Path(__file__).resolve().parents[1]
+import sys as _layout_sys
+_layout_sys.path.insert(0, str(ROOT / "test"))
+from extension_loader import legacy_source_texts, production_source_hashes
+
 sys.path.insert(0, str(ROOT))
 from models.converse_core import converse2d_reference
 
@@ -93,7 +97,7 @@ def build_source(label, sources, namespace=None):
 def load_all():
     cpp_extension.SUBPROCESS_DECODE_ARGS = ('utf-8', 'replace')
     source = ROOT / 'Converse2D/torch_converse2d'
-    current = build_source('checkout', {n: (source / n).read_text(encoding='utf-8') for n in ('converse2d.cpp', 'converse2d_kernels.cu')})
+    current = build_source('checkout', legacy_source_texts())
     versions = {'python_fp32': lambda a, s, e: converse2d_reference(*a, s, e)}
     versions.update({f'checkout_{v}': lambda a, s, e, v=v: current.forward(*a, s, e, v) for v in [f'v{i}' for i in range(2, 8)]})
     # Rebuild the immutable pre-FP32-training snapshot, then apply its saved patch

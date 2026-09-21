@@ -32,6 +32,10 @@ import traceback
 from probe_pointwise_training import capture, clear_cuda, fixture, tensor_hash, timed_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
+import sys as _layout_sys
+_layout_sys.path.insert(0, str(ROOT / "test"))
+from extension_loader import legacy_source_texts, production_source_hashes
+
 SOURCE = ROOT / "Converse2D/torch_converse2d"
 SOURCE_NAMES = ("converse2d.cpp", "converse2d_kernels.cu", "converse2d_training.cu", "converse2d_training.h")
 SELECTOR = "bool use_scale1(I H,I W,I s) { return s==1 && H*W>=65536; }"
@@ -54,14 +58,14 @@ def digest(value):
 
 
 def source_hashes():
-    return {name: digest((SOURCE / name).read_bytes()) for name in SOURCE_NAMES}
+    return {name: digest(legacy_source_texts()[name].encode("utf-8")) for name in SOURCE_NAMES}
 
 
 def load_forced(verbose=False):
     import torch
     from torch.utils import cpp_extension
 
-    original = {name: (SOURCE / name).read_bytes() for name in SOURCE_NAMES}
+    original = {name: legacy_source_texts()[name].encode("utf-8") for name in SOURCE_NAMES}
     hashes = {name: digest(value) for name, value in original.items()}
     texts = {name: value.decode("utf-8").replace("\r\n", "\n") for name, value in original.items()}
     count = texts["converse2d_training.cu"].count(SELECTOR)

@@ -8,6 +8,10 @@ import torch
 from torch.utils import cpp_extension
 
 ROOT = Path(__file__).resolve().parents[2]
+import sys as _layout_sys
+_layout_sys.path.insert(0, str(ROOT / "test"))
+from extension_loader import legacy_source_texts, production_source_hashes
+
 HERE = Path(__file__).resolve().parent
 SOURCE = ROOT / 'Converse2D/torch_converse2d'
 BUILD = ROOT / '.build/training_speed'
@@ -50,6 +54,7 @@ def load(include_checkout=False, verbose=False):
         _build('training_speed_fused', folder, sources, headers, verbose)
         paths = [*sources, SOURCE/'converse2d_training.h', HERE/'extension.py']
         manifest = {str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+        manifest.update(production_source_hashes())
         _loaded = (torch.ops.training_speed, manifest)
     if include_checkout and 'checkout_sources' not in _loaded[1]:
         folder = BUILD/'checkout'
@@ -59,8 +64,8 @@ def load(include_checkout=False, verbose=False):
         for name in ('converse2d.cpp','converse2d_kernels.cu',
                      'converse2d_training.cu','converse2d_training.h'):
             source = SOURCE/name
-            hashes[name] = hashlib.sha256(source.read_bytes()).hexdigest()
-            content = source.read_text(encoding='utf-8').replace('converse','training_checkout_converse')
+            hashes[name] = hashlib.sha256(legacy_source_texts()[name].encode()).hexdigest()
+            content = legacy_source_texts()[name].replace('converse','training_checkout_converse')
             dest = folder/name.replace('converse','training_checkout_converse')
             _write(dest, content)
             (headers if name.endswith('.h') else sources).append(dest)

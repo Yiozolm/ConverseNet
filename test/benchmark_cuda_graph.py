@@ -8,7 +8,7 @@ import sys
 import time
 
 import torch
-from extension_loader import ROOT, load_extension
+from extension_loader import production_source_hashes, ROOT, load_extension
 sys.path.insert(0, str(ROOT))
 
 
@@ -92,7 +92,7 @@ def main():
     sources = ('models/cuda_graph.py', 'models/converse_usrnet.py',
                'Converse2D/torch_converse2d/converse2d.cpp',
                'Converse2D/torch_converse2d/converse2d_kernels.cu')
-    result = {'gpu': torch.cuda.get_device_name(), 'torch': torch.__version__,
+    result = {'production_source_sha256':production_source_hashes(), 'gpu': torch.cuda.get_device_name(), 'torch': torch.__version__,
               'dtype': 'float32', 'tf32': False, 'iters': args.iters,
               'measurement': 'Full runner: signature checks, input copies, replay, output clone; no profiler.',
               'memory_note': 'Snapshots include eager caches; reserved deltas are not total graph pool size.',

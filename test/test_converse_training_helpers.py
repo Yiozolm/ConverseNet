@@ -36,8 +36,9 @@ def source_hashes():
     paths = [ROOT/name for name in FROZEN]
     paths += [Path(__file__).resolve(),ROOT/"models/converse_training.py",ROOT/"test/extension_loader.py"]
     paths += [ROOT/"experiments/training_shared_s1"/name for name in ("bindings.cpp","kernels.cu","loader.py")]
-    for suffix in ("*.cpp","*.cu","*.h"):
-        paths += list((ROOT/"Converse2D/torch_converse2d").glob(suffix))
+    for suffix in ("*.cpp","*.cu","*.h","*.cuh"):
+        paths += list((ROOT/"Converse2D/torch_converse2d").rglob(suffix))
+    paths += [ROOT/"Converse2D/build_config.py",ROOT/"Converse2D/setup.py"]
     return {path.relative_to(ROOT).as_posix():hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(set(paths))}
 
 

@@ -306,3 +306,7 @@ changes; stale binaries are rejected. This is useful inside a profiler.
 & ./experiments/training_speed/run.ps1 test/check_compiled_autograd_contract.py --cuda --output artifacts/native_deconv_target/new_contract.json
 & ./experiments/training_speed/run.ps1 test/run_verified_cuda.py test/benchmark_deconv_target_final.py --output artifacts/native_deconv_target/new_final.json
 ```
+
+## Build layout regression
+
+Run python test/test_build_layout.py to verify the explicit production source set, nested-header fingerprint invalidation, and current-source legacy exports. See ../Converse2D/REFACTOR.md for archived source-patching experiments and supported adapters.

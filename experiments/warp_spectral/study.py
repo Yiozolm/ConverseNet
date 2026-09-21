@@ -20,6 +20,10 @@ import torch
 from torch.utils import cpp_extension
 
 ROOT = Path(__file__).resolve().parents[2]
+import sys as _layout_sys
+_layout_sys.path.insert(0,str(ROOT/"test"))
+from extension_loader import legacy_source_texts, production_source_hashes
+
 HERE = Path(__file__).resolve().parent
 OUT = ROOT / "artifacts" / "warp_spectral"
 NAMES = ["two_pass", "thread_fused", "warp_cooperative", "warp_specialized"]
@@ -30,10 +34,12 @@ def load():
     build.mkdir(parents=True, exist_ok=True)
     if os.name == "nt":
         cpp_extension.SUBPROCESS_DECODE_ARGS = ("utf-8", "replace")
+    revision = "-DWARP_PRODUCTION_REV=0x" + hashlib.sha256(
+        json.dumps(production_source_hashes(),sort_keys=True).encode()).hexdigest()[:12]
     cpp_extension.load(
         name="warp_spectral_experiment", sources=[str(HERE / "bindings.cpp"),str(HERE / "warp_spectral.cu")],
         extra_cflags=["/O2", "/std:c++17"] if os.name=="nt" else ["-O3", "-std=c++17"],
-        extra_cuda_cflags=["-O3", "-lineinfo", "--ptxas-options=-v"],
+        extra_cuda_cflags=["-O3", "-lineinfo", "--ptxas-options=-v",revision],
         with_cuda=True, is_python_module=False, build_directory=str(build), verbose=True,
     )
 
@@ -182,6 +188,7 @@ def main():
                   for p in [HERE/"study.py",HERE/"bindings.cpp",HERE/"warp_spectral.cu",HERE/"specialized.cuh",
                             ROOT/"Converse2D/torch_converse2d/converse2d_kernels.cu"]},
                 nvcc=subprocess.check_output([str(Path(cpp_extension.CUDA_HOME)/"bin"/("nvcc.exe" if os.name=="nt" else "nvcc")),"--version"],text=True))
+    result["production_source_sha256"]=production_source_hashes()
     result["correctness"]=validate()
     print(f"Correctness passed: {len(result['correctness'])} comparisons",flush=True)
     if not args.check_only:

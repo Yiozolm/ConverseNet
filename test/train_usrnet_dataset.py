@@ -114,8 +114,9 @@ def source_hashes():
              ROOT / "test/training_refinement_baseline.py", ROOT / "utils/utils_image.py",
              ROOT / "models/converse_usrnet.py", ROOT / "models/util_converse.py",
              ROOT / "models/converse_core.py"]
-    paths += [path for path in sorted((ROOT / "Converse2D/torch_converse2d").iterdir())
-              if path.suffix in (".cpp", ".cu", ".h")]
+    paths += [path for path in sorted((ROOT / "Converse2D/torch_converse2d").rglob("*"))
+              if path.suffix in (".cpp", ".cu", ".h", ".cuh")]
+    paths += [ROOT/"Converse2D/build_config.py",ROOT/"Converse2D/setup.py"]
     return {path.relative_to(ROOT).as_posix(): file_hash(path) for path in paths}
 
 

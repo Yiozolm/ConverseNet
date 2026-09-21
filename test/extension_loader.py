@@ -1,4 +1,5 @@
 """Build/load the corrected extension in the checkout, without global installs."""
+import importlib.util
 import hashlib
 import json
 import os
@@ -9,6 +10,17 @@ from torch.utils.cpp_extension import CUDA_HOME, load
 from torch.utils import cpp_extension
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+_config_spec = importlib.util.spec_from_file_location("converse2d_build_config", ROOT / "Converse2D/build_config.py")
+build_config = importlib.util.module_from_spec(_config_spec)
+_config_spec.loader.exec_module(build_config)
+
+def legacy_source_texts():
+    return build_config.legacy_sources()
+
+def production_source_hashes():
+    return {(build_config.PACKAGE / name).resolve().relative_to(ROOT).as_posix(): digest
+            for name,digest in build_config.source_hashes().items()}
+
 _loaded_inputs = None
 _loaded_extension = None
 
@@ -30,12 +42,13 @@ def load_extension(cpu_only=False, verbose=False):
     build = ROOT / ".build" / ("cuda" if cuda else "cpu")
     build.mkdir(parents=True, exist_ok=True)
     source = ROOT / "Converse2D" / "torch_converse2d"
-    names = ["converse2d.cpp"]
-    if cuda:
-        names.extend(("converse2d_kernels.cu", "converse2d_training.cu"))
-    inputs = {"sources": {name: _sha256(source / name) for name in
-                          [*names, "converse2d_training.h"]},
-              "torch": str(torch.__version__), "cuda": torch.version.cuda if cuda else None}
+    names = build_config.source_names(cuda)
+    flags, cuda_flags = build_config.compile_flags()
+    inputs = {"sources": build_config.source_hashes(cuda),
+              "torch": str(torch.__version__), "cuda": torch.version.cuda if cuda else None,
+              "toolchain": build_config.toolchain_identity(cuda),
+              "cxx_flags": flags.copy(), "cuda_flags": cuda_flags.copy(),
+              "loader_sha256": _sha256(pathlib.Path(__file__))}
     # TORCH_LIBRARY cannot be registered twice in one process. A new source
     # revision must be tested in a fresh process instead of silently staying old.
     if _loaded_inputs is not None:
@@ -57,14 +70,15 @@ def load_extension(cpu_only=False, verbose=False):
         _loaded_inputs = inputs
         return
     sources = [str(source / name) for name in names]
-    flags = ["/O2", "/std:c++17"] if os.name == "nt" else ["-O3", "-std=c++17"]
-    # PyTorch's JIT versioner hashes source files and flags, but not headers.
-    flags.append("-DCONVERSE2D_TRAINING_HEADER_REV=0x" +
-                 inputs["sources"]["converse2d_training.h"][:12])
+    # Cover the complete include closure, not only source files.
+    revision = "-DCONVERSE2D_SOURCE_REV=0x" + hashlib.sha256(
+        json.dumps(inputs,sort_keys=True).encode()).hexdigest()[:12]
+    flags.append(revision)
+    cuda_flags.append(revision)
     if cuda:
         flags.append("-DCONVERSE2D_WITH_CUDA=1")
     extension = load(name="converse2d_checked_ext", sources=sources,
-                     extra_cflags=flags, extra_cuda_cflags=["-O3", "-lineinfo"],
+                     extra_cflags=flags, extra_cuda_cflags=cuda_flags,
                      with_cuda=cuda, build_directory=str(build), verbose=verbose)
     library = pathlib.Path(extension.__file__)
     manifest_path.write_text(json.dumps({"inputs": inputs, "library": library.name,

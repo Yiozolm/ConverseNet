@@ -332,9 +332,11 @@ def main(argv=None):
     device = next(model.parameters()).device
     source_paths = [Path(__file__).resolve(), ROOT/"models/converse_usrnet.py", ROOT/"models/util_converse.py",
                     ROOT/"models/converse_core.py", ROOT/"utils/utils_image.py", ROOT/"test/extension_loader.py"]
-    source_paths += sorted((ROOT/"Converse2D/torch_converse2d").glob("*.cpp"))
-    source_paths += sorted((ROOT/"Converse2D/torch_converse2d").glob("*.cu"))
-    source_paths += sorted((ROOT/"Converse2D/torch_converse2d").glob("*.h"))
+    source_paths += sorted((ROOT/"Converse2D/torch_converse2d").rglob("*.cpp"))
+    source_paths += sorted((ROOT/"Converse2D/torch_converse2d").rglob("*.cu"))
+    source_paths += sorted((ROOT/"Converse2D/torch_converse2d").rglob("*.h"))
+    source_paths += sorted((ROOT/"Converse2D/torch_converse2d").rglob("*.cuh"))
+    source_paths += [ROOT/"Converse2D/build_config.py",ROOT/"Converse2D/setup.py"]
     report = dict(created_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                   settings={key: str(value.resolve()) if isinstance(value, Path) else value
                             for key, value in vars(args).items()},
