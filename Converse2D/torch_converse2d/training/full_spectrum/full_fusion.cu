@@ -90,5 +90,6 @@ Tensor full_adjoint_kernel_cuda(Tensor k0,Tensor a0,Tensor b0,Tensor power0,I s)
 
 #include "scale1.cuh"
 #include "scale2.cuh"
+#include "psf.cuh"
 
 } // namespace converse2d::full_training

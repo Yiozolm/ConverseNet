@@ -105,14 +105,18 @@ public:
     if(scale2_fusion_eligible(a[0],a[1],s)) {
         auto pointwise=full_scale2_adjoint_cuda(incoming[0],a[1],a[2],a[4],a[5],need_y,need_p,need_k,need_l);
         Tensor gd;
-        if(need_k||need_l)gd=at::sum_to(at::real(pointwise[4]),a[5].sizes());
+        if(pointwise[4].defined())gd=at::sum_to(at::real(pointwise[4]),a[5].sizes());
         if(need_l)result[3]=at::sum_to(gd,a[3].sizes());
         if(need_k) {
-            auto direct=at::sum_to(pointwise[2],a[2].sizes()).conj();
-            auto power=at::sum_to(gd,at::IntArrayRef({a[2].size(0),a[2].size(1),a[0].size(2),a[0].size(3)}));
-            power=power/(s*s);
-            auto gkp=at::sum_to(pointwise[3],a[2].sizes());
-            result[2]=full_adjoint_kernel_cuda(a[2],direct,gkp,power,s);
+            auto gk=pointwise[5];
+            if(!gk.defined()) {
+                auto direct=at::sum_to(pointwise[2],a[2].sizes()).conj();
+                auto power=at::sum_to(gd,at::IntArrayRef({a[2].size(0),a[2].size(1),a[0].size(2),a[0].size(3)}));
+                power=power/(s*s);
+                auto gkp=at::sum_to(pointwise[3],a[2].sizes());
+                gk=full_adjoint_kernel_cuda(a[2],direct,gkp,power,s);
+            }
+            result[2]=gk;
         }
         if(need_y)result[0]=pointwise[0];
         if(need_p)result[1]=pointwise[1];

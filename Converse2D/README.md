@@ -9,6 +9,10 @@ full-spectrum fused first-order solver. Kernel pad/roll/FFT, input FFT,
 regularization and output IFFT remain differentiable FP32 operations. Every
 call prepares its own kernel spectrum. Higher derivatives use differentiable
 ATen operations. CPU training uses the full-spectrum ATen fallback.
+CUDA training combines PSF padding/centering and its first-order adjoint into
+direct indexed copies. Eligible s2 kernels without batch/channel broadcast
+also form their kernel gradient in the fused VJP, preserving the existing
+FP32 operation boundaries and broadcast fallback.
 
 `torch.no_grad()`, `torch.inference_mode()`, or all-frozen inputs select the
 half-spectrum inference path, including versioned fixed-kernel caches and
@@ -67,6 +71,8 @@ require FP32; AMP and training-spectrum reuse are outside this release.
 See [release validation](../docs/fp32_release.md) for measured scope and the
 pre-cleanup source snapshot, and the [P0 optimization record](../docs/fp32_p0.md)
 for current scoped performance measurements. Neither establishes long-run convergence.
+The subsequent [PSF/s2 training record](../docs/fp32_psf.md) includes full-model
+Adam steps and separates deterministic admission from default-mode padding noise.
 
 ## Optional CUDA Graph execution
 

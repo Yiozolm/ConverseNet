@@ -17,6 +17,8 @@ while build checks, the CPU extension and the portable Python fallback still run
 | `test_fp32_release.py` | Independent FP64 noninferiority, higher derivatives, cache/streams, dtype contracts and CPU fallback |
 | `test_gradient_mask.py` | All gradient subsets, broadcast reductions, higher derivatives and masked backward Graph replay; verifies unused reductions are skipped |
 | `test_inference_p0.py` | Frozen-input cache reuse without changing ATen arithmetic, cross-GradMode cache hits and layout invalidation |
+| `test_psf_preparation.py` | PSF boundary/layout cases, shared-ancestor gradient order, second/third derivatives, streams and per-call kernel FFT |
+| `test_scale2_kernel_fusion.py` | Exact non-broadcast s2 kernel VJPs, weak regularization, gradient subsets, conjugated spectra and Graph replay |
 | `test_cuda_graph.py` | Graph ownership, replay, invalidation and training transitions |
 | `test_pretrained_fp32.py` | DnCNN/SRResNet checkpoint and inference compatibility |
 
@@ -36,3 +38,8 @@ The tracked `tools/benchmark_fp32_p0.py` compares isolated checked builds for
 this optimization round. It records complete operator/VJP timing, memory,
 FP64 errors and tensor hashes; `--include-model` adds full USRNet inference
 and Adam steps. See `docs/fp32_p0.md` for the measured scope and rejected candidate.
+
+`tools/benchmark_fp32_psf.py` measures the next PSF/s2 training-fusion batch.
+Its explicit `--deterministic-algorithms` lane makes external replicate-padding
+backward repeatable for exact comparisons. Default-mode results and their
+non-repeatable input gradients are preserved separately; see `docs/fp32_psf.md`.
