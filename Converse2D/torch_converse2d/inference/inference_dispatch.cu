@@ -11,7 +11,9 @@ at::Tensor converse_spectral_cuda(const at::Tensor& fy, const at::Tensor& fx0,
     const at::Tensor& fb, const at::Tensor& invw, const at::Tensor& lambda,
     int64_t H, int64_t W, int64_t s, bool half) {
     // FFT output stride is not assumed: PyTorch may return transposed FFT storage.
-    auto y = fy.contiguous(), prior = fx0.contiguous(), kernel = fb.contiguous();
+    auto y = fy.contiguous();
+    auto prior = fy.is_same(fx0) ? y : fx0.contiguous();
+    auto kernel = fb.contiguous();
     auto denom = invw.defined() ? invw.contiguous() : at::Tensor();
     auto out = at::empty(prior.sizes(), prior.options());
     auto stream = c10::cuda::getCurrentCUDAStream(prior.get_device());

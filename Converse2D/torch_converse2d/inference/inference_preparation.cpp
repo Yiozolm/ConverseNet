@@ -14,7 +14,10 @@ using namespace converse2d::detail;
 using namespace converse2d::inference_state;
 std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& weight,
                                          int64_t h, int64_t w, int64_t s, bool real_fft) {
-    bool cacheable = !at::GradMode::is_enabled() && !source.is_inference() && source.is_leaf();
+    // The dispatcher selects real_fft only for inference, including frozen
+    // inputs under GradMode. Keep that case's existing ATen arithmetic while
+    // reusing its immutable preparation; full-spectrum training never caches.
+    bool cacheable = real_fft && !source.is_inference() && source.is_leaf();
     int64_t stream = 0;
 #ifdef CONVERSE2D_WITH_CUDA
     if (weight.is_cuda()) {
@@ -35,7 +38,10 @@ std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& weight,
         std::lock_guard<std::mutex> lock(cache_mutex);
         for (auto it = entries.begin(); it != entries.end();) {
             if (it->source.is_same(source)) {
-                if (it->version != version || it->data != source.const_data_ptr()) {
+                if (it->version != version || it->data != source.const_data_ptr() ||
+                    source.sizes() != at::IntArrayRef(it->sizes) ||
+                    source.strides() != at::IntArrayRef(it->strides) ||
+                    it->storage_offset != source.storage_offset()) {
                     if (!graph_cache_active) cache_bytes -= it->bytes;
                     it = entries.erase(it);
                     continue;
@@ -79,7 +85,9 @@ std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& weight,
         const size_t bytes = fb.nbytes() + invw.nbytes() + source.nbytes();
         if (graph_cache_active || bytes <= CACHE_BYTES_LIMIT) {
             std::lock_guard<std::mutex> lock(cache_mutex);
-            entries.push_front({source, fb, invw, source.const_data_ptr(), version, h, w, s, stream, real_fft, inference, bytes});
+            entries.push_front({source, fb, invw, source.const_data_ptr(), version,
+                h, w, s, stream, real_fft, inference, bytes,
+                source.sizes().vec(), source.strides().vec(), source.storage_offset()});
             if (!graph_cache_active) {
                 cache_bytes += bytes;
                 while (cache.size() > CACHE_ENTRIES_LIMIT || cache_bytes > CACHE_BYTES_LIMIT) {

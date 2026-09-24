@@ -2,6 +2,7 @@
 #include <ATen/ATen.h>
 #include <list>
 #include <mutex>
+#include <vector>
 namespace converse2d::inference_state {
 using at::Tensor;
 struct CacheEntry {
@@ -12,6 +13,10 @@ struct CacheEntry {
     int64_t h, w, scale, stream;
     bool real_fft, inference;
     size_t bytes;
+    // Value snapshots: source aliases the caller's TensorImpl, so reading its
+    // current metadata cannot detect a layout replacement through .data.
+    std::vector<int64_t> sizes, strides;
+    int64_t storage_offset;
 };
 
 extern std::list<CacheEntry> cache;

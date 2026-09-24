@@ -13,6 +13,11 @@ ATen operations. CPU training uses the full-spectrum ATen fallback.
 `torch.no_grad()`, `torch.inference_mode()`, or all-frozen inputs select the
 half-spectrum inference path, including versioned fixed-kernel caches and
 graph-owned caches. `model.eval()` alone does not disable gradients.
+Frozen inputs under GradMode keep their existing ATen half-spectrum solve;
+they can reuse fixed-kernel preparation without switching its rounding order.
+Cache entries snapshot kernel sizes, strides and storage offset as well as its
+identity/version. First-order backward skips unused gradient outputs and
+reductions; higher-order derivatives keep the ATen fallback.
 
 ## Build
 
@@ -60,7 +65,8 @@ that independent Python reference for numerical checking. Production modules
 require FP32; AMP and training-spectrum reuse are outside this release.
 
 See [release validation](../docs/fp32_release.md) for measured scope and the
-pre-cleanup source snapshot. No new speed or long-run convergence claim is made.
+pre-cleanup source snapshot, and the [P0 optimization record](../docs/fp32_p0.md)
+for current scoped performance measurements. Neither establishes long-run convergence.
 
 ## Optional CUDA Graph execution
 

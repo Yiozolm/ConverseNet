@@ -8,14 +8,14 @@ namespace converse2d::full_training {
 using at::Tensor;
 std::vector<Tensor> full_prepare_cuda(Tensor p,Tensor k);
 std::vector<Tensor> full_output_cuda(Tensor y,Tensor pm,Tensor p,Tensor k,Tensor d,int64_t s);
-std::vector<Tensor> full_adjoint_output_cuda(Tensor g,Tensor k,Tensor q,int64_t s);
-std::vector<Tensor> full_adjoint_div_cuda(Tensor t,Tensor q,Tensor d);
-std::vector<Tensor> full_adjoint_prediction_cuda(Tensor g,Tensor p,Tensor k,Tensor gm,int64_t s,bool shared);
+std::vector<Tensor> full_adjoint_output_cuda(Tensor g,Tensor k,Tensor q,int64_t s,bool need_k);
+std::vector<Tensor> full_adjoint_div_cuda(Tensor t,Tensor q,Tensor d,bool need_gy,bool need_gd);
+std::vector<Tensor> full_adjoint_prediction_cuda(Tensor g,Tensor p,Tensor k,Tensor gm,int64_t s,bool shared,bool need_p,bool need_k);
 Tensor full_adjoint_kernel_cuda(Tensor k,Tensor direct,Tensor prediction,Tensor power,int64_t s);
 std::vector<Tensor> full_scale1_forward_cuda(Tensor y,Tensor p,Tensor k,Tensor l);
-std::vector<Tensor> full_scale1_adjoint_cuda(Tensor g,Tensor p,Tensor k,Tensor q,Tensor d,bool shared);
+std::vector<Tensor> full_scale1_adjoint_cuda(Tensor g,Tensor p,Tensor k,Tensor q,Tensor d,bool shared,bool need_y,bool need_p,bool need_k,bool need_l);
 std::vector<Tensor> full_scale2_forward_cuda(Tensor y,Tensor p,Tensor k,Tensor l);
-std::vector<Tensor> full_scale2_adjoint_cuda(Tensor g,Tensor p,Tensor k,Tensor q,Tensor d);
+std::vector<Tensor> full_scale2_adjoint_cuda(Tensor g,Tensor p,Tensor k,Tensor q,Tensor d,bool need_y,bool need_p,bool need_k,bool need_l);
 
 bool scale2_fusion_eligible(const Tensor& y,const Tensor& p,int64_t s) {
     // A non-reduced contiguous W dimension keeps all four aliases within one
@@ -77,54 +77,69 @@ public:
         int j=0;for(int i=0;i<4;++i)if(ctx->needs_input_grad(i))result[i]=grads[j++];
         return result;
     }
+    const bool need_y=ctx->needs_input_grad(0),need_p=ctx->needs_input_grad(1);
+    const bool need_k=ctx->needs_input_grad(2),need_l=ctx->needs_input_grad(3);
     if(s==1) {
         // Keep every broadcast reduction and its input layout unchanged. Only
-        // pointwise work moves across the former kernel launch boundaries.
-        auto pointwise=full_scale1_adjoint_cuda(incoming[0],a[1],a[2],a[4],a[5],shared);
-        auto gd=at::sum_to(at::real(pointwise[4]),a[5].sizes());
-        auto gl=at::sum_to(gd,a[3].sizes());
-        auto gk=pointwise[5];
-        if(!gk.defined()) {
-            auto direct=at::sum_to(pointwise[2],a[2].sizes()).conj();
-            auto power=at::sum_to(gd,at::IntArrayRef({a[2].size(0),a[2].size(1),a[0].size(2),a[0].size(3)}));
-            auto gkp=at::sum_to(pointwise[3],a[2].sizes());
-            gk=full_adjoint_kernel_cuda(a[2],direct,gkp,power,s);
+        // omit work whose entire gradient dependency is absent. Shared inputs
+        // still accumulate y and prior contributions in the original order.
+        auto pointwise=full_scale1_adjoint_cuda(incoming[0],a[1],a[2],a[4],a[5],shared,
+            need_y&&!shared,need_p||(shared&&need_y),need_k,need_l);
+        Tensor gd;
+        if(pointwise[4].defined())gd=at::sum_to(at::real(pointwise[4]),a[5].sizes());
+        if(need_l)result[3]=at::sum_to(gd,a[3].sizes());
+        if(need_k) {
+            auto gk=pointwise[5];
+            if(!gk.defined()) {
+                auto direct=at::sum_to(pointwise[2],a[2].sizes()).conj();
+                auto power=at::sum_to(gd,at::IntArrayRef({a[2].size(0),a[2].size(1),a[0].size(2),a[0].size(3)}));
+                auto gkp=at::sum_to(pointwise[3],a[2].sizes());
+                gk=full_adjoint_kernel_cuda(a[2],direct,gkp,power,s);
+            }
+            result[2]=gk;
         }
-        std::vector<Tensor> grads={pointwise[0],pointwise[1],gk,gl};
-        for(int i=0;i<4;++i)if(ctx->needs_input_grad(i))result[i]=grads[i];
-        if(shared){result[0]=ctx->needs_input_grad(0)?pointwise[1]:Tensor();result[1]=Tensor();}
+        if(need_y)result[0]=shared?pointwise[1]:pointwise[0];
+        if(need_p&&!shared)result[1]=pointwise[1];
         return result;
     }
     if(scale2_fusion_eligible(a[0],a[1],s)) {
-        auto pointwise=full_scale2_adjoint_cuda(incoming[0],a[1],a[2],a[4],a[5]);
-        auto direct=at::sum_to(pointwise[2],a[2].sizes()).conj();
-        auto gd=at::sum_to(at::real(pointwise[4]),a[5].sizes());
-        auto gl=at::sum_to(gd,a[3].sizes());
-        auto power=at::sum_to(gd,at::IntArrayRef({a[2].size(0),a[2].size(1),a[0].size(2),a[0].size(3)}));
-        power=power/(s*s);
-        auto gkp=at::sum_to(pointwise[3],a[2].sizes());
-        auto gk=full_adjoint_kernel_cuda(a[2],direct,gkp,power,s);
-        std::vector<Tensor> grads={pointwise[0],pointwise[1],gk,gl};
-        for(int i=0;i<4;++i)if(ctx->needs_input_grad(i))result[i]=grads[i];
+        auto pointwise=full_scale2_adjoint_cuda(incoming[0],a[1],a[2],a[4],a[5],need_y,need_p,need_k,need_l);
+        Tensor gd;
+        if(need_k||need_l)gd=at::sum_to(at::real(pointwise[4]),a[5].sizes());
+        if(need_l)result[3]=at::sum_to(gd,a[3].sizes());
+        if(need_k) {
+            auto direct=at::sum_to(pointwise[2],a[2].sizes()).conj();
+            auto power=at::sum_to(gd,at::IntArrayRef({a[2].size(0),a[2].size(1),a[0].size(2),a[0].size(3)}));
+            power=power/(s*s);
+            auto gkp=at::sum_to(pointwise[3],a[2].sizes());
+            result[2]=full_adjoint_kernel_cuda(a[2],direct,gkp,power,s);
+        }
+        if(need_y)result[0]=pointwise[0];
+        if(need_p)result[1]=pointwise[1];
         return result;
     }
-    auto prep=full_adjoint_output_cuda(incoming[0],a[2],a[4],s);
+    auto prep=full_adjoint_output_cuda(incoming[0],a[2],a[4],s,need_k);
     auto t=aliases(prep[0],s,false);
-    auto direct=at::sum_to(prep[1],a[2].sizes()).conj();
-    auto div=full_adjoint_div_cuda(t,a[4],a[5]);
+    auto div=full_adjoint_div_cuda(t,a[4],a[5],need_y||need_p||need_k,need_k||need_l);
     auto gy=div[0];
     // Preserve the real-view stride and each original broadcast reduction.
-    auto gd=at::sum_to(at::real(div[1]),a[5].sizes());
-    auto gl=at::sum_to(gd,a[3].sizes());
-    auto gpmean=-gy;
-    auto power=at::sum_to(gd,at::IntArrayRef({a[2].size(0),a[2].size(1),a[0].size(2),a[0].size(3)}));
-    if(s>1){gpmean=gpmean/(s*s);power=power/(s*s);}
-    auto pred=full_adjoint_prediction_cuda(incoming[0],a[1],a[2],gpmean,s,shared);
-    auto gkp=at::sum_to(pred[1],a[2].sizes());
-    auto gk=full_adjoint_kernel_cuda(a[2],direct,gkp,power,s);
-    std::vector<Tensor> grads={gy,pred[0],gk,gl};
-    for(int i=0;i<4;++i)if(ctx->needs_input_grad(i))result[i]=grads[i];
-    if(shared){result[0]=ctx->needs_input_grad(0)?pred[0]:Tensor();result[1]=Tensor();}
+    Tensor gd;
+    if(need_k||need_l)gd=at::sum_to(at::real(div[1]),a[5].sizes());
+    if(need_l)result[3]=at::sum_to(gd,a[3].sizes());
+    if(need_y)result[0]=gy;
+    if(need_p||need_k) {
+        auto gpmean=-gy;
+        if(s>1)gpmean=gpmean/(s*s);
+        auto pred=full_adjoint_prediction_cuda(incoming[0],a[1],a[2],gpmean,s,shared,need_p,need_k);
+        if(need_p)result[1]=pred[0];
+        if(need_k) {
+            auto direct=at::sum_to(prep[1],a[2].sizes()).conj();
+            auto power=at::sum_to(gd,at::IntArrayRef({a[2].size(0),a[2].size(1),a[0].size(2),a[0].size(3)}));
+            if(s>1)power=power/(s*s);
+            auto gkp=at::sum_to(pred[1],a[2].sizes());
+            result[2]=full_adjoint_kernel_cuda(a[2],direct,gkp,power,s);
+        }
+    }
     return result;
  }
 };

@@ -15,6 +15,8 @@ while build checks, the CPU extension and the portable Python fallback still run
 | `test_build_layout.py` | Source selection and transitive fingerprints; no Torch/compiler required |
 | `test_full_spectrum_default.py` | Full/half routing; exact FP32 output/VJP; shared/broadcast kernels, gradient masks, weak regularization and strided layouts |
 | `test_fp32_release.py` | Independent FP64 noninferiority, higher derivatives, cache/streams, dtype contracts and CPU fallback |
+| `test_gradient_mask.py` | All gradient subsets, broadcast reductions, higher derivatives and masked backward Graph replay; verifies unused reductions are skipped |
+| `test_inference_p0.py` | Frozen-input cache reuse without changing ATen arithmetic, cross-GradMode cache hits and layout invalidation |
 | `test_cuda_graph.py` | Graph ownership, replay, invalidation and training transitions |
 | `test_pretrained_fp32.py` | DnCNN/SRResNet checkpoint and inference compatibility |
 
@@ -29,3 +31,8 @@ Release benchmarks, quality campaigns, snapshots and note generation are local
 tools under `tools/release/`, excluded by `.gitignore`; they are not needed for
 this suite. Their measured source versions remain in commit `0a99235` under the
 old `test/` paths. Release notes and measured results stay under `docs/`.
+
+The tracked `tools/benchmark_fp32_p0.py` compares isolated checked builds for
+this optimization round. It records complete operator/VJP timing, memory,
+FP64 errors and tensor hashes; `--include-model` adds full USRNet inference
+and Adam steps. See `docs/fp32_p0.md` for the measured scope and rejected candidate.

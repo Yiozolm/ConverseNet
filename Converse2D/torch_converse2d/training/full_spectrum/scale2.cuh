@@ -66,19 +66,23 @@ template<class T>__global__ void scale2_adjoint(
         }
     }
     const Z<T>t=scale2_sum4(products[0],products[1],products[2],products[3]);
-    const Z<T>qi=q[i],den(d[di],0),gyi=t/den;
-    gy[i]=gyi;
+    const Z<T>den(d[di],0);
+    Z<T>gyi;
+    if(gy||gp||prediction)gyi=t/den;
+    if(gy)gy[i]=gyi;
     // Complex storage retains the real-view stride seen by sum_to(gd).
-    gd[i]=product(-t,cj(qi/den));
+    if(gd)gd[i]=product(-t,cj(q[i]/den));
     // ATen's CPU-scalar division multiplies by a complex reciprocal. Keep
     // the complex multiply's explicit FMA boundaries, including zero terms.
-    const Z<T>gm=product(-gyi,Z<T>(T(0.25),T(0)));
-    #pragma unroll
-    for(int j=0;j<4;++j) {
-        const I index=bc*(4*hw)+offsets[j];
-        direct[index]=product(grads[j],cj(qi));
-        gp[index]=add(grads[j],product(gm,cj(filters[j])));
-        prediction[index]=product(gm,cj(p[index]));
+    if(gp||direct||prediction) {
+        const Z<T>gm=product(-gyi,Z<T>(T(0.25),T(0)));
+        #pragma unroll
+        for(int j=0;j<4;++j) {
+            const I index=bc*(4*hw)+offsets[j];
+            if(direct)direct[index]=product(grads[j],cj(q[i]));
+            if(gp)gp[index]=add(grads[j],product(gm,cj(filters[j])));
+            if(prediction)prediction[index]=product(gm,cj(p[index]));
+        }
     }
 }
 
@@ -97,17 +101,17 @@ std::vector<Tensor> full_scale2_forward_cuda(Tensor y0,Tensor p0,Tensor k0,Tenso
     return {out,q,d};
 }
 
-std::vector<Tensor> full_scale2_adjoint_cuda(Tensor g0,Tensor p0,Tensor k0,Tensor q0,Tensor d0) {
-    auto g=plain(g0),p=plain(p0),k=plain(k0),q=plain(q0),d=plain(d0);
-    auto gy=at::empty(q.sizes(),q.options()),gp=at::empty(p.sizes(),p.options());
-    auto direct=at::empty(g.sizes(),g.options()),prediction=at::empty(p.sizes(),p.options());
-    auto gd=at::empty(q.sizes(),q.options());
+std::vector<Tensor> full_scale2_adjoint_cuda(Tensor g0,Tensor p0,Tensor k0,Tensor q0,Tensor d0,bool need_y,bool need_p,bool need_k,bool need_l) {
+    auto g=plain(g0),p=need_k?plain(p0):Tensor(),k=plain(k0),q=(need_k||need_l)?plain(q0):Tensor(),d=plain(d0);
+    auto gy=need_y?at::empty(q0.sizes(),q0.options()):Tensor(),gp=need_p?at::empty(p0.sizes(),p0.options()):Tensor();
+    auto direct=need_k?at::empty(g.sizes(),g.options()):Tensor(),prediction=need_k?at::empty(p0.sizes(),p0.options()):Tensor();
+    auto gd=(need_k||need_l)?at::empty(q0.sizes(),q0.options()):Tensor();
     auto stream=c10::cuda::getCurrentCUDAStream();
     CONVERSE_DISPATCH_FP32(d.scalar_type(),"full_scale2_adjoint",[&]{
-        scale2_adjoint<scalar_t><<<(q.numel()+255)/256,256,0,stream>>>(
-            g.data_ptr<Z<scalar_t>>(),p.data_ptr<Z<scalar_t>>(),k.data_ptr<Z<scalar_t>>(),q.data_ptr<Z<scalar_t>>(),d.data_ptr<scalar_t>(),
-            gy.data_ptr<Z<scalar_t>>(),gp.data_ptr<Z<scalar_t>>(),direct.data_ptr<Z<scalar_t>>(),prediction.data_ptr<Z<scalar_t>>(),gd.data_ptr<Z<scalar_t>>(),
-            q.numel(),q.size(1),q.size(2),q.size(3),k.size(0),k.size(1));
+        scale2_adjoint<scalar_t><<<(q0.numel()+255)/256,256,0,stream>>>(
+            g.data_ptr<Z<scalar_t>>(),optional_data<Z<scalar_t>>(p),k.data_ptr<Z<scalar_t>>(),optional_data<Z<scalar_t>>(q),d.data_ptr<scalar_t>(),
+            optional_data<Z<scalar_t>>(gy),optional_data<Z<scalar_t>>(gp),optional_data<Z<scalar_t>>(direct),optional_data<Z<scalar_t>>(prediction),optional_data<Z<scalar_t>>(gd),
+            q0.numel(),q0.size(1),q0.size(2),q0.size(3),k.size(0),k.size(1));
     });
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return {gy,gp,direct,prediction,gd};

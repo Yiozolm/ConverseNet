@@ -28,24 +28,24 @@ template<class T,bool FuseKernel>__global__ void scale1_adjoint(
     const I bc=i/HW,offset=i%HW;
     const I ki=kc(bc,C,KB,KC)*HW+offset;
     const I di=((KB==1?0:bc/C)*C+bc%C)*HW+offset;
-    const Z<T>gi=g[i],ki_value=k[ki],qi=q[i],den(d[di],0);
+    const Z<T>gi=g[i],ki_value=k[ki],den(d[di],0);
     const Z<T>t=product(gi,ki_value);
-    const Z<T>gyi=t/den;
-    const Z<T>gm=-gyi;
+    Z<T>gyi,gm;
+    if(gy||gp||direct||FuseKernel){gyi=t/den;gm=-gyi;}
     // Shared inputs return gp as their combined gradient; keep gyi only in a
     // register and omit the unused independent-y output allocation/store.
-    if(!shared)gy[i]=gyi;
+    if(gy)gy[i]=gyi;
     // Keep complex storage: at::real(gd) must retain its stride-2 layout for
     // precisely the same broadcast and lambda reduction behavior as before.
-    const Z<T>gd_value=product(-t,cj(qi/den));
-    gd[i]=gd_value;
-    gp[i]=add(shared?add(gi,-gm):gi,product(gm,cj(ki_value)));
-    const Z<T>direct_value=product(gi,cj(qi));
-    const Z<T>prediction_value=product(gm,cj(p[i]));
+    Z<T>gd_value;
+    if(gd||FuseKernel){gd_value=product(-t,cj(q[i]/den));if(gd)gd[i]=gd_value;}
+    if(gp)gp[i]=add(shared?add(gi,-gm):gi,product(gm,cj(ki_value)));
     if constexpr(FuseKernel) {
         // KB==B && KC==C: sum_to has no reduced dimensions. Match the
         // separate adj_kernel's conj, two mul_rn and nested-add boundaries.
         const T v=gd_value.real();
+        const Z<T>direct_value=product(gi,cj(q[i]));
+        const Z<T>prediction_value=product(gm,cj(p[i]));
         const Z<T>power_value(
             mul_rn(v,mul_rn(T(2),ki_value.real())),
             mul_rn(v,mul_rn(T(2),ki_value.imag())));
@@ -53,8 +53,8 @@ template<class T,bool FuseKernel>__global__ void scale1_adjoint(
             Z<T>(0,power_value.imag())),Z<T>(power_value.real(),0));
     } else {
         // Do not conjugate direct before the host-side broadcast reduction.
-        direct[i]=direct_value;
-        prediction[i]=prediction_value;
+        if(direct)direct[i]=product(gi,cj(q[i]));
+        if(prediction)prediction[i]=product(gm,cj(p[i]));
     }
 }
 
@@ -75,23 +75,23 @@ std::vector<Tensor> full_scale1_forward_cuda(Tensor y0,Tensor p0,Tensor k0,Tenso
     return {out,q,d};
 }
 
-std::vector<Tensor> full_scale1_adjoint_cuda(Tensor g0,Tensor p0,Tensor k0,Tensor q0,Tensor d0,bool shared) {
-    auto g=plain(g0),p=plain(p0),k=plain(k0),q=plain(q0),d=plain(d0);
-    const bool fuse_kernel=k.size(0)==g.size(0)&&k.size(1)==g.size(1);
-    auto gy=shared?Tensor():at::empty(g.sizes(),g.options()),gp=at::empty(p.sizes(),p.options());
-    auto direct=fuse_kernel?Tensor():at::empty(g.sizes(),g.options());
-    auto prediction=fuse_kernel?Tensor():at::empty(p.sizes(),p.options());
-    auto gd=at::empty(g.sizes(),g.options());
+std::vector<Tensor> full_scale1_adjoint_cuda(Tensor g0,Tensor p0,Tensor k0,Tensor q0,Tensor d0,bool shared,bool need_y,bool need_p,bool need_k,bool need_l) {
+    auto g=plain(g0),p=need_k?plain(p0):Tensor(),k=plain(k0),q=(need_k||need_l)?plain(q0):Tensor(),d=plain(d0);
+    const bool fuse_kernel=need_k&&k.size(0)==g.size(0)&&k.size(1)==g.size(1);
+    auto gy=need_y?at::empty(g.sizes(),g.options()):Tensor(),gp=need_p?at::empty(p0.sizes(),p0.options()):Tensor();
+    auto direct=need_k&&!fuse_kernel?at::empty(g.sizes(),g.options()):Tensor();
+    auto prediction=need_k&&!fuse_kernel?at::empty(p0.sizes(),p0.options()):Tensor();
+    auto gd=(need_l||(need_k&&!fuse_kernel))?at::empty(g.sizes(),g.options()):Tensor();
     auto gk=fuse_kernel?at::empty(k.sizes(),k.options()):Tensor();
     auto stream=c10::cuda::getCurrentCUDAStream();
     CONVERSE_DISPATCH_FP32(d.scalar_type(),"full_scale1_adjoint",[&]{
         auto launch=[&](auto tag) {
             constexpr bool FuseKernel=decltype(tag)::value;
             scale1_adjoint<scalar_t,FuseKernel><<<(g.numel()+255)/256,256,0,stream>>>(
-                g.data_ptr<Z<scalar_t>>(),p.data_ptr<Z<scalar_t>>(),k.data_ptr<Z<scalar_t>>(),q.data_ptr<Z<scalar_t>>(),d.data_ptr<scalar_t>(),
-                shared?nullptr:gy.data_ptr<Z<scalar_t>>(),gp.data_ptr<Z<scalar_t>>(),
-                FuseKernel?nullptr:direct.data_ptr<Z<scalar_t>>(),FuseKernel?nullptr:prediction.data_ptr<Z<scalar_t>>(),
-                gd.data_ptr<Z<scalar_t>>(),FuseKernel?gk.data_ptr<Z<scalar_t>>():nullptr,
+                g.data_ptr<Z<scalar_t>>(),optional_data<Z<scalar_t>>(p),k.data_ptr<Z<scalar_t>>(),optional_data<Z<scalar_t>>(q),d.data_ptr<scalar_t>(),
+                optional_data<Z<scalar_t>>(gy),optional_data<Z<scalar_t>>(gp),
+                optional_data<Z<scalar_t>>(direct),optional_data<Z<scalar_t>>(prediction),
+                optional_data<Z<scalar_t>>(gd),optional_data<Z<scalar_t>>(gk),
                 g.numel(),g.size(1),g.size(2)*g.size(3),k.size(0),k.size(1),shared);
         };
         if(fuse_kernel)launch(std::true_type{});else launch(std::false_type{});
