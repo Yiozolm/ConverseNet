@@ -1,0 +1,147 @@
+{
+  "date": "2026-09-24",
+  "branch": "codex/fp32-clean",
+  "snapshot": "1b579ea",
+  "torch": "2.11.0+cu130",
+  "cuda": "13.0",
+  "gpu": "NVIDIA GeForce RTX 5060 Ti",
+  "validation": {
+    "unit_tests": 32,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "cpu_only_build_passed": true,
+    "cpu_only_tests_passed": 1,
+    "cpu_only_cuda_tests_skipped": 15,
+    "independent_fp64_tensors": 60,
+    "noninferiority_failures": 0,
+    "bitwise_cleanup_records": 6140,
+    "bitwise_cleanup_failures": 0,
+    "inference_records": 128,
+    "full_model_records": 6012
+  },
+  "scope": "Full pretrained USRNet, 3 seeds x 3 Adam updates, real-image HR24 crops; no convergence claim",
+  "source_hashes": {
+    "Converse2D/torch_converse2d/common/fp32_dispatch.h": "2cf4217776927fe10569545b641e2ab56d14af61a5c6512cd9bc9d33dcbd21cb",
+    "Converse2D/torch_converse2d/common/spectrum_ops.h": "7eabcfd7902bb00775248e9ca770167763dd3391f90ad612725acdf0e8cab00d",
+    "Converse2D/torch_converse2d/converse2d.cpp": "47b2ab8d8d68cbabb78d81435c63b108636196fdc9a5d881caf0626bdead5981",
+    "Converse2D/torch_converse2d/inference/cache.cpp": "35cfb9e1a182357ee774cf12dc7020f5e0db3a4d96d70a8814ab9c144f3eb3b2",
+    "Converse2D/torch_converse2d/inference/cache.h": "b1fd9eab896e3734430895d45535ceb8aa9999bf1cc61f886034a2a4d43dd81b",
+    "Converse2D/torch_converse2d/inference/cache_state.h": "75b29fec2d026e7fec6dc473b380287cf751d2fe173f3e94db32072e3a7fddda",
+    "Converse2D/torch_converse2d/inference/detail/alias_kernels.cuh": "54d801c3aafa614e49b541e117f27f72569b9e410eba33131bd4e97a3d38e451",
+    "Converse2D/torch_converse2d/inference/detail/math.cuh": "5a54519bb4499cdbd4b8552cae9c5ec50898e2ec5316fbd9cab997041f4a9802",
+    "Converse2D/torch_converse2d/inference/inference.h": "825544e73cf517c6d8f0b978ff8d8df3c286bcb9fa8daf84c90ab908156373bc",
+    "Converse2D/torch_converse2d/inference/inference_dispatch.cu": "2eaa91108b6f6c2d29fcf339ccf103793190884e58784ba53e3681f28fd641ee",
+    "Converse2D/torch_converse2d/inference/inference_generic.cu": "7c4d0ac219650950513a8db17e339064a823d112d12b97cd978aae1daa9bbf1d",
+    "Converse2D/torch_converse2d/inference/inference_preparation.cpp": "f6d428a9a618660b57955bcae96655f163735e9a991fabb6cf7d982c35b57c0e",
+    "Converse2D/torch_converse2d/inference/inference_prepare.cu": "5ca070588e584df29bb0d5333e1df974a6e2ce712cc9dbc01f6819f02219cd8d",
+    "Converse2D/torch_converse2d/inference/inference_scale1.cu": "de2f15d877a322f694b0de53376df48b79ec12ec00fa75b420481ea5334260dc",
+    "Converse2D/torch_converse2d/inference/inference_scale2.cu": "c433dca1fc7110fd9db88ca8be40b6be6eb75b0774f032a9a7bfe48626770675",
+    "Converse2D/torch_converse2d/inference/inference_scale3.cu": "44d846d18405e4f1de0df00d6a58590ecb96964fa545d242c7c9eea539fa0d84",
+    "Converse2D/torch_converse2d/inference/launchers.cuh": "2d0971091027c9369d1dd3fb09a17cce2e37d2c7f533ff81373c70051282840d",
+    "Converse2D/torch_converse2d/operator.cpp": "377dbf29c082cb16733437930a7a043b1c00e739d59b677c0c3a6327d7c1dd1b",
+    "Converse2D/torch_converse2d/operator.h": "45d88da75ecc99c163a55246a5e5f8c2fc5f82d6268f2c717d490544830082f9",
+    "Converse2D/torch_converse2d/reference/reference.cpp": "937c2702b89d793217fecc7fcf5bfff35bc5e09e6d0893914bd64beb78856726",
+    "Converse2D/torch_converse2d/reference/reference.h": "d7010cee6a24c5912fc67c790d999b4cec180f3d1da26f38794a8304aa07ea82",
+    "Converse2D/torch_converse2d/training/full_spectrum/full_fusion.cpp": "423eb9b4748f8ad874a58e7184bb41ee421c67e9c54c3140e5cdef9783ed6d84",
+    "Converse2D/torch_converse2d/training/full_spectrum/full_fusion.cu": "b821aa26b23fb98cb41c1e867fb52ac3f1e19ead12625afb8d92be0faab4ca0a",
+    "Converse2D/torch_converse2d/training/full_spectrum/full_fusion.h": "b268dee79472fc08c9d06de10897a50b0a77d4566c2af77c823ef9202cac42b5",
+    "Converse2D/torch_converse2d/training/full_spectrum/production.cpp": "c4a33134de86e6bba9405de67f5d709466631d508bc00aedad16269d029ed40d",
+    "Converse2D/torch_converse2d/training/full_spectrum/scale1.cuh": "dc61c388ca83bcd9fd13a126cfaae38c273be8f75b5f4857fb8eb7734a03561a",
+    "Converse2D/torch_converse2d/training/full_spectrum/scale2.cuh": "35e8b85937b602bdc5ac40d6520d4c8fea65d433601ed8423d3c13567ee07e5a",
+    "Converse2D/build_config.py": "2e7a85c3fd46adc4af0d1e853965545cbbb94976b1e1b27b1ead27584ff0b2ec",
+    "Converse2D/setup.py": "d3a86ab246c999383744ecfde0d068be25e409c8e1cad45d7a68291af4a31d89"
+  },
+  "model_hashes": {
+    "models/converse_core.py": "8b31f77ae03fafad69f6e8d3f696fe02166aa0d8fe258a2937de3ab619041ccd",
+    "models/util_converse.py": "519405c0c4b2e506add187caae1b3d4b87da2795482614997eacf90213f4ebdf",
+    "models/converse_usrnet.py": "f329b64284996745366323cb6bb202bb3d3069d09cc1d47787739cdf98666b97",
+    "models/cuda_graph.py": "45c9da3406d7ab5f7c7650fdd45c2b9208f45bb26a43b3e7a25ed724bffbd84b"
+  },
+  "test_hashes": {
+    "test/extension_loader.py": "0076e5e23e0a5e8619c189aa70cefbc394373ca5ca0f19a76defc1317a6a1b1a",
+    "test/release_snapshot.py": "60685ba3c6fde377a5d349afb916c8fd973ea07d163eb5abd2d2b1860fc981ab",
+    "test/test_build_layout.py": "59a3527702e72f8f279b1cc26d8df6cbdf4bd82452564aee11ab1ffcb11bf5cd",
+    "test/test_cuda_graph.py": "81f07eda951240f72b5a0399e8109ae6cb9886290d4364aac2fc89b0b974d30f",
+    "test/test_fp32_release.py": "0aca67d92907006eb6cf2edb36e1cd07d5b01d528b94c14833819c9a60436eb0",
+    "test/test_full_spectrum_default.py": "2a30a79c7f2e629ee42a8f07befd5fb4fdcc01af69cd25039bdcd329a9972d1b",
+    "test/test_pretrained_fp32.py": "aaf617c92455aad063b08f9b8601a1720212719931b4963d0df2000efa7c0b19"
+  },
+  "binary_sha256": "9ee9431b6c805df0ed90659ee25f98d1121bb8c04d17a95189ffcc8abe1b5a66",
+  "build_inputs": {
+    "sources": {
+      "common/fp32_dispatch.h": "2cf4217776927fe10569545b641e2ab56d14af61a5c6512cd9bc9d33dcbd21cb",
+      "common/spectrum_ops.h": "7eabcfd7902bb00775248e9ca770167763dd3391f90ad612725acdf0e8cab00d",
+      "converse2d.cpp": "47b2ab8d8d68cbabb78d81435c63b108636196fdc9a5d881caf0626bdead5981",
+      "inference/cache.cpp": "35cfb9e1a182357ee774cf12dc7020f5e0db3a4d96d70a8814ab9c144f3eb3b2",
+      "inference/cache.h": "b1fd9eab896e3734430895d45535ceb8aa9999bf1cc61f886034a2a4d43dd81b",
+      "inference/cache_state.h": "75b29fec2d026e7fec6dc473b380287cf751d2fe173f3e94db32072e3a7fddda",
+      "inference/detail/alias_kernels.cuh": "54d801c3aafa614e49b541e117f27f72569b9e410eba33131bd4e97a3d38e451",
+      "inference/detail/math.cuh": "5a54519bb4499cdbd4b8552cae9c5ec50898e2ec5316fbd9cab997041f4a9802",
+      "inference/inference.h": "825544e73cf517c6d8f0b978ff8d8df3c286bcb9fa8daf84c90ab908156373bc",
+      "inference/inference_dispatch.cu": "2eaa91108b6f6c2d29fcf339ccf103793190884e58784ba53e3681f28fd641ee",
+      "inference/inference_generic.cu": "7c4d0ac219650950513a8db17e339064a823d112d12b97cd978aae1daa9bbf1d",
+      "inference/inference_preparation.cpp": "f6d428a9a618660b57955bcae96655f163735e9a991fabb6cf7d982c35b57c0e",
+      "inference/inference_prepare.cu": "5ca070588e584df29bb0d5333e1df974a6e2ce712cc9dbc01f6819f02219cd8d",
+      "inference/inference_scale1.cu": "de2f15d877a322f694b0de53376df48b79ec12ec00fa75b420481ea5334260dc",
+      "inference/inference_scale2.cu": "c433dca1fc7110fd9db88ca8be40b6be6eb75b0774f032a9a7bfe48626770675",
+      "inference/inference_scale3.cu": "44d846d18405e4f1de0df00d6a58590ecb96964fa545d242c7c9eea539fa0d84",
+      "inference/launchers.cuh": "2d0971091027c9369d1dd3fb09a17cce2e37d2c7f533ff81373c70051282840d",
+      "operator.cpp": "377dbf29c082cb16733437930a7a043b1c00e739d59b677c0c3a6327d7c1dd1b",
+      "operator.h": "45d88da75ecc99c163a55246a5e5f8c2fc5f82d6268f2c717d490544830082f9",
+      "reference/reference.cpp": "937c2702b89d793217fecc7fcf5bfff35bc5e09e6d0893914bd64beb78856726",
+      "reference/reference.h": "d7010cee6a24c5912fc67c790d999b4cec180f3d1da26f38794a8304aa07ea82",
+      "training/full_spectrum/full_fusion.cpp": "423eb9b4748f8ad874a58e7184bb41ee421c67e9c54c3140e5cdef9783ed6d84",
+      "training/full_spectrum/full_fusion.cu": "b821aa26b23fb98cb41c1e867fb52ac3f1e19ead12625afb8d92be0faab4ca0a",
+      "training/full_spectrum/full_fusion.h": "b268dee79472fc08c9d06de10897a50b0a77d4566c2af77c823ef9202cac42b5",
+      "training/full_spectrum/production.cpp": "c4a33134de86e6bba9405de67f5d709466631d508bc00aedad16269d029ed40d",
+      "training/full_spectrum/scale1.cuh": "dc61c388ca83bcd9fd13a126cfaae38c273be8f75b5f4857fb8eb7734a03561a",
+      "training/full_spectrum/scale2.cuh": "35e8b85937b602bdc5ac40d6520d4c8fea65d433601ed8423d3c13567ee07e5a",
+      "../build_config.py": "2e7a85c3fd46adc4af0d1e853965545cbbb94976b1e1b27b1ead27584ff0b2ec",
+      "../setup.py": "d3a86ab246c999383744ecfde0d068be25e409c8e1cad45d7a68291af4a31d89"
+    },
+    "torch": "2.11.0+cu130",
+    "cuda": "13.0",
+    "toolchain": {
+      "cl": {
+        "path": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "size": 677776,
+        "mtime_ns": 1789901967487114900
+      },
+      "nvcc": {
+        "path": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin\\nvcc.exe",
+        "size": 19934832,
+        "mtime_ns": 1752731225000000000
+      },
+      "environment": {
+        "CUDA_HOME": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0",
+        "CUDA_PATH": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0",
+        "TORCH_CUDA_ARCH_LIST": "12.0",
+        "CXX": "",
+        "CC": "",
+        "CL": "",
+        "_CL_": "",
+        "NVCC_PREPEND_FLAGS": "",
+        "NVCC_APPEND_FLAGS": "",
+        "INCLUDE": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.44.35207\\include;C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Auxiliary\\VS\\include;C:\\Program Files (x86)\\Windows Kits\\10\\include\\10.0.26100.0\\ucrt;C:\\Program Files (x86)\\Windows Kits\\10\\\\include\\10.0.26100.0\\\\um;C:\\Program Files (x86)\\Windows Kits\\10\\\\include\\10.0.26100.0\\\\shared;C:\\Program Files (x86)\\Windows Kits\\10\\\\include\\10.0.26100.0\\\\winrt;C:\\Program Files (x86)\\Windows Kits\\10\\\\include\\10.0.26100.0\\\\cppwinrt",
+        "LIB": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.44.35207\\lib\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\lib\\10.0.26100.0\\ucrt\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\\\lib\\10.0.26100.0\\\\um\\x64"
+      }
+    },
+    "cxx_flags": [
+      "/O2",
+      "/std:c++17"
+    ],
+    "cuda_flags": [
+      "-O3",
+      "-lineinfo"
+    ],
+    "loader_sha256": "0076e5e23e0a5e8619c189aa70cefbc394373ca5ca0f19a76defc1317a6a1b1a"
+  },
+  "raw_files": {
+    "artifacts/fp32_release/before.json": "d2fa13dd7be2c04aad6d04f43bd4f5c211ffbee0bf11b92809b18a87b0bd7eb9",
+    "artifacts/fp32_release/after.json": "17eec71fe30546e3d9803fb9b6b2b11b6787e142fae55ab9668a0968a1da7c58",
+    "artifacts/fp32_release/fp64_errors.json": "9f131899b4e64ce9aff246c146955e2cdaf858e99ae9348c9c8bc291df71a12b"
+  },
+  "historical_evidence": "All pre-cleanup tracked files are available at 1b579ea; original development checkout retained.",
+  "limits": "Preservation tests on this toolchain and GPU, not a new benchmark or long-run convergence claim."
+}

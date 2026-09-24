@@ -135,16 +135,9 @@ Tensor full_spectral(Tensor y,Tensor p,Tensor k,Tensor l,int64_t s) {
  TORCH_CHECK(p.dim()==4&&p.size(0)==y.size(0)&&p.size(1)==y.size(1)&&p.size(2)==y.size(2)*s&&p.size(3)==y.size(3)*s,"invalid prior dimensions");
  TORCH_CHECK(k.dim()==4&&(k.size(0)==1||k.size(0)==p.size(0))&&(k.size(1)==1||k.size(1)==p.size(1))&&k.size(2)==p.size(2)&&k.size(3)==p.size(3),"invalid kernel dimensions");
  TORCH_CHECK(l.sizes()==at::IntArrayRef({1,y.size(1),1,1}),"invalid regularizer dimensions");
- TORCH_CHECK((y.scalar_type()==at::kComplexFloat||y.scalar_type()==at::kComplexDouble)&&p.scalar_type()==y.scalar_type()&&k.scalar_type()==y.scalar_type()&&l.scalar_type()==(y.scalar_type()==at::kComplexFloat?at::kFloat:at::kDouble),"invalid dtype");
+ TORCH_CHECK(y.scalar_type()==at::kComplexFloat&&p.scalar_type()==y.scalar_type()&&k.scalar_type()==y.scalar_type()&&l.scalar_type()==at::kFloat,"invalid dtype");
  TORCH_CHECK(p.device()==y.device()&&k.device()==y.device()&&l.device()==y.device(),"device mismatch");
  c10::cuda::CUDAGuard guard(y.device());
  return FullSolve::apply(y,p,k,l,s);
 }
 } // namespace converse2d::full_training
-
-#ifndef CONVERSE_FULL_SPECTRUM_EMBEDDED
-TORCH_LIBRARY(converse_full_training,m){m.def("spectral(Tensor y,Tensor p,Tensor k,Tensor l,int s)->Tensor");}
-TORCH_LIBRARY_IMPL(converse_full_training,CompositeImplicitAutograd,m){m.impl("spectral",TORCH_FN(converse2d::full_training::full_spectral));}
-PYBIND11_MODULE(TORCH_EXTENSION_NAME,m){}
-
-#endif // CONVERSE_FULL_SPECTRUM_EMBEDDED

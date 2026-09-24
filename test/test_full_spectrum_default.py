@@ -2,7 +2,7 @@
 
 The admission checks below require finite, byte-identical spatial outputs and
 VJPs: no error tolerance is added for the switch from half to full spectra.
-Complex128 finite-difference checks exercise the separate higher-order contract.
+FP64 reference checks and higher-order comparisons live in test_fp32_release.py.
 Run from the checkout with ``python -m unittest discover -s test
 -p test_full_spectrum_default.py -v``. CPU-only builds skip all CUDA cases.
 """
@@ -103,19 +103,23 @@ class DefaultFullSpectrumCPU(unittest.TestCase):
         load_extension(cpu_only=not CUDA_BUILD)
 
     def test_cpu_keeps_differentiable_reference_fallback(self):
-        for dtype in (torch.float32, torch.float64):
+        for dtype in (torch.float32,):
             with self.subTest(dtype=dtype):
                 raw, upstream = fixture(2, dtype=dtype)
                 data = leaves(raw, "cpu")
                 output, events = profiled(lambda: torch.ops.converse2d.forward(*data, 2))
                 self.assertFalse(has_full_solve(output))
-                self.assertIn("aten::fft_rfft2", events)
-                self.assertIn("aten::fft_irfft2", events)
-                self.assertNotIn("aten::fft_fft2", events)
+                self.assertIn("aten::fft_fft2", events)
+                self.assertIn("aten::fft_ifft2", events)
+                self.assertNotIn("aten::fft_rfft2", events)
                 self.assertEqual(output.dtype, dtype)
                 gradients = torch.autograd.grad(output, data, upstream)
                 for value in (output, *gradients):
                     self.assertTrue(torch.isfinite(value).all().item())
+                reference = converse2d_reference(*data, 2)
+                reference_gradients = torch.autograd.grad(reference, data, upstream)
+                for actual, expected in zip((output, *gradients), (reference, *reference_gradients)):
+                    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
 
 
 @unittest.skipUnless(CUDA_BUILD, "CUDA extension and device required (CPU-only builds skip)")
@@ -186,18 +190,15 @@ class DefaultFullSpectrumCUDA(unittest.TestCase):
         self.assertIn("aten::fft_irfft2", events)
         self.assertNotIn("aten::fft_fft2", events)
 
-    def test_fp64_and_non_v7_keep_reference_fallback(self):
-        cases = [(torch.float64, "v7"), *[(torch.float32, f"v{version}") for version in range(2, 7)]]
-        for dtype, variant in cases:
-            with self.subTest(dtype=dtype, variant=variant):
-                raw, upstream = fixture(2, dtype=dtype)
-                data = leaves(raw, "cuda")
-                output = torch.ops.converse2d.forward(*data, 2, 1e-5, variant)
-                self.assertFalse(has_full_solve(output))
-                self.assertEqual(output.dtype, dtype)
-                gradients = torch.autograd.grad(output, data, upstream.to("cuda"))
-                for value in (output, *gradients):
-                    self.assertTrue(torch.isfinite(value).all().item())
+    def test_non_fp32_and_legacy_variants_are_rejected(self):
+        for dtype in (torch.float16, torch.bfloat16, torch.float64):
+            raw, _ = fixture(2, dtype=dtype)
+            with self.assertRaisesRegex(RuntimeError, "FP32"):
+                torch.ops.converse2d.forward(*leaves(raw, "cuda"), 2)
+        raw, _ = fixture(2)
+        for variant in ("v2", "v3", "v4", "v5", "v6"):
+            with self.assertRaisesRegex(RuntimeError, "only variant v7"):
+                torch.ops.converse2d.forward(*leaves(raw, "cuda"), 2, 1e-5, variant)
 
     def test_all_scales_broadcasts_outputs_and_four_vjps_match_python_bytes(self):
         for scale in (1, 2, 3):
@@ -429,25 +430,6 @@ class DefaultFullSpectrumCUDA(unittest.TestCase):
                 for value, reference in zip((actual, *actual_grads), (expected, *expected_grads)):
                     self.assertTrue(torch.equal(value.detach().contiguous().view(torch.uint8), reference.detach().contiguous().view(torch.uint8)))
 
-    def test_internal_full_solve_supports_small_higher_derivatives(self):
-        # This fixed finite-difference contract is separate from the zero-margin
-        # spatial FP32 admission above. complex128 is used for differentiation.
-        generator = torch.Generator(device="cpu").manual_seed(97133)
-        for scale in (1, 2, 3):
-            with self.subTest(scale=scale):
-                y = torch.randn(1, 1, 1, 2, generator=generator, dtype=torch.complex128).cuda().requires_grad_()
-                p = torch.randn(1, 1, scale, 2 * scale, generator=generator,
-                                dtype=torch.complex128).cuda().requires_grad_()
-                k = torch.randn(1, 1, scale, 2 * scale, generator=generator,
-                                dtype=torch.complex128).cuda().requires_grad_()
-                lam = torch.full((1, 1, 1, 1), 0.5, dtype=torch.float64, device="cuda", requires_grad=True)
-                op = lambda *args: torch.ops.converse2d._training_full_spectral(*args, scale)
-                self.assertTrue(torch.autograd.gradcheck(op, (y, p, k, lam), fast_mode=True))
-                self.assertTrue(torch.autograd.gradgradcheck(op, (y, p, k, lam), fast_mode=True))
-                if scale == 1:
-                    shared = lambda y, k, lam: torch.ops.converse2d._training_full_spectral(y, y, k, lam, 1)
-                    self.assertTrue(torch.autograd.gradgradcheck(shared, (y, k, lam), fast_mode=True))
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main(verbosity=2)

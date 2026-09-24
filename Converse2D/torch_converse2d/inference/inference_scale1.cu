@@ -1,3 +1,4 @@
+#include "../common/fp32_dispatch.h"
 #include "launchers.cuh"
 #include "detail/math.cuh"
 using namespace converse2d::inference_detail;
@@ -22,7 +23,7 @@ __global__ void correction_scale_one(const c10::complex<T>* fy,
 void launch_inference_scale1(const at::Tensor& y,const at::Tensor& prior,const at::Tensor& kernel,const at::Tensor& denom,const at::Tensor& lambda,at::Tensor& q,at::Tensor& out,int64_t H,int64_t W,int64_t s,bool half,cudaStream_t stream) {
 const int64_t n=prior.numel(),C=prior.size(1);
 constexpr int threads=256;
-AT_DISPATCH_FLOATING_TYPES(lambda.scalar_type(), "converse_spectral", [&] {
+CONVERSE_DISPATCH_FP32(lambda.scalar_type(), "converse_spectral", [&] {
 using z=c10::complex<scalar_t>;
             correction_scale_one<scalar_t><<<(n+threads-1)/threads, threads, 0, stream>>>(
                 y.data_ptr<z>(), prior.data_ptr<z>(), kernel.data_ptr<z>(),

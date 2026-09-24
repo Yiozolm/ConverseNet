@@ -1,7 +1,6 @@
 """Explicit production build inputs; no torch import or candidate discovery.
 
-Legacy amalgamations support isolated research loaders. Production compiles
-the listed translation units directly; it never compiles the legacy facades.
+Only production FP32 sources are compiled. Historical experiments live in Git history.
 """
 from pathlib import Path
 import hashlib
@@ -14,15 +13,13 @@ PACKAGE = ROOT / 'torch_converse2d'
 HOST_SOURCES = (
     'converse2d.cpp', 'operator.cpp', 'reference/reference.cpp',
     'inference/cache.cpp', 'inference/inference_preparation.cpp',
-    'training/autograd.cpp', 'training/training_preparation.cpp',
-    'training/spectrum_scope.cpp', 'training/full_spectrum/production.cpp',
+    'training/full_spectrum/production.cpp',
 )
 CUDA_SOURCES = (
     'inference/inference_prepare.cu', 'inference/inference_dispatch.cu',
     'inference/inference_scale1.cu', 'inference/inference_scale2.cu',
     'inference/inference_scale3.cu', 'inference/inference_generic.cu',
-    'training/training_dispatch.cu', 'training/training_scale1.cu',
-    'training/training_generic.cu', 'training/full_spectrum/full_fusion.cu',
+    'training/full_spectrum/full_fusion.cu',
 )
 _INCLUDE = re.compile(r'^\s*#include\s+"([^"]+)"\s*$', re.M)
 
@@ -70,28 +67,3 @@ def toolchain_identity(cuda):
         'CUDA_HOME', 'CUDA_PATH', 'TORCH_CUDA_ARCH_LIST', 'CXX', 'CC',
         'CL', '_CL_', 'NVCC_PREPEND_FLAGS', 'NVCC_APPEND_FLAGS', 'INCLUDE', 'LIB')}
     return result
-
-def legacy_sources():
-    """Self-contained old-name sources for source-patching research harnesses.
-
-    Expand current production files, not frozen copies. Each returned .cpp/.cu
-    is a separate TU. The legacy training header retains the isolated spatial
-    experiment adapter and is intentionally excluded from production builds.
-    """
-    def amalgamate(names):
-        seen = set()
-        def expand(path):
-            path = path.resolve()
-            if path in seen:
-                return ''
-            seen.add(path)
-            text = path.read_text(encoding='utf-8')
-            text = re.sub(r'^\s*#pragma once\s*$', '', text, flags=re.M)
-            return _INCLUDE.sub(lambda m: expand(path.parent / m[1]), text)
-        return '\n'.join(expand(PACKAGE / name) for name in names)
-    return {
-        'converse2d.cpp': amalgamate(HOST_SOURCES),
-        'converse2d_kernels.cu': amalgamate(tuple(n for n in CUDA_SOURCES if n.startswith('inference/'))),
-        'converse2d_training.cu': amalgamate(tuple(n for n in CUDA_SOURCES if n.startswith('training/'))),
-        'converse2d_training.h': (PACKAGE / 'converse2d_training.h').read_text(encoding='utf-8'),
-    }

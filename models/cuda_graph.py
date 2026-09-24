@@ -33,7 +33,7 @@ class _Entry:
 class USRNetCUDAGraph:
     """Opt-in inference callable with an LRU of fixed-shape CUDA graphs.
 
-    Use an eval-mode ConverseUSRNet with FP32/FP64 CUDA inputs inside no_grad
+    Use an eval-mode ConverseUSRNet with FP32 CUDA inputs inside no_grad
     or inference_mode. Each call copies inputs and returns an independent output.
     A miss warms up and captures synchronously; only hits have replay latency.
     Parameter versions, addresses, module configuration and backend flags are
@@ -120,8 +120,8 @@ class USRNetCUDAGraph:
             raise ValueError("scale must be a positive integer")
         if not x.is_cuda or kernel.device != x.device:
             raise ValueError("x and kernel must be on the same CUDA device")
-        if x.dtype not in (torch.float32, torch.float64) or kernel.dtype != x.dtype:
-            raise ValueError("x and kernel must have the same float32 or float64 dtype")
+        if x.dtype != torch.float32 or kernel.dtype != x.dtype:
+            raise ValueError("x and kernel must have the same float32 dtype")
         if x.layout != torch.strided or kernel.layout != torch.strided:
             raise ValueError("x and kernel must be strided tensors")
         if x.ndim != 4 or x.shape[1] != 3 or any(d == 0 for d in x.shape):

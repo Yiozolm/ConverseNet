@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from models.util_converse import sequential, Converse2D, ConverseBlock, ConverseBlockAlphaVariant
 from models import util_converse as converse_utils
-from models.converse_core import converse2d_reference
+from models.converse_core import converse2d_reference, converse2d_fp32
 # from utils import utils_image as util
 import torch.fft
 import torch.nn.init as init
@@ -45,20 +45,13 @@ class ConvReverseDataNet(nn.Module):
         self.variant = variant.lower()
         if self.backend not in ("auto", "cuda", "pytorch"):
             raise ValueError("backend must be auto, cuda or pytorch")
-        if self.variant not in ("v2", "v3", "v4", "v5", "v6", "v7"):
-            raise ValueError("variant must be v2-v7")
+        if self.variant != "v7":
+            raise ValueError("FP32 release supports only variant v7")
     def forward(self, x, k, sf, padding = 0, padding_mode = 'circular'):
 
-        output_dtype = x.dtype
-        # Mixed precision from the surrounding network may leave alpha/kernel
-        # in float32. Promote before dispatch while preserving each gradient.
-        if k.dtype != x.dtype or self.alpha.dtype != x.dtype:
-            dtype = torch.promote_types(torch.promote_types(x.dtype, k.dtype), self.alpha.dtype)
-            if dtype in (torch.float16, torch.bfloat16):
-                dtype = torch.float32
-            x, k, alpha = x.to(dtype), k.to(dtype), self.alpha.to(dtype)
-        else:
-            alpha = self.alpha
+        if any(t.dtype != torch.float32 for t in (x, k, self.alpha)):
+            raise ValueError("Converse2D requires FP32 tensors")
+        alpha = self.alpha
         if padding > 0:
             x = nn.functional.pad(x, pad=[padding, padding, padding, padding], mode=padding_mode, value=0)
         x0 = x if sf == 1 else F.interpolate(x, scale_factor=sf, mode='nearest')
@@ -74,12 +67,13 @@ class ConvReverseDataNet(nn.Module):
         if available:
             out = torch.ops.converse2d.forward(x,x0,k,alpha,sf,float(self.eps),self.variant)
         else:
-            out = converse2d_reference(x,x0,k,alpha,sf,self.eps)
+            solver = converse2d_reference if backend == "pytorch" else converse2d_fp32
+            out = solver(x,x0,k,alpha,sf,self.eps)
 
         if padding > 0:
             out = out[..., padding*sf:-padding*sf, padding*sf:-padding*sf]
 
-        return out.to(output_dtype)
+        return out
     def splits(self, a, scale):
         '''
         Split tensor `a` into `scale x scale` distinct blocks.
@@ -190,8 +184,7 @@ class ConverseNet(nn.Module):
 # --------------------------------------------
 """
 class ConverseUSRNet(nn.Module):
-    def __init__(self, num_iterations=5, in_channels=64, num_blocks=7, backend="auto", variant="v7",
-                 reuse_training_spectra=False):
+    def __init__(self, num_iterations=5, in_channels=64, num_blocks=7, backend="auto", variant="v7"):
         super(ConverseUSRNet, self).__init__()
 
         self.d = ConvReverseDataNet(backend=backend, variant=variant)
@@ -204,8 +197,6 @@ class ConverseUSRNet(nn.Module):
         self.conv2 = nn.Conv2d(64, 3, 1, 1, 0)
         self.kernelnet = KernelNet()
         self.num_iterations = num_iterations
-        # Explicit candidate until full-model quality/convergence gates pass.
-        self.reuse_training_spectra = bool(reuse_training_spectra)
         
         self.convs = nn.ModuleList([nn.Conv2d(16, 64, 1, 1, 0) for _ in range(num_iterations)])
 
@@ -217,13 +208,7 @@ class ConverseUSRNet(nn.Module):
         sf: integer, 1
         sigma: tensor, Nx1x1x1
         '''
-        if not self.reuse_training_spectra or not torch.is_grad_enabled() or not x.is_cuda:
-            return self._forward_impl(x, k, sf)
-        # Only these parameters recur across iterations. Dynamic DataNet PSFs
-        # are consumed once and should not extend the forward's live memory.
-        weights = [layer.weight for layer in self.p.modules() if isinstance(layer, Converse2D)]
-        with converse_utils._training_kernel_scope(x, self.d.backend, weights):
-            return self._forward_impl(x, k, sf)
+        return self._forward_impl(x, k, sf)
 
     def _forward_impl(self, x, k, sf):
         b,c,h,w = k.shape

@@ -1,3 +1,4 @@
+#include "../common/fp32_dispatch.h"
 #include <ATen/ATen.h>
 #include <ATen/Dispatch.h>
 #include <c10/cuda/CUDAException.h>
@@ -19,7 +20,7 @@ at::Tensor converse_psf_cuda(const at::Tensor& weight, int64_t h, int64_t w) {
     auto out = at::empty({weight.size(0), weight.size(1), h, w}, weight.options());
     const auto n = out.numel(), kh = weight.size(2), kw = weight.size(3);
     auto stream = c10::cuda::getCurrentCUDAStream(weight.get_device());
-    AT_DISPATCH_FLOATING_TYPES(weight.scalar_type(), "converse_psf", [&] {
+    CONVERSE_DISPATCH_FP32(weight.scalar_type(), "converse_psf", [&] {
         if (n <= INT_MAX - 256 && h <= INT_MAX / 2 && w <= INT_MAX / 2) {
             prepare_psf<scalar_t,int><<<(n+255)/256,256,0,stream>>>(
                 source.data_ptr<scalar_t>(),out.data_ptr<scalar_t>(),int(n),int(h),int(w),int(kh),int(kw));

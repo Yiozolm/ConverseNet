@@ -14,9 +14,6 @@ _config_spec = importlib.util.spec_from_file_location("converse2d_build_config",
 build_config = importlib.util.module_from_spec(_config_spec)
 _config_spec.loader.exec_module(build_config)
 
-def legacy_source_texts():
-    return build_config.legacy_sources()
-
 def production_source_hashes():
     return {(build_config.PACKAGE / name).resolve().relative_to(ROOT).as_posix(): digest
             for name,digest in build_config.source_hashes().items()}

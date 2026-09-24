@@ -28,8 +28,8 @@ def validate_inputs(x, x0, weight, bias, scale, eps):
         raise ValueError("kernel must fit within the output spatial dimensions")
     if bias.shape != (1, c, 1, 1):
         raise ValueError("bias must have shape (1,C,1,1)")
-    if x.dtype not in (torch.float16, torch.bfloat16, torch.float32, torch.float64):
-        raise ValueError("inputs must have real floating dtype")
+    if x.dtype not in (torch.float32, torch.float64):
+        raise ValueError("reference accepts FP32 or FP64 tensors")
     if any(t.device != x.device or t.dtype != x.dtype for t in (x0, weight, bias)):
         raise ValueError("all inputs must have the same device and dtype")
 
@@ -37,14 +37,11 @@ def validate_inputs(x, x0, weight, bias, scale, eps):
 def converse2d_reference(x, x0, weight, bias, scale=1, eps=1e-5):
     """Stable solution with independent x0, including when scale == 1.
 
-    Half/bfloat16 inputs compute in float32 and return the original dtype.
+    FP64 is reserved for independent numerical validation.
     """
     validate_inputs(x, x0, weight, bias, scale, eps)
     output_dtype = x.dtype
     same_prior = x0 is x
-    if output_dtype in (torch.float16, torch.bfloat16):
-        x, weight, bias = x.float(), weight.float(), bias.float()
-        x0 = x if same_prior else x0.float()
     h, w = x.shape[-2:]
     kh, kw = weight.shape[-2:]
     psf = torch.nn.functional.pad(weight, (0, w * scale - kw, 0, h * scale - kh))
@@ -58,3 +55,34 @@ def converse2d_reference(x, x0, weight, bias, scale=1, eps=1e-5):
         correction = correction.repeat(1, 1, scale, scale)
     result = torch.fft.ifft2(fx0 + fb.conj() * correction).real
     return result.to(output_dtype)
+
+
+def converse2d_fp32(x, x0, weight, bias, scale=1, eps=1e-5):
+    """Portable FP32 fallback with full-training/half-inference routing."""
+    if any(t.dtype != torch.float32 for t in (x, x0, weight, bias)):
+        raise ValueError("Converse2D requires FP32 tensors")
+    validate_inputs(x, x0, weight, bias, scale, eps)
+    if torch.is_grad_enabled() and any(t.requires_grad for t in (x, x0, weight, bias)):
+        return converse2d_reference(x, x0, weight, bias, scale, eps)
+
+    def full(a, width):
+        tail = a[..., 1:(width+1)//2].flip((-2, -1)).roll(1, -2)
+        return torch.cat((a, tail.conj() if a.is_complex() else tail), -1)
+
+    h, w = x.shape[-2:]
+    hs, ws = h*scale, w*scale
+    kh, kw = weight.shape[-2:]
+    psf = torch.nn.functional.pad(weight, (0, ws-kw, 0, hs-kh))
+    k = torch.fft.rfft2(torch.roll(psf, (-(kh//2), -(kw//2)), (-2, -1)))
+    power = k.real.square()+k.imag.square()
+    y = torch.fft.rfft2(x)
+    p = y if x is x0 else torch.fft.rfft2(x0)
+    prediction = k*p
+    if scale > 1:
+        power = alias_mean(full(power, ws), scale)[..., :w//2+1]
+        prediction = alias_mean(full(prediction, ws), scale)[..., :w//2+1]
+    regularizer = torch.sigmoid(bias-9.0)+eps
+    q = (y-prediction)/(power+regularizer)
+    if scale > 1:
+        q = full(q, w).repeat(1, 1, scale, scale)[..., :ws//2+1]
+    return torch.fft.irfft2(p+k.conj()*q, s=(hs, ws))

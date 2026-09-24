@@ -1,3 +1,4 @@
+#include "../../common/fp32_dispatch.h"
 // Included within converse2d::full_training, after the generic CUDA helpers.
 // Only W>1 and ATen 32-bit-byte-offset alias reductions use this candidate.
 // For contiguous B,C,2,H,2,W input those reductions visit 00,01,10,11 in
@@ -86,7 +87,7 @@ std::vector<Tensor> full_scale2_forward_cuda(Tensor y0,Tensor p0,Tensor k0,Tenso
     auto out=at::empty(p.sizes(),p.options()),q=at::empty(y.sizes(),y.options());
     auto d=at::empty({k.size(0),y.size(1),y.size(2),y.size(3)},l.options());
     auto stream=c10::cuda::getCurrentCUDAStream();
-    AT_DISPATCH_FLOATING_TYPES(l.scalar_type(),"full_scale2_forward",[&]{
+    CONVERSE_DISPATCH_FP32(l.scalar_type(),"full_scale2_forward",[&]{
         scale2_forward<scalar_t><<<(y.numel()+255)/256,256,0,stream>>>(
             y.data_ptr<Z<scalar_t>>(),p.data_ptr<Z<scalar_t>>(),k.data_ptr<Z<scalar_t>>(),l.data_ptr<scalar_t>(),
             out.data_ptr<Z<scalar_t>>(),q.data_ptr<Z<scalar_t>>(),d.data_ptr<scalar_t>(),
@@ -102,7 +103,7 @@ std::vector<Tensor> full_scale2_adjoint_cuda(Tensor g0,Tensor p0,Tensor k0,Tenso
     auto direct=at::empty(g.sizes(),g.options()),prediction=at::empty(p.sizes(),p.options());
     auto gd=at::empty(q.sizes(),q.options());
     auto stream=c10::cuda::getCurrentCUDAStream();
-    AT_DISPATCH_FLOATING_TYPES(d.scalar_type(),"full_scale2_adjoint",[&]{
+    CONVERSE_DISPATCH_FP32(d.scalar_type(),"full_scale2_adjoint",[&]{
         scale2_adjoint<scalar_t><<<(q.numel()+255)/256,256,0,stream>>>(
             g.data_ptr<Z<scalar_t>>(),p.data_ptr<Z<scalar_t>>(),k.data_ptr<Z<scalar_t>>(),q.data_ptr<Z<scalar_t>>(),d.data_ptr<scalar_t>(),
             gy.data_ptr<Z<scalar_t>>(),gp.data_ptr<Z<scalar_t>>(),direct.data_ptr<Z<scalar_t>>(),prediction.data_ptr<Z<scalar_t>>(),gd.data_ptr<Z<scalar_t>>(),

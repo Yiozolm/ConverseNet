@@ -13,9 +13,6 @@ template <typename T> __device__ T squared_norm(c10::complex<T> z);
 template <> __device__ inline float squared_norm(c10::complex<float> z) {
     return __fadd_rn(__fmul_rn(z.real(), z.real()), __fmul_rn(z.imag(), z.imag()));
 }
-template <> __device__ inline double squared_norm(c10::complex<double> z) {
-    return __dadd_rn(__dmul_rn(z.real(), z.real()), __dmul_rn(z.imag(), z.imag()));
-}
 
 template <typename T>
 __device__ c10::complex<T> conjugate(c10::complex<T> z) {

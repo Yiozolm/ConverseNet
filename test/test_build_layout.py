@@ -40,16 +40,6 @@ class BuildLayout(unittest.TestCase):
             self.assertNotEqual(before, after)
             self.assertEqual([p for p in before if before[p] != after[p]], ['inference/detail/math.cuh'])
 
-    def test_legacy_exports_are_self_contained_and_current(self):
-        config = config_at(ROOT)
-        texts = config.legacy_sources()
-        self.assertEqual(len(texts),4)
-        for name,text in texts.items():
-            if not name.endswith('.h'):
-                self.assertNotIn('#include "',text)
-        self.assertEqual(texts['converse2d_training.cu'].count(
-            'bool use_scale1(I H,I W,I s) { return s==1 && H*W>=65536; }'),1)
-        self.assertEqual(texts['converse2d.cpp'].count('TORCH_LIBRARY(converse2d, m)'),1)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

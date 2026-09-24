@@ -1,3 +1,13 @@
+# ConverseNet — FP32 release
+
+This branch contains the FP32 implementation: full-spectrum training and
+half-spectrum inference, selected by autograd requirements. Build and API:
+[Converse2D](Converse2D/README.md). Validation and historical source:
+[release notes](docs/fp32_release.md).
+
+The project description and published results below are from the original work;
+they are not new performance or convergence measurements for this branch.
+
 # [Reverse Convolution and Its Application to Image Restoration](https://www.arxiv.org/abs/2508.09824)
 
 [Xuhong Huang<sup>*</sup>](https://csgeekhuang.github.io/), [Shiqi Liu<sup>*</sup>](https://github.com/Stella-67), [Kai Zhang<sup>†</sup>](https://cszn.github.io/), Ying Tai, Jian Yang, Hui Zeng, [Lei Zhang](http://www4.comp.polyu.edu.hk/~cslzhang/)
@@ -70,7 +80,7 @@ Codes
 ----------
 
 * [Converse2D](Converse2D/README.md): _Current C++/CUDA operator, installation and API_
-* [Tests and profiling](test/README.md): _Numerical regressions, pretrained-model checks and benchmarks_
+* [Release tests](test/README.md): _Numerical regressions, routing and pretrained-model preservation_
 
 * [main_test_converse_dncnn.py](main_test_converse_dncnn.py):  _Code to denoise images by Converse-DnCNN_
 * [main_test_converse_srresnet.py](main_test_converse_srresnet.py):  _Code to super-resolve LR images by Converse-SRResNet_

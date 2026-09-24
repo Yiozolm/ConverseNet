@@ -1,10 +1,6 @@
 #include "full_fusion.h"
 #ifdef CONVERSE2D_WITH_CUDA
-// Embed the checked implementation without registering a second library or
-// Python module. The standalone experiment compiles full_fusion.cpp directly.
-#define CONVERSE_FULL_SPECTRUM_EMBEDDED 1
 #include "full_fusion.cpp"
-#undef CONVERSE_FULL_SPECTRUM_EMBEDDED
 
 namespace converse2d::full_training {
 at::Tensor spatial(at::Tensor x, at::Tensor prior, at::Tensor weight, at::Tensor bias, int64_t scale, double eps) {

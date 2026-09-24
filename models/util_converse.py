@@ -1,10 +1,9 @@
 import os
-from contextlib import contextmanager
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
-from models.converse_core import converse2d_reference
+from models.converse_core import converse2d_reference, converse2d_fp32
 
 
 _HAS_CONVERSE2D_EXT = False
@@ -28,7 +27,6 @@ def _try_import_converse2d_ext():
         except Exception:
             continue
         if hasattr(torch.ops, "converse2d") and hasattr(torch.ops.converse2d, "forward"):
-            print(mod)
             _HAS_CONVERSE2D_EXT = True
             break
 
@@ -37,39 +35,6 @@ _try_import_converse2d_ext()
 converse2d_CUDA = torch.ops.converse2d.forward if (
     hasattr(torch.ops, "converse2d") and hasattr(torch.ops.converse2d, "forward")
 ) else None
-
-
-@contextmanager
-def _training_kernel_scope(x, backend, weights=None):
-    """Keep the per-forward scope API compatible with historical extensions.
-
-    Default full-spectrum training prepares a separate FP32 kernel FFT per
-    call and leaves this scope empty. Reusing its graph would change gradient
-    accumulation order and requires independent precision validation.
-    """
-    backend = (os.environ.get("CONVERSE2D_BACKEND", "") or backend).lower()
-    if not torch.is_grad_enabled() or not x.is_cuda or backend not in ("auto", "cuda"):
-        yield
-        return
-    if weights is not None and not weights:
-        yield
-        return
-    _try_import_converse2d_ext()
-    ops = torch.ops.converse2d
-    begin = getattr(ops, "_begin_training_cache" if weights is None else "_begin_training_cache_for", None)
-    end = getattr(ops, "_end_training_cache", None)
-    # Frozen baselines and older installed extensions have no private scope
-    # API; they retain their original behavior without a Python-side cache.
-    if begin is None or end is None:
-        yield
-        return
-    begin() if weights is None else begin(weights)
-    try:
-        yield
-    finally:
-        # C++ owns a thread-local stack, so nested forwards release only their
-        # own references and exceptions cannot leak spectra into a later step.
-        end()
 
 
 """
@@ -153,8 +118,7 @@ class Converse2D(nn.Module):
                                 Default is a small value like 1e-5.
             backend (str, optional): Backend for computing the convolution. One of {'auto', 'cuda', 'pytorch'}.
                                         Default is 'auto'.
-            variant (str, optional): Corrected CUDA implementation label, v2-v7.
-                                     Default v7 uses real FFT; v3-v6 share the full-FFT implementation.
+            variant (str, optional): Only v7: full-spectrum training and half-spectrum inference.
 
         Returns:
             Tensor: Output tensor of shape (N, out_channels, H * scale, W * scale), where spatial dimensions
@@ -170,8 +134,8 @@ class Converse2D(nn.Module):
         self.eps = eps
         self.backend = backend.lower()
         self.variant = variant.lower()
-        if self.variant not in ("v2", "v3", "v4", "v5", "v6", "v7"):
-            raise ValueError("variant must be v2, v3, v4, v5, v6 or v7")
+        if self.variant != "v7":
+            raise ValueError("FP32 release supports only variant v7")
         if self.backend not in ("auto", "cuda", "pytorch"):
             raise ValueError(f"backend must be 'auto' | 'cuda' | 'pytorch', got: {self.backend}")    
 
@@ -183,11 +147,15 @@ class Converse2D(nn.Module):
 
         
     def forward(self, x):
+        if any(t.dtype != torch.float32 for t in (x, self.weight, self.bias)):
+            raise ValueError("Converse2D requires FP32 tensors")
 
         if self.padding > 0:
             x = nn.functional.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode, value=0)
 
         backend = (os.environ.get("CONVERSE2D_BACKEND", "") or self.backend).lower()
+        if backend not in ("auto", "cuda", "pytorch"):
+            raise ValueError("backend must be auto, cuda or pytorch")
 
         def _can_use_cuda_backend():
             _try_import_converse2d_ext()
@@ -210,7 +178,8 @@ class Converse2D(nn.Module):
             )
         else:
             x0 = x if self.scale == 1 else F.interpolate(x, scale_factor=self.scale, mode='nearest')
-            out = converse2d_reference(x, x0, self.weight, self.bias, self.scale, self.eps)
+            solver = converse2d_reference if backend == "pytorch" else converse2d_fp32
+            out = solver(x, x0, self.weight, self.bias, self.scale, self.eps)
 
         if self.padding > 0:
             out = out[..., self.padding*self.scale:-self.padding*self.scale, self.padding*self.scale:-self.padding*self.scale]
