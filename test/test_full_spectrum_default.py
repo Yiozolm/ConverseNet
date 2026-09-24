@@ -6,90 +6,12 @@ FP64 reference checks and higher-order comparisons live in test_fp32_release.py.
 Run from the checkout with ``python -m unittest discover -s test
 -p test_full_spectrum_default.py -v``. CPU-only builds skip all CUDA cases.
 """
-import os
-import sys
 import unittest
-
 import torch
-from torch.utils.cpp_extension import CUDA_HOME
 
-from extension_loader import ROOT, load_extension
-
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from support import (ExtensionTestCase, CUDATestCase, fixture, leaves,
+                     has_full_solve, profiled, compare_spatial)
 from models.converse_core import converse2d_reference
-
-
-CUDA_BUILD = (torch.cuda.is_available() and torch.version.cuda is not None
-              and CUDA_HOME is not None and os.environ.get("CONVERSE2D_CPU_ONLY") != "1")
-
-
-def graph_names(output):
-    """Keep nodes alive while walking: Python wrapper ids can otherwise recycle."""
-    pending = [output.grad_fn] if output.grad_fn is not None else []
-    seen = set()
-    names = []
-    while pending:
-        node = pending.pop()
-        if node in seen:
-            continue
-        seen.add(node)
-        names.append(node.name())
-        pending.extend(parent for parent, _ in node.next_functions if parent is not None)
-    return names
-
-
-def has_full_solve(output):
-    return any("FullSolve" in name for name in graph_names(output))
-
-
-def profiled(call):
-    # CPU dispatcher events suffice to identify which FFT API is called; this
-    # is a routing assertion, not a CUDA performance measurement.
-    with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as trace:
-        output = call()
-    return output, {event.key for event in trace.key_averages()}
-
-
-def fixture(scale, *, kb=1, kc=3, dtype=torch.float32, weak=None):
-    generator = torch.Generator(device="cpu").manual_seed(96013 + scale)
-    batch, channels, height, width = 2, 3, 5, 6
-    values = [
-        torch.randn(batch, channels, height, width, generator=generator, dtype=dtype),
-        torch.randn(batch, channels, height * scale, width * scale,
-                    generator=generator, dtype=dtype),
-        torch.rand(kb, kc, 3, 3, generator=generator, dtype=dtype) / 9,
-        torch.randn(1, channels, 1, 1, generator=generator, dtype=dtype),
-    ]
-    if weak is not None:
-        values[0].mul_(1e-5)
-        values[1].mul_(1e-5)
-        values[2].mul_(weak)
-        values[3].fill_(-40)
-    upstream = torch.randn(values[1].shape, generator=generator, dtype=dtype)
-    if weak is not None:
-        upstream.mul_(1e-5)
-    return values, upstream
-
-
-def leaves(raw, device, *, strided=False, needs=(True, True, True, True)):
-    result = []
-    for value, required in zip(raw, needs):
-        value = value.to(device).clone()
-        if strided:
-            value = torch.stack((value, value), dim=-1)[..., 0]
-        result.append(value.detach().requires_grad_(required))
-    return result
-
-
-def capture(call, raw, upstream, *, scale, shared=False, strided=False, eps=1e-5):
-    data = leaves(raw, "cuda", strided=strided)
-    if shared:
-        data[1] = data[0]
-    requested = (data[0], data[2], data[3]) if shared else tuple(data)
-    output = call(*data, scale, eps)
-    grads = torch.autograd.grad(output, requested, upstream.to("cuda"))
-    return (output, *grads)
 
 
 class PublicModule(torch.nn.Module):
@@ -97,59 +19,31 @@ class PublicModule(torch.nn.Module):
         return torch.ops.converse2d.forward(*args, 2, 1e-5, "v7")
 
 
-class DefaultFullSpectrumCPU(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        load_extension(cpu_only=not CUDA_BUILD)
-
+class DefaultFullSpectrumCPU(ExtensionTestCase):
     def test_cpu_keeps_differentiable_reference_fallback(self):
-        for dtype in (torch.float32,):
-            with self.subTest(dtype=dtype):
-                raw, upstream = fixture(2, dtype=dtype)
-                data = leaves(raw, "cpu")
-                output, events = profiled(lambda: torch.ops.converse2d.forward(*data, 2))
-                self.assertFalse(has_full_solve(output))
-                self.assertIn("aten::fft_fft2", events)
-                self.assertIn("aten::fft_ifft2", events)
-                self.assertNotIn("aten::fft_rfft2", events)
-                self.assertEqual(output.dtype, dtype)
-                gradients = torch.autograd.grad(output, data, upstream)
-                for value in (output, *gradients):
-                    self.assertTrue(torch.isfinite(value).all().item())
-                reference = converse2d_reference(*data, 2)
-                reference_gradients = torch.autograd.grad(reference, data, upstream)
-                for actual, expected in zip((output, *gradients), (reference, *reference_gradients)):
-                    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+        raw, upstream = fixture(2)
+        data = leaves(raw, "cpu")
+        output, events = profiled(lambda: torch.ops.converse2d.forward(*data, 2))
+        self.assertFalse(has_full_solve(output))
+        self.assertIn("aten::fft_fft2", events)
+        self.assertIn("aten::fft_ifft2", events)
+        self.assertNotIn("aten::fft_rfft2", events)
+        self.assertEqual(output.dtype, torch.float32)
+        gradients = torch.autograd.grad(output, data, upstream)
+        for value in (output, *gradients):
+            self.assertTrue(torch.isfinite(value).all().item())
+        reference = converse2d_reference(*data, 2)
+        reference_gradients = torch.autograd.grad(reference, data, upstream)
+        for actual, expected in zip((output, *gradients), (reference, *reference_gradients)):
+            torch.testing.assert_close(actual, expected, atol=0, rtol=0)
 
-
-@unittest.skipUnless(CUDA_BUILD, "CUDA extension and device required (CPU-only builds skip)")
-class DefaultFullSpectrumCUDA(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        load_extension()
-
-    def assert_bytes_equal(self, actual, expected, label):
-        self.assertEqual(actual.dtype, expected.dtype, label)
-        self.assertEqual(actual.shape, expected.shape, label)
-        actual = actual.detach().resolve_conj().resolve_neg().cpu().contiguous()
-        expected = expected.detach().resolve_conj().resolve_neg().cpu().contiguous()
-        self.assertTrue(torch.isfinite(actual).all().item(), label + ": nonfinite actual")
-        self.assertTrue(torch.isfinite(expected).all().item(), label + ": nonfinite reference")
-        self.assertEqual(actual.numpy().tobytes(), expected.numpy().tobytes(),
-                        label + ": differs from Python FP32 at zero byte margin")
-
+class DefaultFullSpectrumCUDA(CUDATestCase):
     def check_python_exact(self, scale, *, shared=False, strided=False, kb=1, kc=3, weak=None):
         raw, upstream = fixture(scale, kb=kb, kc=kc, weak=weak)
         eps = 1e-8 if weak is not None else 1e-5
-        actual = capture(torch.ops.converse2d.forward, raw, upstream, scale=scale,
-                         shared=shared, strided=strided, eps=eps)
-        expected = capture(converse2d_reference, raw, upstream, scale=scale,
-                           shared=shared, strided=strided, eps=eps)
-        labels = ("output", "dshared", "dweight", "dbias") if shared else (
-            "output", "dx", "dprior", "dweight", "dbias")
-        self.assertTrue(has_full_solve(actual[0]), "public v7 must use FullSolve")
-        for label, value, target in zip(labels, actual, expected):
-            self.assert_bytes_equal(value, target, label)
+        output = compare_spatial(self, raw, upstream, scale=scale, shared=shared,
+                                 strided=strided, eps=eps)
+        self.assertTrue(has_full_solve(output), "public v7 must use FullSolve")
 
     def test_grad_enabled_v7_uses_full_fft_and_full_solve(self):
         raw, _ = fixture(2)
@@ -231,12 +125,7 @@ class DefaultFullSpectrumCUDA(unittest.TestCase):
             self.assertFalse(upstream.is_contiguous())
             for shared in (False, True):
                 with self.subTest(kb=kb, kc=kc, shared=shared):
-                    actual = capture(torch.ops.converse2d.forward, raw, upstream, scale=1, shared=shared)
-                    expected = capture(converse2d_reference, raw, upstream, scale=1, shared=shared)
-                    labels = ("output", "dshared", "dweight", "dbias") if shared else (
-                        "output", "dx", "dprior", "dweight", "dbias")
-                    for label, value, target in zip(labels, actual, expected):
-                        self.assert_bytes_equal(value, target, label)
+                    compare_spatial(self, raw, upstream, scale=1, shared=shared)
 
 
     def test_s1_kernel_broadcasts_shared_and_transposed_inputs_match_python_bytes(self):
@@ -260,21 +149,9 @@ class DefaultFullSpectrumCUDA(unittest.TestCase):
                         for transpose in (False, True):
                             with self.subTest(batch=batch, kb=kb, kc=kc,
                                               shared=shared, transpose=transpose):
-                                def run(call):
-                                    data = leaves(raw, 'cuda')
-                                    if transpose:
-                                        data = [v.transpose(-1, -2).contiguous().transpose(-1, -2)
-                                                .detach().requires_grad_() for v in data]
-                                        self.assertFalse(data[0].is_contiguous())
-                                    if shared:
-                                        data[1] = data[0]
-                                    requested = (data[0], data[2], data[3]) if shared else data
-                                    output = call(*data, 1, 1e-5)
-                                    return (output, *torch.autograd.grad(output, requested, upstream))
-                                actual = run(torch.ops.converse2d.forward)
-                                expected = run(converse2d_reference)
-                                for index, (value, target) in enumerate(zip(actual, expected)):
-                                    self.assert_bytes_equal(value, target, f's1 output/VJP {index}')
+                                compare_spatial(self, raw, upstream, scale=1,
+                                                shared=shared, transpose=transpose)
+
 
     def test_s1_shared_input_gradient_subsets_match_python_bytes(self):
         for batch in (1, 4):
@@ -286,16 +163,8 @@ class DefaultFullSpectrumCUDA(unittest.TestCase):
             for mask in range(1, 8):
                 needs = tuple(bool(mask & (1 << i)) for i in range(3))
                 with self.subTest(batch=batch, needs=needs):
-                    def run(call):
-                        data = leaves(raw, 'cuda', needs=needs)
-                        x, weight, bias = data
-                        output = call(x, x, weight, bias, 1, 1e-5)
-                        requested = [v for v, needed in zip(data, needs) if needed]
-                        return (output, *torch.autograd.grad(output, requested, upstream))
-                    actual = run(torch.ops.converse2d.forward)
-                    expected = run(converse2d_reference)
-                    for index, (value, target) in enumerate(zip(actual, expected)):
-                        self.assert_bytes_equal(value, target, f'shared subset output/VJP {index}')
+                    compare_spatial(self, raw, upstream, scale=1,
+                                    shared=True, needs=needs)
 
     def test_internal_s1_shared_conjugated_transposed_vjps(self):
         # Arbitrary complex (not necessarily Hermitian) spectra test the layout
@@ -360,21 +229,7 @@ class DefaultFullSpectrumCUDA(unittest.TestCase):
         upstream = backing[..., ::2]
         self.assertFalse(upstream.is_contiguous())
 
-        def run(call):
-            data = leaves(raw, "cuda")
-            if transpose:
-                data = [value.transpose(-1, -2).contiguous().transpose(-1, -2)
-                        .detach().requires_grad_(True) for value in data]
-                self.assertFalse(data[1].is_contiguous())
-            output = call(*data, scale, 1e-5)
-            gradients = torch.autograd.grad(output, data, upstream)
-            return (output, *gradients)
-
-        actual = run(torch.ops.converse2d.forward)
-        expected = run(converse2d_reference)
-        for label, value, target in zip(("output", "dx", "dprior", "dweight", "dbias"),
-                                        actual, expected):
-            self.assert_bytes_equal(value, target, label)
+        compare_spatial(self, raw, upstream, scale=scale, transpose=transpose)
 
     def test_s2_odd_rectangular_broadcasts_and_strided_vjps_match_python_bytes(self):
         # Odd LR extents cover partial launch tails with all kernel broadcast
@@ -427,8 +282,7 @@ class DefaultFullSpectrumCUDA(unittest.TestCase):
                 expected_grads = torch.autograd.grad(expected, data, upstream)
                 self.assertTrue(has_full_solve(actual))
                 self.assertEqual(actual.stride(), expected.stride())
-                for value, reference in zip((actual, *actual_grads), (expected, *expected_grads)):
-                    self.assertTrue(torch.equal(value.detach().contiguous().view(torch.uint8), reference.detach().contiguous().view(torch.uint8)))
+                self.assert_results_equal((actual, *actual_grads), (expected, *expected_grads))
 
 
 if __name__ == '__main__':

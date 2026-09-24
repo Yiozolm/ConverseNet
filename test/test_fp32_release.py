@@ -1,12 +1,9 @@
 """FP32 release contracts and independent FP64 error measurements."""
 import json
-import sys
 import unittest
 import torch
-from extension_loader import ROOT, load_extension
-sys.path.insert(0, str(ROOT))
+from support import ROOT, CUDATestCase, fixture, leaves, profiled
 from models.converse_core import converse2d_reference, converse2d_fp32
-from test_full_spectrum_default import fixture, leaves, profiled
 
 
 class PortableFP32(unittest.TestCase):
@@ -34,12 +31,7 @@ class PortableFP32(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'FP32'):
                 converse2d_fp32(*raw, 2)
 
-@unittest.skipUnless(torch.cuda.is_available(), 'CUDA required')
-class ReleaseContracts(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        load_extension()
-
+class ReleaseContracts(CUDATestCase):
     def test_independent_fp64_error_noninferiority(self):
         rows = []
         for s in (1, 2, 3, 4):

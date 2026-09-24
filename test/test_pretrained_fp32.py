@@ -1,19 +1,10 @@
 """Checkpoint compatibility and FP32 inference reference smoke checks."""
-import sys
 import unittest
 import torch
-from extension_loader import ROOT, load_extension
-sys.path.insert(0, str(ROOT))
+from support import ROOT, CUDATestCase
 
 
-@unittest.skipUnless(torch.cuda.is_available(), 'CUDA required')
-class PretrainedFP32(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        load_extension()
-        torch.backends.cudnn.allow_tf32 = False
-        torch.backends.cuda.matmul.allow_tf32 = False
-
+class PretrainedFP32(CUDATestCase):
     def test_dncnn_and_srresnet_checkpoints(self):
         from models.util_converse import Converse2D
         from models.converse_dncnn import ConverseDnCNN

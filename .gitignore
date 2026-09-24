@@ -28,3 +28,6 @@ dist/
 .build/
 artifacts/
 dataset/
+
+# Local release/benchmark tooling; historical copies remain at 0a99235.
+tools/release/
