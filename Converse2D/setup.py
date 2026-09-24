@@ -6,6 +6,8 @@ import torch
 import build_config as config
 
 if os.name == "nt":
+    if os.environ.get("CONVERSE2D_BUILD_PATH"):
+        os.environ["PATH"] = os.environ["CONVERSE2D_BUILD_PATH"]
     os.environ.setdefault("VSLANG", "1033")
     cpp_extension.SUBPROCESS_DECODE_ARGS = ("utf-8", "replace")
 
@@ -29,7 +31,7 @@ extension = (CUDAExtension if has_cu else CppExtension)(
     extra_compile_args={"cxx":cxx,"nvcc":nvcc} if has_cu else cxx,
     define_macros=[("CONVERSE2D_WITH_CUDA","1")] if has_cu else [],
 )
-setup(name="torch_converse2d",version="0.3.0",
+setup(name="torch_converse2d",version="1.0.0",
       description="Converse2D CUDA extension for PyTorch",packages=["torch_converse2d"],
       package_data={"torch_converse2d":list(config.dependency_names(True))},
       ext_modules=[extension],cmdclass={"build_ext":BuildExtension},zip_safe=False)

@@ -61,3 +61,11 @@ require FP32; AMP and training-spectrum reuse are outside this release.
 
 See [release validation](../docs/fp32_release.md) for measured scope and the
 pre-cleanup source snapshot. No new speed or long-run convergence claim is made.
+
+## Optional CUDA Graph execution
+
+`USRNetCUDAGraph(model, enabled=False)` calls the model directly on CPU or CUDA,
+preserving autograd and the model's FP32 dtype contract. Set `runner.enabled = True`
+to capture supported FP32 CUDA inference calls with the model in eval mode and
+gradients disabled. Explicit construction defaults to enabled. Switching back to
+`False` waits for pending replays and clears captured graphs.

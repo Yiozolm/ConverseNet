@@ -21,7 +21,9 @@ while build checks, the CPU extension and the portable Python fallback still run
 `support.py` owns shared fixtures, byte comparisons and CPU/CUDA policy.
 `extension_loader.py` builds locally under `.build/` and verifies source/header
 and binary fingerprints. Tests never import fixtures from another test module.
-The 32 test methods retain their numerical thresholds, shapes and random seeds.
+The FP32 tests retain their numerical thresholds, shapes and random seeds.
+Three additional CUDA Graph tests cover the optional execution switch, CPU
+passthrough and training passthrough inherited from main.
 
 Release benchmarks, quality campaigns, snapshots and note generation are local
 tools under `tools/release/`, excluded by `.gitignore`; they are not needed for
