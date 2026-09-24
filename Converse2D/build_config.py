@@ -15,14 +15,14 @@ HOST_SOURCES = (
     'converse2d.cpp', 'operator.cpp', 'reference/reference.cpp',
     'inference/cache.cpp', 'inference/inference_preparation.cpp',
     'training/autograd.cpp', 'training/training_preparation.cpp',
-    'training/spectrum_scope.cpp',
+    'training/spectrum_scope.cpp', 'training/full_spectrum/production.cpp',
 )
 CUDA_SOURCES = (
     'inference/inference_prepare.cu', 'inference/inference_dispatch.cu',
     'inference/inference_scale1.cu', 'inference/inference_scale2.cu',
     'inference/inference_scale3.cu', 'inference/inference_generic.cu',
     'training/training_dispatch.cu', 'training/training_scale1.cu',
-    'training/training_generic.cu',
+    'training/training_generic.cu', 'training/full_spectrum/full_fusion.cu',
 )
 _INCLUDE = re.compile(r'^\s*#include\s+"([^"]+)"\s*$', re.M)
 

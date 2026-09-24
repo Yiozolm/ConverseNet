@@ -41,7 +41,12 @@ converse2d_CUDA = torch.ops.converse2d.forward if (
 
 @contextmanager
 def _training_kernel_scope(x, backend, weights=None):
-    """Reuse differentiable spectra only within one enclosing model forward."""
+    """Keep the per-forward scope API compatible with historical extensions.
+
+    Default full-spectrum training prepares a separate FP32 kernel FFT per
+    call and leaves this scope empty. Reusing its graph would change gradient
+    accumulation order and requires independent precision validation.
+    """
     backend = (os.environ.get("CONVERSE2D_BACKEND", "") or backend).lower()
     if not torch.is_grad_enabled() or not x.is_cuda or backend not in ("auto", "cuda"):
         yield

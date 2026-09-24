@@ -17,6 +17,13 @@ to the intended toolkit. Set `CONVERSE2D_CPU_ONLY=1` to build without custom CUD
 kernels. That build can still use CUDA tensors through ATen when PyTorch supports
 them, but bypasses GPU caching.
 
+After updating from the half-spectrum training implementation, rebuild the
+extension with the command above and restart any Python process that has loaded
+the previous binary. The full-spectrum training route is enabled by default;
+no experimental loader or opt-in flag is required. Checkout JIT users should
+rebuild through `test/extension_loader.py` before enabling
+`CONVERSE2D_SKIP_BUILD=1` again.
+
 ## Usage
 
 ```python
@@ -55,40 +62,61 @@ connections and return the input dtype, including for arbitrary FFT sizes.
 
 | Variant | Inference | Training |
 |---|---|---|
-| `v7` (default) | Real FFT with fused CUDA correction | FP32 CUDA fused solve/VJP; ATen otherwise |
+| `v7` (default) | Real FFT/half spectrum with fused CUDA correction | FP32 CUDA full-spectrum fused solve/VJP; ATen otherwise |
 | `v2` | Full-FFT ATen reference | Differentiable ATen |
 | `v3`–`v6` | Compatibility aliases for shared full-FFT fused code | Differentiable ATen |
 
 The FP32 CUDA v7 training backend is selected when gradients are enabled and
 any input needs a gradient; `.eval()` alone does not disable autograd. Its
-half-spectrum solve uses an analytic first-order backward, with differentiable
-ATen recomputation for higher derivatives. The trainable kernel FFT is prepared
-in FP64 and cast to complex64 to reduce kernel-rounding error; activation FFTs
-and the solve remain FP32. For grids of at least 16,384 pixels, or at least
-1,048,576 elements across all actual batch/channel kernels, with kernel height
-at most one quarter of the grid height, preparation uses a horizontal real FFT
-on just the kernel rows, then a vertical complex FFT. Its autograd backward
-crops the padded rows before the horizontal adjoint, reducing full-grid FP64
-work and temporary memory. Other shapes retain the 2-D kernel FFT. The cast to
-complex64 also produces contiguous storage, avoiding repeated layout copies.
-Scale-one training with at least 65,536 spatial pixels uses a specialized
-forward/VJP kernel; smaller shapes retain the generic solve.
-FFT/IFFT, PSF pad/roll, casts and lambda
-parameterization retain autograd. Trainable spectra are rebuilt on every call,
-so optimizer updates cannot reuse stale or detached kernels. CPU, FP64 and
-low-precision training retain their ATen paths. Inference fusion requires
-`no_grad()` or `inference_mode()`. All four tensor inputs support first and
-second derivatives; floating-point outputs need not match bit for bit across
-FFT paths.
+complex64 full-spectrum solve uses an analytic first-order backward, with
+differentiable ATen recomputation for higher derivatives. Kernel preparation
+uses FP32 pad/roll followed by `fft2`; observation/prior `fft2` and the final
+`ifft2(...).real` also retain their FP32 autograd paths. CUDA fusion preserves
+the reference's alias reduction order and broadcast-reduction boundaries. FFT
+layout is retained at the inverse-transform boundary for noncontiguous prior spectra.
 
-`ConverseUSRNet(..., reuse_training_spectra=True)` is an experimental eager
-training option, **disabled by default**. It reuses only repeated fixed weights
-within one forward, retaining an FP64 preparation graph and casting separately
-for each use. Version, storage, autograd graph, gradient requirement, shape and
-stream changes invalidate reuse; nested scopes and exceptions release their
-references. It never persists spectra across forwards or optimizer steps.
-Full-model precision and short-training stress gates remain open, so this is
-not a convergence-validated default. See [refinement results](../docs/training_refinements.md).
+Scale 1 uses dedicated full-spectrum pointwise fusion in `scale1.cuh`, covering
+both shared and independent priors. It combines forward preparation/output and
+the pointwise backward stages while retaining separate broadcast reductions,
+their layouts and the higher-order fallback. Scale 2 uses `scale2.cuh` when LR
+width is greater than one and the HR complex tensor occupies at most
+`INT32_MAX` bytes. It combines each four-alias reduction with forward/backward
+pointwise work while preserving the reduction order and the separate broadcast
+reductions. Width-one and larger-byte-offset cases retain the generic path, as
+do scales 3 and above. These dispatches do not use the historical half-spectrum
+scale-one area threshold.
+
+Shared scale-one inputs reuse one forward layout materialization and omit the
+unused independent-observation gradient buffer. Their combined gradient keeps
+its existing addition order. When `KB==B && KC==C`, the pointwise backward
+also completes the kernel gradient, avoiding the direct/prediction scratch
+buffers and a separate final kernel. Broadcast cases retain their reductions;
+the complex denominator-gradient buffer and its real-view stride remain
+unchanged for the regularizer reduction. These changes introduce no spectrum
+cache or reduced-precision arithmetic. The implementation and validation
+record are tracked in the sibling [HPC report](../../HPC/docs/conversenet_full_spectrum_leet.md).
+
+Trainable spectra are rebuilt on every call so optimizer updates cannot reuse
+stale or detached kernels. CPU, FP64 and low-precision training retain their
+ATen paths. Inference fusion requires `no_grad()` or `inference_mode()` and v7
+inference continues to use the half spectrum. All four tensor inputs support
+first and second derivatives. Training and inference implement the same
+mathematical operator, but their floating-point outputs need not be identical.
+
+`ConverseUSRNet(..., reuse_training_spectra=True)` and the private training scope
+APIs remain accepted for compatibility. **The default full-spectrum path does
+not reuse spectra**, even with this option enabled: each call retains its own
+FP32 preparation graph, and scope hit/miss counts are `[0,0]`. Sharing that graph
+would change gradient accumulation order and needs separate precision
+validation. Nested scopes and exceptions still clean up correctly. The previous
+FP64 half-spectrum preparation, large-s1 specialization and reuse experiments
+remain available as historical/internal code; their thresholds and speedups do
+not describe current default training. Their original results, including open
+precision gates, are retained in [refinement results](../docs/training_refinements.md).
+
+Further training optimization must preserve the Python FP32 accuracy baseline;
+enabling the default route does not establish long-term convergence or accuracy
+on every GPU, Torch version and input shape.
 
 USRNet's dynamic-kernel data module uses the same operator:
 
@@ -111,8 +139,9 @@ the library leaves application-wide precision settings unchanged.
 CUDA v7 inference writes the zero-padded, centered PSF in one kernel. For
 uncached dynamic kernels, the correction kernel also accumulates `|FB|²` while
 reading FB; it does not build and reconstruct a separate full power spectrum.
-Fixed kernels still cache their prepared spectra and denominators. CPU,
-autograd-enabled calls and v2-v6 keep their existing preparation paths.
+Fixed kernels still cache their prepared spectra and denominators. Grad-enabled
+CUDA FP32 v7 calls needing gradients use the full-spectrum training preparation
+described above; CPU and other variants/dtypes retain their existing paths.
 
 The IFFT normalization remains after the transform. Moving it before the IFFT
 was rejected because it worsened near-underflow precision. No fast-math or

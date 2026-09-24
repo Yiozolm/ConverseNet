@@ -1,6 +1,6 @@
 #include <ATen/core/grad_mode.h>
 #include "operator.h"
-#include "training/training.h"
+#include "training/full_spectrum/full_fusion.h"
 #include "inference/inference.h"
 #include "reference/reference.h"
 #include <cmath>
@@ -37,6 +37,15 @@ Tensor converse2d_forward(Tensor x, Tensor x0, Tensor weight, Tensor bias,
     c10::cuda::OptionalCUDAGuard device_guard;
     if (x.is_cuda()) device_guard.set_index(x.get_device());
 #endif
+#ifdef CONVERSE2D_WITH_CUDA
+    // Match the validated Python FP32 full-spectrum path before changing any
+    // caller layout. Inference and non-FP32/non-v7 fallbacks remain below.
+    if (x.is_cuda() && x.scalar_type() == at::kFloat && variant == "v7" &&
+        at::GradMode::is_enabled() &&
+        (x.requires_grad() || x0.requires_grad() || weight.requires_grad() || bias.requires_grad())) {
+        return converse2d::full_training::spatial(x, x0, weight, bias, scale, eps);
+    }
+#endif
     const auto output_dtype = x.scalar_type();
     const auto compute_dtype = output_dtype == at::kDouble ? at::kDouble : at::kFloat;
     const bool same_prior = x.is_same(x0);
@@ -46,27 +55,14 @@ Tensor converse2d_forward(Tensor x, Tensor x0, Tensor weight, Tensor bias,
     weight = weight.to(compute_dtype);
     bias = bias.to(compute_dtype).contiguous();
     const bool real_fft = variant == "v7";
-    bool fused_training = false;
-#ifdef CONVERSE2D_WITH_CUDA
-    fused_training = x.is_cuda() && output_dtype == at::kFloat && real_fft &&
-        at::GradMode::is_enabled() &&
-        (x.requires_grad() || x0.requires_grad() || weight.requires_grad() || bias.requires_grad());
-#endif
     auto lambda = at::sigmoid(bias - 9.0) + eps;
-    // The fused solve forms its denominator while reading the kernel spectrum.
-    // Keep FFT/pad/roll and lambda differentiable, without building a duplicate
-    // power/alias graph or caching trainable spectra across parameter updates.
-    auto spectra = fused_training
-        ? std::make_pair(training_spectrum(source, weight, Hs, Ws), Tensor())
-        : spectrum(source, weight, Hs, Ws, scale, real_fft);
+    auto spectra = spectrum(source, weight, Hs, Ws, scale, real_fft);
     auto fb = spectra.first, invw = spectra.second;
     auto fy = real_fft ? at::fft_rfft2(x) : at::fft_fft2(x);
     auto fx0 = same_prior ? fy : (real_fft ? at::fft_rfft2(x0) : at::fft_fft2(x0));
     Tensor fx;
 #ifdef CONVERSE2D_WITH_CUDA
-    if (fused_training) {
-        fx = converse2d::training::spectral(fy, fx0, fb, lambda, H, W, scale);
-    } else if (x.is_cuda() && !at::GradMode::is_enabled() && variant != "v2") {
+    if (x.is_cuda() && !at::GradMode::is_enabled() && variant != "v2") {
         fx = converse_spectral_cuda(fy, fx0, fb, invw, lambda, H, W, scale, real_fft);
     } else
 #endif

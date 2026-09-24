@@ -26,6 +26,14 @@ class AblationSourceIdentity(unittest.TestCase):
 
     def invoke(self, baseline=None, production_after=None):
         production_after = self.production if production_after is None else production_after
+        dispatch_calls = 0
+        def verified_half_then_stop(*args, **kwargs):
+            nonlocal dispatch_calls
+            self.assertEqual(kwargs.get("expected"), "half")
+            dispatch_calls += 1
+            if dispatch_calls == 1:
+                return {str(scale): ["SpectralSolve"] for scale in (1, 2, 3)}
+            raise ReachedDispatch
         with (patch.object(sys, "argv", ["training_s1_ablation.py", "--quick"]),
               patch.dict(os.environ, {"CONVERSE2D_CPU_ONLY": "0", "CONVERSE2D_BACKEND": "cuda"}),
               patch.object(ablation.torch.cuda, "is_available", return_value=True),
@@ -35,8 +43,20 @@ class AblationSourceIdentity(unittest.TestCase):
               patch.object(ablation, "production_source_hashes",
                            side_effect=[self.production, production_after]),
               patch.object(ablation.common, "verify_fused_dispatch",
-                           side_effect=ReachedDispatch)):
+                           side_effect=verified_half_then_stop)):
             ablation.main()
+
+    def test_full_default_is_rejected_before_building_half_ablation(self):
+        with (patch.object(sys, "argv", ["training_s1_ablation.py", "--quick"]),
+              patch.dict(os.environ, {"CONVERSE2D_CPU_ONLY": "0", "CONVERSE2D_BACKEND": "cuda"}),
+              patch.object(ablation.torch.cuda, "is_available", return_value=True),
+              patch.object(ablation, "load_extension"),
+              patch.object(ablation, "load_scale1_disabled") as isolated_build,
+              patch.object(ablation.common, "verify_fused_dispatch",
+                           side_effect=RuntimeError("expected half spectrum fused training, observed FullSolve"))):
+            with self.assertRaisesRegex(RuntimeError, "expected half"):
+                ablation.main()
+            isolated_build.assert_not_called()
 
     def test_cli_accepts_unchanged_exports_that_differ_from_facades(self):
         # This is the actual refactored layout: a facade hash must NOT be used

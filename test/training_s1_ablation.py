@@ -112,6 +112,9 @@ def main():
         if skipped is not None:
             os.environ["CONVERSE2D_SKIP_BUILD"] = skipped
     current = torch.ops.converse2d
+    # This selector belongs to the old half-spectrum solver. Refuse a full-
+    # spectrum default before building an ablation that cannot affect its path.
+    current_dispatch = common.verify_fused_dispatch(current, expected="half")
     disabled, baseline = load_scale1_disabled(args.verbose_build)
     if (source_hashes != amalgamation_hashes()
             or source_hashes != baseline["source_sha256"]
@@ -119,7 +122,8 @@ def main():
             or production_hashes != baseline["production_source_sha256"]):
         raise RuntimeError("Source changed during ablation setup; restart in a fresh process")
     variants = dict(dev=disabled, current=current)
-    dispatch = {name: common.verify_fused_dispatch(ops) for name, ops in variants.items()}
+    dispatch = dict(dev=common.verify_fused_dispatch(disabled, expected="half"),
+                    current=current_dispatch)
     common.release_cuda()
     sys.path.insert(0, str(ROOT))
     from models import util_converse, converse_usrnet

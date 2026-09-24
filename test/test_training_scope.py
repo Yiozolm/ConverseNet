@@ -1,4 +1,9 @@
-"""Differentiable kernel-spectrum reuse is confined to one forward scope."""
+"""Full-spectrum training keeps scope APIs compatible without reusing spectra.
+
+Each call retains its own FP32 kernel FFT graph so the gradients follow the
+Python reference's accumulation order. Scope nesting/cleanup remains supported;
+the default full-spectrum path records zero hits and zero misses.
+"""
 import copy
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -39,7 +44,16 @@ class TrainingScope(unittest.TestCase):
     def forward(args, scale=2, variant='v7'):
         return torch.ops.converse2d.forward(*args, scale, 1e-3, variant)
 
-    def test_shared_spectrum_accumulates_gradients_and_higher_derivatives(self):
+    def assert_bytes_equal(self, actual, expected, label):
+        self.assertEqual(actual.dtype, expected.dtype, label)
+        self.assertEqual(actual.shape, expected.shape, label)
+        self.assertTrue(torch.isfinite(actual).all().item(), label + ': nonfinite actual')
+        self.assertTrue(torch.isfinite(expected).all().item(), label + ': nonfinite expected')
+        a = actual.detach().resolve_conj().resolve_neg().contiguous().view(torch.uint8)
+        e = expected.detach().resolve_conj().resolve_neg().contiguous().view(torch.uint8)
+        self.assertTrue(torch.equal(a, e), label + ': scope changed tensor bytes')
+
+    def test_scope_preserves_independent_fft_gradients_and_higher_derivatives(self):
         for higher in (False, True):
             with self.subTest(higher=higher):
                 x, prior, weight, bias = self.data(5, 7, 2)
@@ -55,12 +69,15 @@ class TrainingScope(unittest.TestCase):
                         outputs = (op(values[0], values[1], values[4], values[5], 2, 1e-3),
                                    op(values[2], values[3], values[4], values[5], 2, 1e-3))
                     if name == 'scoped':
-                        self.assertEqual(counts, [1, 1])
-                    # Ending a scope releases cache ownership without detaching
-                    # either output from the one shared preparation graph.
+                        self.assertEqual(counts, [0, 0])
+                    # Scope cleanup must leave both independent preparation
+                    # graphs connected to the shared spatial kernel.
                     grads = torch.autograd.grad(outputs, values,
                         tuple(u.to(outputs[0].dtype) for u in upstream), create_graph=higher)
                     results.append((outputs, grads, values))
+                for group in (0, 1):
+                    for index, (actual, expected) in enumerate(zip(results[0][group], results[1][group])):
+                        self.assert_bytes_equal(actual, expected, f'scoped/unscoped/group{group}/{index}')
                 for group, tolerance in ((0, 3e-5), (1, 5e-5)):
                     for name, candidate in zip(('scoped', 'unscoped'), results[:2]):
                         for index, (actual, expected) in enumerate(zip(candidate[group], results[2][group])):
@@ -72,6 +89,8 @@ class TrainingScope(unittest.TestCase):
                     for _, grads, values in results:
                         direction = sum((g*v.to(g.dtype)).sum() for g, v in zip(grads, vectors))
                         seconds.append(torch.autograd.grad(direction, values))
+                    for index, (actual, expected) in enumerate(zip(seconds[0], seconds[1])):
+                        self.assert_bytes_equal(actual, expected, f'scoped/unscoped second derivative/{index}')
                     for actual, expected in zip(seconds[0], seconds[2]):
                         self.assert_numerical_close(actual, expected, atol=2e-3, rtol=2e-4,
                                                     label='scoped second derivative')
@@ -86,14 +105,14 @@ class TrainingScope(unittest.TestCase):
                 with counted_scope() as counts:
                     first = self.forward(args)
                     second = self.forward((args[0]*.9, args[1]+.01, *args[2:]))
-                self.assertEqual(counts, [1, 1])
+                self.assertEqual(counts, [0, 0])
                 (first.square().mean()+second.square().mean()).backward()
                 self.assertTrue(torch.isfinite(args[2].grad).all().item())
                 optimizer.step()
                 self.assertFalse(torch.equal(args[2], before))
                 self.compare(args, 2)
 
-    def test_source_version_identity_storage_and_requires_grad_keys(self):
+    def test_source_mutations_and_gradient_flags_do_not_create_entries(self):
         for change in ('version', 'identity', 'storage', 'enable_gradient', 'disable_gradient'):
             with self.subTest(change=change):
                 args = list(self.data(5, 7, 2))
@@ -115,15 +134,15 @@ class TrainingScope(unittest.TestCase):
                         else:
                             args[2].requires_grad_(False)
                     self.compare(tuple(args), 2)
-                self.assertEqual(counts, [0, 2])
+                self.assertEqual(counts, [0, 0])
 
-    def test_spatial_shape_is_part_of_key(self):
+    def test_different_spatial_shapes_do_not_create_entries(self):
         args = self.data(5, 7, 2)
         other = self.data(7, 5, 2)
         with counted_scope() as counts:
             self.forward(args)
             self.compare((*other[:2], *args[2:]), 2)
-        self.assertEqual(counts, [0, 2])
+        self.assertEqual(counts, [0, 0])
 
     def test_detached_nonleaf_does_not_reuse_the_old_producer_graph(self):
         x, prior, base, bias = self.data(5, 7, 2)
@@ -134,7 +153,7 @@ class TrainingScope(unittest.TestCase):
             kernel.detach_().requires_grad_(True)
             self.assertEqual((kernel._version, kernel.data_ptr()), (version, pointer))
             output = self.forward((x, prior, kernel, bias))
-        self.assertEqual(counts, [0, 2])
+        self.assertEqual(counts, [0, 0])
         producer_grad, kernel_grad = torch.autograd.grad(output.square().mean(),
                                                         (base, kernel), allow_unused=True)
         self.assertIsNone(producer_grad)
@@ -149,13 +168,13 @@ class TrainingScope(unittest.TestCase):
                 self.forward(args)
                 self.forward(args)
             self.forward(args)
-        self.assertEqual(inner, [1, 1])
-        self.assertEqual(outer, [1, 1])
+        self.assertEqual(inner, [0, 0])
+        self.assertEqual(outer, [0, 0])
         with counted_scope() as fresh:
             self.forward(args)
-        self.assertEqual(fresh, [0, 1])
+        self.assertEqual(fresh, [0, 0])
 
-    def test_explicit_weights_do_not_retain_dynamic_kernel_spectra(self):
+    def test_explicit_weights_do_not_enable_unverified_full_spectrum_reuse(self):
         args = self.data(5, 7, 2)
         other = self.data(5, 7, 2)
         torch.ops.converse2d._begin_training_cache_for([args[2]])
@@ -166,9 +185,9 @@ class TrainingScope(unittest.TestCase):
             self.forward(args)
         finally:
             counts = list(torch.ops.converse2d._end_training_cache())
-        self.assertEqual(counts, [1, 1])
+        self.assertEqual(counts, [0, 0])
 
-    def test_scope_is_thread_local(self):
+    def test_compatibility_scopes_are_thread_local(self):
         args = self.data(5, 7, 2)
         device = args[0].device
         def other_thread():
@@ -179,9 +198,9 @@ class TrainingScope(unittest.TestCase):
         with counted_scope() as main:
             self.forward(args)
             with ThreadPoolExecutor(max_workers=1) as executor:
-                self.assertEqual(executor.submit(other_thread).result(), [1, 1])
+                self.assertEqual(executor.submit(other_thread).result(), [0, 0])
             self.forward(args)
-        self.assertEqual(main, [1, 1])
+        self.assertEqual(main, [0, 0])
 
     def test_no_cache_entries_for_nontraining_paths(self):
         for mode in ('no_grad', 'frozen', 'fp64', 'full_fft'):
@@ -197,7 +216,7 @@ class TrainingScope(unittest.TestCase):
                             self.forward(args, variant='v2' if mode == 'full_fft' else 'v7')
                 self.assertEqual(counts, [0, 0])
 
-    def test_nondefault_stream_never_reuses_another_stream_entry(self):
+    def test_nondefault_stream_does_not_create_entries(self):
         args = self.data(5, 7, 2)
         stream = torch.cuda.Stream()
         stream.wait_stream(torch.cuda.current_stream())
@@ -207,7 +226,7 @@ class TrainingScope(unittest.TestCase):
                 self.forward(args)
                 self.forward(args)
             torch.cuda.current_stream().wait_stream(stream)
-        self.assertEqual(counts, [1, 2])
+        self.assertEqual(counts, [0, 0])
 
     def test_python_context_cleans_up_an_exception(self):
         from models.util_converse import _training_kernel_scope
@@ -226,7 +245,11 @@ class TrainingScope(unittest.TestCase):
             with _training_kernel_scope(args[0], 'cuda'):
                 self.forward(args)
                 self.forward(args)
-        self.assertEqual(ended, [[0, 1], [1, 1]])
+        self.assertEqual(ended, [[0, 0], [0, 0]])
+
+    def test_ending_an_inactive_scope_still_raises(self):
+        with self.assertRaisesRegex(RuntimeError, 'no training cache scope is active'):
+            torch.ops.converse2d._end_training_cache()
 
     def test_full_usrnet_eval_with_gradients_matches_unscoped(self):
         from models.converse_usrnet import ConverseUSRNet
@@ -256,16 +279,14 @@ class TrainingScope(unittest.TestCase):
                 expected = expected_model._forward_impl(rx, rk, 2)
             self.assertTrue(actual.requires_grad)
             self.assertEqual(len(ended), 1)
-            self.assertGreater(ended[0][0], 0)
-            self.assertGreater(ended[0][1], 0)
-            self.assert_numerical_close(actual, expected, atol=3e-5, rtol=3e-4, label='full USRNet output')
+            self.assertEqual(ended[0], [0, 0])
+            self.assert_bytes_equal(actual, expected, 'full USRNet output')
             upstream = torch.randn_like(actual)/actual.numel()**.5
             actual_grads = torch.autograd.grad(actual, (x, kernel, *actual_model.parameters()), upstream)
             expected_grads = torch.autograd.grad(expected, (rx, rk, *expected_model.parameters()), upstream)
             gradient_names = ['input', 'input_kernel'] + [name for name, _ in actual_model.named_parameters()]
             for name, a, e in zip(gradient_names, actual_grads, expected_grads):
-                self.assert_numerical_close(a, e, atol=3e-5, rtol=3e-4,
-                                            label=f'full USRNet gradient/{name}')
+                self.assert_bytes_equal(a, e, f'full USRNet gradient/{name}')
             self.assertGreater(torch.count_nonzero(actual_grads[1]).item(), 0)
 
 

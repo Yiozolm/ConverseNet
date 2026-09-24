@@ -46,8 +46,17 @@ def release_cuda():
     torch.cuda.empty_cache()
 
 
-def verify_fused_dispatch(ops):
-    """Fail before benchmarking if production did not select the fused solver."""
+def verify_fused_dispatch(ops, expected="any"):
+    """Verify the requested spectral route and return its actual autograd names.
+
+    General training comparisons accept either fused solve. Historical ablation
+    callers must request their specific route so a default change cannot turn
+    an irrelevant selector change into an apparent optimization experiment.
+    """
+    accepted = {"any": ("SpectralSolve", "FullSolve"),
+                "half": ("SpectralSolve",), "full": ("FullSolve",)}
+    if expected not in accepted:
+        raise ValueError(f"expected must be one of {tuple(accepted)}, got {expected!r}")
     checks = {}
     for scale in (1, 2, 3):
         x = torch.ones(1, 2, 3, 4, device="cuda", requires_grad=True)
@@ -63,9 +72,13 @@ def verify_fused_dispatch(ops):
             visited.add(node)
             names.add(node.name())
             pending.extend(child for child, _ in node.next_functions)
-        matches = sorted(name for name in names if "SpectralSolve" in name)
-        if not matches:
-            raise RuntimeError(f"Current production scale={scale} did not use SpectralSolve: {sorted(names)}")
+        matches = sorted(name for name in names
+                         if "SpectralSolve" in name or "FullSolve" in name)
+        if not matches or any(not any(kind in name for kind in accepted[expected])
+                              for name in matches):
+            raise RuntimeError(
+                f"Current production scale={scale} expected {expected} spectrum fused training, "
+                f"observed {matches or sorted(names)}")
         checks[str(scale)] = matches
     return checks
 

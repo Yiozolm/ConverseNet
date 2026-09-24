@@ -39,7 +39,7 @@ def graph_has_spectral(output):
         if node is None or node in seen:
             continue
         seen.add(node)
-        if "SpectralSolve" in node.name():
+        if any(kind in node.name() for kind in ("SpectralSolve", "FullSolve")):
             return True
         pending.extend(child for child, _ in node.next_functions)
     return False

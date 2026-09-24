@@ -45,7 +45,7 @@ def contains_spectral_solve(output):
             continue
         seen.add(node)
         name = node.name() if callable(getattr(node, 'name', None)) else type(node).__name__
-        if 'SpectralSolve' in str(name):
+        if any(kind in str(name) for kind in ('SpectralSolve', 'FullSolve')):
             return True
         pending.extend(edge for edge, _ in node.next_functions)
     return False
