@@ -1,0 +1,22 @@
+{
+  "usrnet_training_data.py": {
+    "source": "1b579ea:test/usrnet_training_data.py",
+    "original_sha256": "4083e32df9e0ee7ebe9d7c48e1da14aa29c20628d8a5d6f853d2f1cedad26024"
+  },
+  "evaluate_usrnet_quality.py": {
+    "source": "1b579ea:test/evaluate_usrnet_quality.py",
+    "original_sha256": "26f205462706bc19f40da98d77d6d13019dd5743b851e72127945e12188bb334"
+  },
+  "train_usrnet_dataset.py": {
+    "source": "1b579ea:test/train_usrnet_dataset.py",
+    "original_sha256": "364d014dc0ff978a5ae500135de9b41cc979df3633ac671688211b02116932a9"
+  },
+  "summarize_usrnet_training.py": {
+    "source": "1b579ea:test/summarize_usrnet_training.py",
+    "original_sha256": "c5ce20417269a8489407f967d183d0a70cea7acae3c9b74fa7cf07e298eeae8f"
+  },
+  "test_usrnet_training_data.py": {
+    "source": "1b579ea:test/test_usrnet_training_data.py",
+    "original_sha256": "28c1fc276510b41b705a3f508b27f6d32742ace7d9647a5d75582754f4cb5b17"
+  }
+}
