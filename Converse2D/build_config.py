@@ -15,6 +15,7 @@ HOST_SOURCES = (
     'inference/cache.cpp', 'inference/inference_preparation.cpp',
     'training/full_spectrum/production.cpp',
     'peripheral/alpha_residual.cpp',
+    'peripheral/layernorm.cpp',
 )
 CUDA_SOURCES = (
     'inference/inference_prepare.cu', 'inference/inference_dispatch.cu',
@@ -22,6 +23,7 @@ CUDA_SOURCES = (
     'inference/inference_scale3.cu', 'inference/inference_generic.cu',
     'training/full_spectrum/full_fusion.cu',
     'peripheral/alpha_residual.cu',
+    'peripheral/layernorm.cu',
 )
 _INCLUDE = re.compile(r'^\s*#include\s+"([^"]+)"\s*$', re.M)
 

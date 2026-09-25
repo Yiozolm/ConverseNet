@@ -72,24 +72,27 @@ class LayerNormAffineCUDA(CUDATestCase):
         gradient = torch.autograd.grad(output.sum(), bias)[0]
         self.assert_bytes_equal(gradient, torch.full_like(bias, 70), 'bias-only VJP')
 
-    def test_statistics_remain_aten_and_affine_is_dispatched(self):
+    def test_training_statistics_remain_aten_and_full_inference_precedes_affine(self):
         from models.util_converse import LayerNorm
         layer = LayerNorm(64, data_format='channels_first').cuda()
         x = torch.randn(2, 64, 128, 128, device='cuda', requires_grad=True)
         with torch.no_grad(), torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as trace:
             layer(x)
         counts = {event.key:event.count for event in trace.key_averages()}
-        self.assertEqual(counts.get('aten::mean'), 2)
-        self.assertEqual(counts.get('converse2d::_channel_affine'), 1)
+        self.assertNotIn('aten::mean', counts)
+        self.assertEqual(counts.get('converse2d::_channel_layernorm'), 1)
+        self.assertNotIn('converse2d::_channel_affine', counts)
         with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as trace:
             layer(x)
         training = {event.key:event.count for event in trace.key_averages()}
         self.assertEqual(training.get('aten::mean'), 2)
         self.assertNotIn('converse2d::_channel_affine', training)
+        self.assertNotIn('converse2d::_channel_layernorm', training)
         with torch.no_grad(), torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as trace:
             layer(x[:, :, :5, :7].contiguous())
         small = {event.key:event.count for event in trace.key_averages()}
-        self.assertEqual(small.get('aten::mean'), 2)
+        self.assertNotIn('aten::mean', small)
+        self.assertEqual(small.get('converse2d::_channel_layernorm'), 1)
         self.assertNotIn('converse2d::_channel_affine', small)
 
 

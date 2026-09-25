@@ -1,4 +1,5 @@
 import os
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -58,6 +59,33 @@ def _channel_affine(scale, value, bias, backend="auto"):
     return scale * value + bias
 
 
+def _channel_layernorm(value, weight, bias, eps, backend="auto"):
+    """Return a fused inference result only inside the verified CUDA domain."""
+    if torch.is_grad_enabled() or not value.is_cuda or torch.is_autocast_enabled("cuda"):
+        return None
+    backend = os.environ.get("CONVERSE2D_BACKEND", "") or backend
+    if not isinstance(backend, str) or backend.lower() == "pytorch":
+        return None
+    tensors = (value, weight, bias)
+    if (any(t.dtype != torch.float32 or t.layout != torch.strided for t in tensors)
+            or value.ndim != 4 or value.shape[1] not in (64, 128)
+            or weight.shape != (value.shape[1],) or bias.shape != weight.shape
+            or weight.device != value.device or bias.device != value.device
+            or value.shape[2] * value.shape[3] <= 1
+            or not 0 < value.numel() * 4 <= 2**31 - 1
+            or not all(t.is_contiguous() for t in tensors)
+            or not isinstance(eps, (int, float)) or not math.isfinite(eps) or eps <= 0):
+        return None
+    # Check lazy flags before the custom-op dispatcher: InferenceMode can
+    # materialize negative arguments and hide their original flags from C++.
+    if any(t.is_neg() or t.is_conj() for t in tensors):
+        return None
+    _try_import_converse2d_ext()
+    if hasattr(torch.ops.converse2d, "_channel_layernorm"):
+        return torch.ops.converse2d._channel_layernorm(value, weight, bias, eps)
+    return None
+
+
 """
 # --------------------------------------------
 # LayerNorm for Vision Normalization
@@ -86,6 +114,9 @@ class LayerNorm(nn.Module):
         if self.data_format == "channels_last":
             return F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
         elif self.data_format == "channels_first":
+            fused = _channel_layernorm(x, self.weight, self.bias, self.eps, self.backend)
+            if fused is not None:
+                return fused
             u = x.mean(1, keepdim=True)
             s = (x - u).pow(2).mean(1, keepdim=True)
             x = (x - u) / torch.sqrt(s + self.eps)

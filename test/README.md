@@ -23,7 +23,8 @@ while build checks, the CPU extension and the portable Python fallback still run
 | `test_scale3_fusion.py` | Exact nine-alias reduction order, separate mean factors, broadcast VJPs, strided/weak-regularization cases and guarded fallback |
 | `test_batch_reduce.py` | B2/B4 shared-kernel batch reductions, original accumulation order, gradient masks, fallback geometry, higher derivatives and Graph replay |
 | `test_peripheral_fusion.py` | Alpha residual FP32 multiply/add boundaries, gradient subsets, aliases, higher derivatives, layouts and streams |
-| `test_layernorm_affine.py` | Unchanged LayerNorm statistics, inference affine dispatch, training policy and private-helper higher derivatives |
+| `test_layernorm_affine.py` | Private affine values/gradients, full-inference dispatch precedence and unchanged training statistics |
+| `test_layernorm_full.py` | Six ATen reduction geometries, alignment/tails, byte and FP64 gates, unsupported-input fallbacks, higher derivatives, streams and Graph replay |
 | `test_peripheral_policy.py` | CPU-only automatic dispatch boundaries for large inference tensors, frozen/differentiable inputs and all three GradMode contexts |
 | `test_cuda_graph.py` | Graph ownership, replay, invalidation and training transitions |
 | `test_pretrained_fp32.py` | DnCNN/SRResNet checkpoint and inference compatibility |
