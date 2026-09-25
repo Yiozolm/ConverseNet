@@ -1,0 +1,18 @@
+{
+  "validation.png": {
+    "source": "artifacts\\fp32_roadmap\\plots\\final_v2_validation.png",
+    "sha256": "43922b558e3c82f10e17b96229d8363c930a7180853501eb5c846c3148d618ea"
+  },
+  "validation.svg": {
+    "source": "artifacts\\fp32_roadmap\\plots\\final_v2_validation.svg",
+    "sha256": "91ef03141498864fe5db7bfb68c5f8186f35d06eef5ec0cc4e4ff4ee64d20586"
+  },
+  "terminal.png": {
+    "source": "artifacts\\fp32_roadmap\\plots\\final_v2_terminal.png",
+    "sha256": "ab6b828f4205bdca2e286d74800da9ec181bc364d1c2821cf8fa4665df0f745e"
+  },
+  "terminal.svg": {
+    "source": "artifacts\\fp32_roadmap\\plots\\final_v2_terminal.svg",
+    "sha256": "d20d604884dbbbd5d074c7718107f03c41b73fe59e4535efb90adf646b3deaf2"
+  }
+}

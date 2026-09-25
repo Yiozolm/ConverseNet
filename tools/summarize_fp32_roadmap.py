@@ -116,14 +116,18 @@ def main():
             'source_sha256': value.get('source_sha256', value.get('candidate_source_sha256',
                 value.get('source_and_checkpoint_sha256', provenance.get('source_sha256'))))}
     layernorm_models = {}
-    for path in sorted(args.artifacts.glob('full_ln*_model_*.json')):
+    model_reports = [*args.artifacts.glob('full_ln*_model_*.json'),
+                     *args.artifacts.glob('production_ln_ablation_*.json')]
+    for path in sorted(model_reports):
         value = read(path)
         if 'cases' not in value:
             continue
         layernorm_models[path.stem] = {
             key: value[key] for key in ('status', 'settings', 'environment', 'scope', 'cold_definition',
                 'timing_inclusions', 'source_model_object_shared', 'all_eager_outputs_byte_equal',
-                'model_state_unchanged', 'all_instance_bindings_restored', 'gate_sha256') if key in value}
+                'model_state_unchanged', 'all_instance_bindings_restored', 'gate_sha256',
+                'tensor_versions_unchanged', 'public_marker_restored',
+                'all_capture_context_eager_routes_byte_equal') if key in value}
         layernorm_models[path.stem]['cases'] = value['cases']
     fft = {}
     for name in ('lto_gpu_01', 'dx64_gpu_02', 'dx36_gpu_02', 'dx44_gpu_02', 'dx100_gpu_02'):

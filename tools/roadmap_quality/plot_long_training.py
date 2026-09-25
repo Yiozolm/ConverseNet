@@ -160,6 +160,8 @@ def validation_figure(report, traces, plt, Line2D):
 
 def terminal_figure(report, rows, ambiguous, differences, plt, Patch):
     has_memory = any(row["peak_allocated_bytes"] is not None for row in rows)
+    endpoints = {(row["updates"], row["status"]) for row in rows}
+    common_endpoint = next(iter(endpoints)) if len(endpoints) == 1 else None
     figure, axes = plt.subplots(1, 2 if has_memory else 1, figsize=(12 if has_memory else 9, 5.8), squeeze=False)
     flat = axes.flatten()
     style_axes(flat)
@@ -185,7 +187,8 @@ def terminal_figure(report, rows, ambiguous, differences, plt, Patch):
                         continue
                     axis.bar(index + offset, value, width=.35, color=COLORS[seed] if variant == "before" else "white",
                              edgecolor=COLORS[seed], linewidth=1.4, hatch="///" if variant == "current" else None, zorder=3)
-                    axis.annotate(f"{row['updates']} updates\n{row['status']}", (index + offset, value),
+                    label = f"{value:.2f}" if common_endpoint else f"{row['updates']} updates\n{row['status']}"
+                    axis.annotate(label, (index + offset, value),
                                   xytext=(0, 5), textcoords="offset points", ha="center", va="bottom", fontsize=7.5)
     flat[0].set_title("Sum of terminal trajectory process times", loc="left", fontsize=11)
     flat[0].set_ylabel("Minutes")
@@ -200,16 +203,24 @@ def terminal_figure(report, rows, ambiguous, differences, plt, Patch):
         axis.set_ylim(0, upper * 1.35 if upper > 0 else 1)
     figure.suptitle("USRNet recorded terminal resources", fontsize=15, fontweight="bold", y=.98)
     figure.text(.5, .92, STATUS_LABELS.get(report.get("status"), "UNVERIFIED"), ha="center", fontsize=10)
+    if common_endpoint:
+        figure.text(.5, .87, f"All selected trajectories: {common_endpoint[0]} updates / {common_endpoint[1]}",
+                    ha="center", fontsize=9, color="#4b5563")
     handles = [Patch(facecolor="#64748b", edgecolor="#64748b", label="before"),
                Patch(facecolor="white", edgecolor="#64748b", hatch="///", label="current")]
-    figure.legend(handles=handles, loc="lower center", bbox_to_anchor=(.5, .095), ncol=2, frameon=False)
+    figure.legend(handles=handles, loc="lower center", bbox_to_anchor=(.5, .13), ncol=2, frameon=False)
     if differences:
         note = "Endpoint updates differ: these elapsed bars are NOT equal-work speedups."
     else:
         note = "No speedup ratio is inferred from these terminal totals."
-    figure.text(.5, .045, note + "\nProcess sums include repeated setup and exclude waits between sessions. Overlapping scopes are not added.",
+    recovery_parents = {row["parent_run_dir"] for row in report.get("failure_recoveries", [])
+                        if row.get("status") == "verified_checkpoint_prefix"}
+    recovered = [f"seed {row['seed']} {row['variant']}" for row in report.get("trajectories", [])
+                 if recovery_parents.intersection(row.get("sessions", []))]
+    recovery_note = ("\nRecovered failed prefix: " + ", ".join(recovered) + ". Its process cost is included; restart waits are excluded.") if recovered else ""
+    figure.text(.5, .025, note + "\nProcess sums include repeated setup and exclude waits between sessions. Overlapping scopes are not added." + recovery_note,
                 ha="center", fontsize=8.5, color="#4b5563")
-    figure.subplots_adjust(left=.09, right=.97, bottom=.23, top=.84, wspace=.25)
+    figure.subplots_adjust(left=.09, right=.97, bottom=.28, top=.80 if common_endpoint else .84, wspace=.25)
     return figure, has_memory
 
 

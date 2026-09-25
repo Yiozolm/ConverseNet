@@ -1,5 +1,7 @@
 # 研究数值门槛的独立只读审计
 
+> 中途快照：2026-09-25 06:26:55 UTC。下文保留当时的报告、未完成项及覆盖缺口，不回写为后来结果。最终候选状态、后续 GPU 验证及生产准入见 [全清单最终报告](fp32_roadmap.md)；研究分支的 `research/RESULTS.md` 和 `research/evidence/index.json` 保存完整归档。
+
 审计对象为本次八小时活动已完成的研究报告和 `tools/summarize_fp32_roadmap.py`。没有运行 GPU、重编译或修改任何已测 candidate/harness。CPU 校验器 [audit_research_reports.py](../artifacts/fp32_roadmap/audit_research_reports.py) 重新计算 **18 组报告**的逐指标门槛、case/张量计数和顶层状态，结果为 **0 处不一致**；[research_validation_audit.json](../artifacts/fp32_roadmap/research_validation_audit.json) 保存原始报告 SHA、重算结果及源码对应关系。这是重算报告中的误差数值，不是重新执行张量计算。
 
 ## FP64 输入与门槛
