@@ -337,6 +337,215 @@ def load_sessions(directories):
     return sessions
 
 
+def tree_hash(value):
+    """Canonical CPU tensor/metadata identity, including RNG tuple/list types."""
+    import torch
+    def encode(item):
+        if torch.is_tensor(item):
+            if item.device.type != "cpu":
+                raise ValueError("Recovery identities must be inspected on CPU")
+            raw = item.detach().contiguous().reshape(-1).view(torch.uint8).numpy().tobytes()
+            return ["tensor", str(item.dtype), list(item.shape), hashlib.sha256(raw).hexdigest()]
+        if isinstance(item, dict):
+            return ["dict", [[encode(key), encode(val)] for key, val in
+                             sorted(item.items(), key=lambda pair: (str(type(pair[0])), repr(pair[0])))]]
+        if isinstance(item, (tuple, list)):
+            return [type(item).__name__, [encode(part) for part in item]]
+        if item is None or isinstance(item, (str, bool, int, float)):
+            return [type(item).__name__, item]
+        raise ValueError("Unsupported recovery identity type: " + str(type(item)))
+    return hash_json(encode(value))
+
+
+def apply_failure_recoveries(sessions, manifest_paths):
+    """Admit explicitly authorized, checkpoint-closed *prefixes*, never failures.
+
+    The original session status/error and every input file remain unchanged.
+    Only the two expected closure findings can be waived after independent CPU
+    verification of the exact parent checkpoint and the child's initial state.
+    This validation is mandatory even with --skip-checkpoint-comparison.
+    """
+    results, errors, authorized = [], [], set()
+    for manifest_path in manifest_paths:
+        path = Path(manifest_path).resolve()
+        try:
+            manifest = read_json(path)
+            if manifest.get("kind") != "explicit_failed_checkpoint_recovery" or manifest.get("version") != 1:
+                raise ValueError("Unknown explicit failure recovery manifest schema")
+            entries = manifest["authorizations"]
+            if not isinstance(entries, list) or not entries:
+                raise ValueError("Recovery manifest needs explicit authorizations")
+            manifest_digest = file_hash(path)
+        except Exception as error:
+            errors.append(f"Recovery manifest {path}: {error}")
+            continue
+        for entry in entries:
+            result = dict(manifest=str(path), manifest_sha256=manifest_digest, status="rejected", errors=[])
+            results.append(result)
+            try:
+                def require(condition, message):
+                    if not condition:
+                        raise ValueError(message)
+                require(Path(entry["parent_run_dir"]).is_absolute() and Path(entry["child_run_dir"]).is_absolute(),
+                        "Recovery authorization requires absolute parent/child paths")
+                parent_path = Path(entry["parent_run_dir"]).resolve()
+                child_path = Path(entry["child_run_dir"]).resolve()
+                parent_key, child_key = str(parent_path), str(child_path)
+                result.update(parent_run_dir=parent_key, child_run_dir=child_key,
+                              optimizer_steps=entry["optimizer_steps"])
+                require(parent_key not in authorized, "Duplicate recovery authorization for parent")
+                authorized.add(parent_key)
+                require(parent_key in sessions and child_key in sessions, "Recovery parent/child not selected or linked")
+                parent, child = sessions[parent_key], sessions[child_key]
+                run, child_run = parent["_run"], child["_run"]
+                boundary = entry["optimizer_steps"]
+                require(type(boundary) is int and boundary > 0, "Invalid authorized checkpoint boundary")
+                require(parent["status"] == "failed" and child["status"] in CLOSED,
+                        "Recovery requires a failed non-terminal parent and a closed child")
+                linked_children = [value for value in sessions.values() if value.get("parent")
+                                   and str(Path(value["parent"]["run_dir"]).resolve()) == parent_key]
+                require(len(linked_children) == 1 and linked_children[0] is child,
+                        "Recovery requires exactly the authorized child; terminal/competing failures cannot pass")
+                expected_missing = "Session is not a closed successful/budget/stability boundary: failed"
+                expected_error = "Final checkpoint boundary missing/mismatched"
+                require(parent["missing"] == [expected_missing] and parent["errors"] == [expected_error],
+                        "Failed prefix has findings beyond the two explicitly recoverable closure conditions")
+                require(not child["errors"] and not child["missing"], "Recovery child has integrity/missing findings")
+                require(parent["seed"] == child["seed"] == entry["seed"] and
+                        parent["variant"] == child["variant"] == entry["variant"], "Recovery seed/variant mismatch")
+                require(parent["identity"] == child["identity"] and
+                        hash_json(parent["identity"]) == entry["identity_sha256"], "Recovery source/build/data/recipe/environment identity mismatch")
+                require(parent["end_step"] == run["next_data_step"] == child["start_step"] == boundary,
+                        "Recovery boundary differs from parent endpoint or child start")
+                require(child["end_step"] > boundary, "Recovery child completed no additional updates")
+                require(sorted(parent["_rows"]) == list(range(parent["start_step"], boundary)),
+                        "Recovery prefix contains holes or extra updates")
+                require(parent["evaluations"] and parent["evaluations"][-1]["optimizer_steps"] == boundary and
+                        run.get("last_evaluation", {}).get("optimizer_steps") == boundary,
+                        "Recovery checkpoint is not at a completed evaluation boundary")
+                required_files = {"run.json", "training.jsonl", "evaluations.jsonl", "latest.pth", "initial.pth"}
+                require(entry["checkpoint_name"] == "latest" and set(entry["files_sha256"]) == required_files,
+                        "Recovery must bind the exact latest checkpoint and all prefix evidence files")
+                for name, expected in entry["files_sha256"].items():
+                    require(digest(expected) and file_hash(parent_path / name) == expected,
+                            "Recovery evidence file hash mismatch: " + name)
+                failure = run["error"]
+                message = failure.get("message", "").replace("\\\\", "\\")
+                trace = failure.get("traceback", "")
+                exact_replace = ": '" + str(parent_path / "run.json.tmp") + "' -> '" + str(parent_path / "run.json") + "'"
+                require(hash_json(failure) == entry["error_sha256"] and failure.get("type") == "PermissionError"
+                        and "[WinError 5]" in message and message.endswith(exact_replace)
+                        and "in write_json" in trace and "temporary.replace(path)" in trace,
+                        "Recovery does not match the explicitly authorized metadata-replace failure")
+                require(finite(entry["process_elapsed_wall_s"]) and entry["process_elapsed_wall_s"] > 0
+                        and parent["timings"]["process_elapsed_wall_s"] == entry["process_elapsed_wall_s"],
+                        "Failed-session process elapsed cost changed or is missing")
+                checkpoint_path = parent_path / "latest.pth"
+                link, record = child["parent"], parent["checkpoints"]["latest"]
+                require(Path(link["path"]).resolve() == checkpoint_path and
+                        Path(child_run["config"]["resume"]).resolve() == checkpoint_path and
+                        record["optimizer_steps"] == link["optimizer_steps"] == boundary and
+                        link["file_sha256"] == record["file_sha256"] == entry["files_sha256"]["latest.pth"],
+                        "Recovery child does not link to the exact authorized checkpoint")
+                import torch
+                payload = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+                checks = dict(config=run["config"], config_sha256=run["config_sha256"],
+                              resume_state_version=1, resume_recipe_sha256=run["resume_recipe_sha256"],
+                              optimizer_steps=boundary, next_data_step=boundary,
+                              source_sha256=run["source_sha256"], backend_manifest=run["backend"]["build_manifest"],
+                              environment=run["environment"], dataset=run["dataset"], split_sha256=run["split_sha256"],
+                              input_checkpoint_sha256=run["input_checkpoint_sha256"],
+                              origin_initial_state_tensor_sha256=run["origin_initial_state_tensor_sha256"],
+                              metric_history=run["metric_history"], session_start_step=parent["start_step"],
+                              run_status="running", stop_reason=None)
+                for key, expected in checks.items():
+                    require(payload.get(key) == expected, "Recovery checkpoint/report identity mismatch: " + key)
+                require(Path(payload["parent_run_dir"]).resolve() == parent_path and
+                        link.get("previous_status") == payload["run_status"], "Recovery checkpoint parent/status identity mismatch")
+                require(payload.get("metrics") == metrics(parent["evaluations"][-1]), "Recovery checkpoint metrics mismatch")
+                require(state_tensor_hash(payload["state_dict"]) == record["state_tensor_sha256"] == entry["model_state_sha256"],
+                        "Recovery checkpoint model identity mismatch")
+                optimizer = payload["optimizer_state_dict"]
+                groups, states = optimizer["param_groups"], optimizer["state"]
+                model_tensors = list(payload["state_dict"].values())
+                require(len(groups) == 1 and isinstance(states, dict) and
+                        len(states) == len(model_tensors) == run["parameter_tensor_count"] > 0,
+                        "Recovery Adam state does not cover every model parameter")
+                group = groups[0]
+                parameter_ids = group["params"]
+                require(len(parameter_ids) == len(set(parameter_ids)) == len(states)
+                        and set(parameter_ids) == set(states), "Recovery Adam parameter mapping is incomplete or duplicated")
+                require(group.get("lr") == run["config"]["lr"] and tuple(group.get("betas", ())) == (.9, .999)
+                        and group.get("eps") == 1e-8 and group.get("weight_decay") == 0
+                        and all(group.get(name) is False for name in ("amsgrad", "foreach", "fused", "maximize",
+                            "capturable", "differentiable", "decoupled_weight_decay")),
+                        "Recovery Adam hyperparameters differ from the frozen worker")
+                for parameter_id, model_tensor in zip(parameter_ids, model_tensors):
+                    state = states[parameter_id]
+                    require(set(state) == {"step", "exp_avg", "exp_avg_sq"}, "Recovery Adam moments are incomplete")
+                    step_tensor = state["step"]
+                    require(torch.is_tensor(step_tensor) and step_tensor.numel() == 1
+                            and bool(torch.isfinite(step_tensor).all()) and step_tensor.item() == boundary,
+                            "Recovery Adam update counter differs from the checkpoint boundary")
+                    require(torch.is_tensor(model_tensor) and model_tensor.dtype == torch.float32,
+                            "Recovery model parameter is not FP32")
+                    for name in ("exp_avg", "exp_avg_sq"):
+                        moment = state[name]
+                        require(torch.is_tensor(moment) and moment.dtype == torch.float32
+                                and moment.shape == model_tensor.shape and bool(torch.isfinite(moment).all()),
+                                "Recovery Adam moment shape/dtype/finiteness mismatch: " + name)
+                require(tree_hash(payload["optimizer_state_dict"]) == entry["optimizer_state_sha256"],
+                        "Recovery optimizer identity mismatch")
+                rng = payload["rng_state"]
+                require(set(rng) == {"torch_cpu", "torch_cuda", "python", "numpy"} and
+                        torch.is_tensor(rng["torch_cpu"]) and rng["torch_cpu"].dtype == torch.uint8
+                        and rng["torch_cpu"].numel() > 0 and isinstance(rng["torch_cuda"], list)
+                        and len(rng["torch_cuda"]) > 0 and all(torch.is_tensor(v) and v.dtype == torch.uint8
+                            and v.numel() > 0 for v in rng["torch_cuda"])
+                        and isinstance(rng["python"], tuple) and isinstance(rng["numpy"], dict)
+                        and set(rng["numpy"]) == {"name", "keys", "position", "has_gauss", "cached_gaussian"},
+                        "Recovery checkpoint lacks complete RNG state")
+                require(tree_hash(rng) == entry["rng_state_sha256"], "Recovery RNG identity mismatch")
+                initial_record = child["checkpoints"]["initial"]
+                initial_path = child_path / "initial.pth"
+                require(file_hash(initial_path) == initial_record["file_sha256"], "Recovery child initial file hash mismatch")
+                initial = torch.load(initial_path, map_location="cpu", weights_only=True)
+                require(initial.get("optimizer_steps") == initial.get("next_data_step") == boundary
+                        and initial.get("metric_history") == payload["metric_history"], "Recovery child initial boundary/history mismatch")
+                initial_checks = dict(config=child_run["config"], config_sha256=child_run["config_sha256"],
+                                      resume_state_version=1, resume_recipe_sha256=child_run["resume_recipe_sha256"],
+                                      source_sha256=child_run["source_sha256"],
+                                      backend_manifest=child_run["backend"]["build_manifest"],
+                                      environment=child_run["environment"], dataset=child_run["dataset"],
+                                      split_sha256=child_run["split_sha256"],
+                                      input_checkpoint_sha256=child_run["input_checkpoint_sha256"],
+                                      origin_initial_state_tensor_sha256=child_run["origin_initial_state_tensor_sha256"],
+                                      session_start_step=boundary, run_status="running", stop_reason=None)
+                for key, expected in initial_checks.items():
+                    require(initial.get(key) == expected, "Recovery child initial metadata mismatch: " + key)
+                require(Path(initial["parent_run_dir"]).resolve() == child_path,
+                        "Recovery child initial parent directory mismatch")
+                for key in ("state_dict", "optimizer_state_dict", "rng_state"):
+                    require(tree_hash(initial[key]) == tree_hash(payload[key]), "Recovery child initial state differs: " + key)
+                model_finite = compare_state_trees(payload["state_dict"], initial["state_dict"])
+                optimizer_finite = compare_state_trees(payload["optimizer_state_dict"], initial["optimizer_state_dict"])
+                require(all(item["finite"] for value in (model_finite, optimizer_finite) for item in value["tensors"]),
+                        "Recovery model/optimizer contains nonfinite tensors")
+                result.update(status="verified_checkpoint_prefix", historical_status="failed",
+                              original_error=failure, waived_closure_findings=[expected_missing, expected_error],
+                              process_elapsed_wall_s=parent["timings"]["process_elapsed_wall_s"],
+                              checkpoint_file_sha256=record["file_sha256"], rng_state_sha256=entry["rng_state_sha256"],
+                              interpretation="Original failure retained. Only its verified prefix continues through the exact checkpoint; no replay, status relabeling, or terminal-failure admission.")
+                parent["failure_recovery"] = result
+                parent["missing"].remove(expected_missing)
+                parent["errors"].remove(expected_error)
+                parent["warnings"].append("Historical failed session retained; explicit manifest verified its exact checkpoint prefix and full process cost")
+            except Exception as error:
+                result["errors"].append(str(error))
+                errors.append(f"Recovery {path}: {error}")
+    return results, errors
+
+
 def merge_chain(leaf, sessions):
     path, seen, current = [], set(), leaf
     errors, missing, warnings = [], [], []
@@ -601,9 +810,10 @@ def pair_chains(before, current, *, inspect_checkpoints=True):
             "convergence_claim": False}
 
 
-def audit(directories, *, inspect_checkpoints=True):
+def audit(directories, *, inspect_checkpoints=True, recovery_manifests=()):
     sessions = load_sessions(directories)
-    errors, missing, warnings = [], [], []
+    recoveries, errors = apply_failure_recoveries(sessions, recovery_manifests)
+    missing, warnings = [], []
     # Root discovery may encounter unrelated capacity/resume pilots. Keep them
     # visible, but only formal endpoints (and every linked ancestor) contribute
     # to the six-trajectory quality audit. A pilot ancestor is not discarded.
@@ -677,6 +887,7 @@ def audit(directories, *, inspect_checkpoints=True):
         "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(), "auditor_sha256": file_hash(__file__),
         "expected_seeds": SEEDS, "expected_variants": VARIANTS,
         "errors": errors, "missing": missing, "warnings": sorted(set(warnings)),
+        "failure_recoveries": recoveries,
         "sessions": list(sessions.values()), "trajectories": chains, "pairs": pairs,
         "excluded_sessions": [{"directory": key, "reason": "Unlinked pilot; not a formal endpoint or an ancestor of one"}
                               for key in sorted(set(sessions) - relevant)],
@@ -685,6 +896,7 @@ def audit(directories, *, inspect_checkpoints=True):
             "Source/build/data/recipe/environment identity must remain fixed within each variant's resumed chain; different production sources are allowed between before/current.",
             "State and optimizer equality are independent diagnostics. Permitted rounding differences never establish or override quality admission.",
             "All shared data-step hashes are shown. Holes, rewinds, overlaps, missing parent sessions and competing branches are not silently repaired.",
+            "An explicit failure-recovery manifest can admit only a verified checkpoint-closed non-terminal prefix; the original failed status/error and its entire process cost remain visible.",
             "Endpoint update counts can differ. Their extra steps and the common exact-data prefix are reported separately; full elapsed ratios would not be equal-work speedups.",
             "Session process elapsed times are summed honestly, including repeated setup. Training-step and data preparation are separate; evaluation/checkpoint/setup/loop are overlapping scopes and must not be added to process totals.",
             "stable is only the declared five-evaluation four-metric window; max_steps_reached, budget_stopped and unstable trajectories are not convergence evidence."]})
@@ -697,6 +909,13 @@ def markdown(report):
     for title, key in (("Integrity/comparability errors", "errors"), ("Missing evidence", "missing"), ("Evidence limitations", "warnings")):
         if report[key]:
             lines += ["## " + title, "", *("- " + value for value in report[key]), ""]
+    if report.get("failure_recoveries"):
+        lines += ["## Explicit failure recovery", ""]
+        for recovery in report["failure_recoveries"]:
+            lines.append(f"- {recovery['status']}: {recovery.get('parent_run_dir')} -> {recovery.get('child_run_dir')}; "
+                         f"checkpoint update {recovery.get('optimizer_steps')}. Original status remains failed; "
+                         f"recorded failed-session process cost {fmt(recovery.get('process_elapsed_wall_s'))} s is retained.")
+        lines += [""]
     lines += ["## Trajectories", "", "| Seed | Variant | Sessions | Updates | Last evaluated | Status | Window satisfied | Process seconds |",
               "|---:|---|---:|---:|---:|---|---|---:|"]
     for chain in report["trajectories"]:
@@ -743,13 +962,16 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--markdown", type=Path, help="Defaults to --output with .md suffix")
     parser.add_argument("--skip-checkpoint-comparison", action="store_true", help="Keep checkpoint comparison explicitly unavailable")
+    parser.add_argument("--recovery-manifest", type=Path, action="append", default=[],
+                        help="Explicit immutable failed-prefix recovery authorization; validation always loads checkpoints on CPU")
     args = parser.parse_args()
     if not args.runs and args.root is None:
         parser.error("provide run paths and/or --root")
     md = args.markdown or args.output.with_suffix(".md")
     if args.output.resolve() == md.resolve() or args.output.exists() or md.exists():
         parser.error("choose distinct fresh JSON/Markdown outputs; previous reports are preserved")
-    report = audit(discover(args.runs, args.root), inspect_checkpoints=not args.skip_checkpoint_comparison)
+    report = audit(discover(args.runs, args.root), inspect_checkpoints=not args.skip_checkpoint_comparison,
+                   recovery_manifests=args.recovery_manifest)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     md.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")

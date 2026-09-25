@@ -124,3 +124,79 @@ identity, window and deadline tests:
 
 These checks do not replace a real CUDA pause/resume pilot or the full model's
 numerical and quality gates.
+
+## Offline long-run audit and explicit failure recovery
+
+`summarize_long_training.py` audits the six selected long-run trajectories and
+loads linked parent sessions automatically. Pass explicit leaf directories when
+failed attempts or competing branches also exist; the auditor does not choose a
+preferred branch. All reports and plots require fresh output filenames. Inspect
+closed runs only. During a Windows run, use its append-only progress log and wait
+for process exit before opening `run.json` or checkpoints, so a reader does not
+overlap the worker's atomic metadata replacement.
+
+Ordinary failed sessions remain inadmissible. `--recovery-manifest` supports one
+narrow, explicit recovery: a `PermissionError` / `WinError 5` replacing exactly
+`run.json.tmp` with `run.json`, after the complete evaluated checkpoint boundary
+was already saved. The manifest authorizes an exact parent/child pair; it is not
+a general permission to ignore an error. The auditor independently requires:
+
+- The original parent is still `failed`, its only outstanding findings are the
+  failed closure and missing terminal `final.pth`, and the authorized child has
+  closed successfully after completing additional updates.
+- The exact parent and child paths, seed, variant and checkpoint boundary match.
+  Parent endpoint, latest checkpoint, final completed evaluation and child start
+  agree. Every training row and scheduled evaluation is present, without gaps,
+  rewind, duplicate steps or replay. A failed terminal session cannot pass.
+- The manifest binds `run.json`, `training.jsonl`, `evaluations.jsonl`,
+  `latest.pth` and `initial.pth` by SHA256, plus the original error, experimental
+  identity, model, Adam, RNG state and failed-session process cost. Different
+  failures, paths, boundaries or changed evidence are rejected.
+- The latest checkpoint and the child's initial checkpoint have identical model
+  tensors, complete FP32 Adam moments/counters/hyperparameters and RNG state.
+  Source, checked build, recipe, data and environment identities must agree.
+  These CPU checkpoint checks remain mandatory with
+  `--skip-checkpoint-comparison`; that flag only skips the separate final
+  before/current state comparison.
+
+The original failed files and status are never edited or relabelled. The audit's
+`failure_recoveries` entry records the exact two waived closure findings and the
+verified checkpoint prefix. The failed session and its original error remain
+visible under `sessions`; ordinary integrity checks and all four per-seed
+quality gates still apply to the resulting trajectory.
+
+For the recorded seed-43 recovery, the immutable manifest is
+`artifacts/fp32_roadmap/quality_before43_recovery_manifest.json`. After all
+selected processes have exited, its explicit six-leaf audit is:
+
+```powershell
+.venv/Scripts/python.exe tools/roadmap_quality/summarize_long_training.py `
+  artifacts/fp32_roadmap/quality_long_before17 artifacts/fp32_roadmap/quality_long_current17 `
+  artifacts/fp32_roadmap/quality_long_before29 artifacts/fp32_roadmap/quality_long_current29 `
+  artifacts/fp32_roadmap/quality_long_before43_recovered artifacts/fp32_roadmap/quality_long_current43 `
+  --recovery-manifest artifacts/fp32_roadmap/quality_before43_recovery_manifest.json `
+  --output artifacts/fp32_roadmap/quality_final_audit.json
+```
+
+Timing uses the entire failed process plus the entire recovered process,
+including repeated setup. In this case that is
+`1762.548218 + 589.659853 = 2352.208071` seconds. The separate observed restart
+interval is `282.197191` seconds (4.703 minutes), from the supervisor's failure
+exit event at `10:32:13.701338 UTC` to the recovery affinity wrapper's start at
+`10:36:55.8985294 UTC`, both on 2026-09-25. Evidence and hashes are recorded in
+`artifacts/fp32_roadmap/quality_recovery_timing.json` and its Markdown companion.
+No missing `completed_utc` is invented for the failed parent. Process sums
+exclude this restart interval and must not be described as time to quality
+including human recovery waits. The event interval and process timers have
+different start/end scopes, so they are reported separately rather than summed
+into an exact elapsed-time claim. Evaluation, checkpoint and setup scopes
+overlap other timers and must not be added again.
+
+CPU-only recovery regression tests cover accepted continuation and rejection of
+tampered manifests/checkpoints, malformed evidence, terminal failures, changed
+errors or paths, gaps/replay, incomplete Adam state and changed RNG continuation:
+
+```powershell
+.venv/Scripts/python.exe -m unittest discover -s tools/roadmap_quality -p test_summarize_long_training.py -v
+.venv/Scripts/python.exe -m unittest discover -s tools/roadmap_quality -p test_failed_checkpoint_recovery.py -v
+```
