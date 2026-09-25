@@ -79,6 +79,33 @@ class CUDAGraphSignatureCPU(unittest.TestCase):
         with patch.dict(os.environ, {'CONVERSE2D_BACKEND': 'cuda'}):
             return self.signature()
 
+    def test_lazy_negative_and_conjugate_metadata_changes_invalidate_signature(self):
+        # The complex buffer is a metadata-only fixture: this CPU test never
+        # executes the FP32 public model or captures a CUDA graph.
+        self.model.register_buffer('_complex_signature_probe',
+                                   torch.tensor([1 + 2j, 3 - 4j], dtype=torch.complex64))
+        def old_fields(tensor):
+            return (id(tensor), tensor.data_ptr(), tensor._version, tensor.shape,
+                    tensor.stride(), tensor.dtype, tensor.device)
+        for name, tensor, flip in (
+                ('parameter_negative', self.model.conv1.weight, torch._neg_view),
+                ('buffer_conjugate', self.model._complex_signature_probe, lambda value: value.conj())):
+            with self.subTest(name=name):
+                initial = self.signature()
+                fields = old_fields(tensor)
+                flags = (tensor.is_neg(), tensor.is_conj())
+                logical = tensor.detach().clone()
+                tensor.data = flip(tensor.data)
+                self.assertEqual(old_fields(tensor), fields)
+                self.assertNotEqual((tensor.is_neg(), tensor.is_conj()), flags)
+                self.assertFalse(torch.equal(tensor, logical))
+                self.assertNotEqual(self.signature(), initial)
+                tensor.data = flip(tensor.data)
+                self.assertEqual(old_fields(tensor), fields)
+                self.assertEqual((tensor.is_neg(), tensor.is_conj()), flags)
+                self.assertTrue(torch.equal(tensor, logical))
+                self.assertEqual(self.signature(), initial)
+
     def test_training_and_hooks_still_clear_entries(self):
         entry = Mock()
         self.runner._entries['sentinel'] = entry

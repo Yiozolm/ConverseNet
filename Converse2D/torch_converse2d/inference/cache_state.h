@@ -17,6 +17,7 @@ struct CacheEntry {
     // current metadata cannot detect a layout replacement through .data.
     std::vector<int64_t> sizes, strides;
     int64_t storage_offset;
+    bool negative, conjugate;
 };
 
 extern std::list<CacheEntry> cache;

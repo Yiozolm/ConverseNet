@@ -17,12 +17,14 @@ while build checks, the CPU extension and the portable Python fallback still run
 | `test_fp32_release.py` | Independent FP64 noninferiority, higher derivatives, cache/streams, dtype contracts and CPU fallback |
 | `test_gradient_mask.py` | All gradient subsets, broadcast reductions, higher derivatives and masked backward Graph replay; verifies unused reductions are skipped |
 | `test_inference_p0.py` | Frozen-input cache reuse without changing ATen arithmetic, cross-GradMode cache hits and layout invalidation |
+| `test_negative_metadata.py` | Lazy negative kernels, cold PSF materialization and same-pointer/version cache invalidation across all three GradMode contexts |
 | `test_psf_preparation.py` | PSF boundary/layout cases, shared-ancestor gradient order, second/third derivatives, streams and per-call kernel FFT |
 | `test_scale2_kernel_fusion.py` | Exact non-broadcast s2 kernel VJPs, weak regularization, gradient subsets, conjugated spectra and Graph replay |
 | `test_scale3_fusion.py` | Exact nine-alias reduction order, separate mean factors, broadcast VJPs, strided/weak-regularization cases and guarded fallback |
 | `test_batch_reduce.py` | B2/B4 shared-kernel batch reductions, original accumulation order, gradient masks, fallback geometry, higher derivatives and Graph replay |
 | `test_peripheral_fusion.py` | Alpha residual FP32 multiply/add boundaries, gradient subsets, aliases, higher derivatives, layouts and streams |
 | `test_layernorm_affine.py` | Unchanged LayerNorm statistics, inference affine dispatch, training policy and private-helper higher derivatives |
+| `test_peripheral_policy.py` | CPU-only automatic dispatch boundaries for large inference tensors, frozen/differentiable inputs and all three GradMode contexts |
 | `test_cuda_graph.py` | Graph ownership, replay, invalidation and training transitions |
 | `test_pretrained_fp32.py` | DnCNN/SRResNet checkpoint and inference compatibility |
 

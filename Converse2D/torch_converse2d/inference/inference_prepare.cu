@@ -16,7 +16,9 @@ __global__ void prepare_psf(const T* weight, T* otf, I total, I H, I W, I kh, I 
 }
 
 at::Tensor converse_psf_cuda(const at::Tensor& weight, int64_t h, int64_t w) {
-    auto source = weight.contiguous();
+    // Contiguous views can still carry lazy value metadata. Raw device loads
+    // must see the same values as ATen pad/roll, including negative views.
+    auto source = weight.resolve_conj().resolve_neg().contiguous();
     auto out = at::empty({weight.size(0), weight.size(1), h, w}, weight.options());
     const auto n = out.numel(), kh = weight.size(2), kw = weight.size(3);
     auto stream = c10::cuda::getCurrentCUDAStream(weight.get_device());

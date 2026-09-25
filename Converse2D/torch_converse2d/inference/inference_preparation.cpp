@@ -41,7 +41,8 @@ std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& weight,
                 if (it->version != version || it->data != source.const_data_ptr() ||
                     source.sizes() != at::IntArrayRef(it->sizes) ||
                     source.strides() != at::IntArrayRef(it->strides) ||
-                    it->storage_offset != source.storage_offset()) {
+                    it->storage_offset != source.storage_offset() ||
+                    it->negative != source.is_neg() || it->conjugate != source.is_conj()) {
                     if (!graph_cache_active) cache_bytes -= it->bytes;
                     it = entries.erase(it);
                     continue;
@@ -87,7 +88,8 @@ std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& weight,
             std::lock_guard<std::mutex> lock(cache_mutex);
             entries.push_front({source, fb, invw, source.const_data_ptr(), version,
                 h, w, s, stream, real_fft, inference, bytes,
-                source.sizes().vec(), source.strides().vec(), source.storage_offset()});
+                source.sizes().vec(), source.strides().vec(), source.storage_offset(),
+                source.is_neg(), source.is_conj()});
             if (!graph_cache_active) {
                 cache_bytes += bytes;
                 while (cache.size() > CACHE_ENTRIES_LIMIT || cache_bytes > CACHE_BYTES_LIMIT) {

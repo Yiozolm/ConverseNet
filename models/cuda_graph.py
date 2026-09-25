@@ -142,8 +142,11 @@ class USRNetCUDAGraph:
             raise ValueError("create model tensors outside inference_mode for version tracking")
         # Public scalar/tuple attributes above include eps, padding, iterations,
         # backend, variant and normalization shape on every invocation.
+        # Lazy neg/conj flips may preserve identity, storage and the version
+        # counter while changing logical values consumed during capture.
         tensor_state = tuple((id(t), t.data_ptr(), t._version, t.shape,
-                              t.stride(), t.dtype, t.device) for t in tensors)
+                              t.stride(), t.dtype, t.device,
+                              t.is_neg(), t.is_conj()) for t in tensors)
         flags = (os.environ.get("CONVERSE2D_BACKEND", ""),
                  torch.backends.cudnn.enabled, torch.backends.cudnn.benchmark,
                  torch.backends.cudnn.deterministic, torch.backends.cudnn.allow_tf32,
