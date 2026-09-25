@@ -56,8 +56,8 @@ class GradientMaskCUDA(CUDATestCase):
                         torch.autograd.grad(output, data[index], gradient)
                     sums = sum(event.count for event in trace.key_averages()
                                if event.key == "aten::sum")
-                    self.assertEqual(sums, int(scale > 2),
-                                     "only the generic alias sum may remain")
+                    self.assertEqual(sums, 0,
+                                     "eligible s1/s2/s3 input VJPs need no separate reduction")
 
     def test_engine_requested_subset_matches_python(self):
         # Also exercise autograd.grad pruning when every leaf is trainable.

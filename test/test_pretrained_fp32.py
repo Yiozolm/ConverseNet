@@ -6,7 +6,6 @@ from support import ROOT, CUDATestCase
 
 class PretrainedFP32(CUDATestCase):
     def test_dncnn_and_srresnet_checkpoints(self):
-        from models.util_converse import Converse2D
         from models.converse_dncnn import ConverseDnCNN
         from models.converse_srresnet import ConverseMSRResNet
         torch.manual_seed(17)
@@ -20,11 +19,11 @@ class PretrainedFP32(CUDATestCase):
                 x = torch.rand(1, channels, 24, 32, device='cuda')
                 with torch.inference_mode():
                     for layer in model.modules():
-                        if isinstance(layer, Converse2D):
+                        if hasattr(layer, 'backend'):
                             layer.backend = 'pytorch'
                     reference = model(x)
                     for layer in model.modules():
-                        if isinstance(layer, Converse2D):
+                        if hasattr(layer, 'backend'):
                             layer.backend = 'cuda'
                     output = model(x)
                 torch.testing.assert_close(output, reference, atol=1e-5, rtol=1e-5)

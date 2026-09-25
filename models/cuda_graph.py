@@ -13,6 +13,7 @@ from models.util_converse import _try_import_converse2d_ext
 # Serialize our captures and submissions across runners. Other CUDA work and
 # model edits must not run concurrently with capture in the same process.
 _GRAPH_LOCK = threading.RLock()
+_CONFIG_TYPES = (str, int, float, bool, tuple, type(None))
 
 
 @dataclass
@@ -105,22 +106,43 @@ class USRNetCUDAGraph:
         if any(m.training for m in modules):
             self.clear()
             raise RuntimeError("CUDA Graph inference requires model.eval()")
-        if any(m._forward_hooks or m._forward_pre_hooks for m in modules):
+        global_hooks = torch.nn.modules.module
+        if (global_hooks._global_forward_hooks or global_hooks._global_forward_pre_hooks or
+                any(m._forward_hooks or m._forward_pre_hooks for m in modules)):
             self.clear()
             raise RuntimeError("remove forward hooks before CUDA Graph inference")
-        tensors = tuple(self.model.parameters()) + tuple(self.model.buffers())
+        # Reuse this call's module walk instead of recursively traversing the
+        # same tree again for parameters and buffers. Match Module's separate
+        # identity deduplication and registration order for the two collections.
+        parameters, buffers = {}, {}
+        config = []
+        for module in modules:
+            parameter_bindings = []
+            for name, tensor in module._parameters.items():
+                parameter_bindings.append((name, id(tensor)))
+                if tensor is not None:
+                    parameters.setdefault(id(tensor), tensor)
+            buffer_bindings = []
+            for name, tensor in module._buffers.items():
+                buffer_bindings.append((name, id(tensor)))
+                if tensor is not None:
+                    buffers.setdefault(id(tensor), tensor)
+            # Names and aliases matter even when the set and order of unique
+            # modules/tensors stay unchanged after a registration is replaced.
+            config.append((id(module), type(module), tuple(
+                (name, value) for name, value in vars(module).items()
+                if not name.startswith('_') and isinstance(value, _CONFIG_TYPES)
+            ), tuple((name, id(child)) for name, child in module._modules.items()),
+                tuple(parameter_bindings), tuple(buffer_bindings)))
+        tensors = (*parameters.values(), *buffers.values())
         if any(t.device != device for t in tensors):
             self.clear()
             raise ValueError("model and inputs must be on the same CUDA device")
         if any(t.is_inference() for t in tensors):
             raise ValueError("create model tensors outside inference_mode for version tracking")
-        # Public scalar/tuple attributes contain the built-in modules' eps,
-        # padding, iterations, backend, variant, normalization shape, etc.
-        config = tuple((id(m), type(m), tuple(
-            (name, value) for name, value in vars(m).items()
-            if not name.startswith('_') and isinstance(value, (str, int, float, bool, tuple, type(None)))
-        )) for m in modules)
-        tensor_state = tuple((id(t), t.data_ptr(), t._version, tuple(t.shape),
+        # Public scalar/tuple attributes above include eps, padding, iterations,
+        # backend, variant and normalization shape on every invocation.
+        tensor_state = tuple((id(t), t.data_ptr(), t._version, t.shape,
                               t.stride(), t.dtype, t.device) for t in tensors)
         flags = (os.environ.get("CONVERSE2D_BACKEND", ""),
                  torch.backends.cudnn.enabled, torch.backends.cudnn.benchmark,
@@ -128,7 +150,7 @@ class USRNetCUDAGraph:
                  torch.backends.cuda.matmul.allow_tf32,
                  torch.get_float32_matmul_precision(),
                  torch.are_deterministic_algorithms_enabled())
-        return (config, tensor_state, flags), tensors
+        return (tuple(config), tensor_state, flags), tensors
 
     def _validate(self, x, kernel, scale):
         if torch.is_grad_enabled():

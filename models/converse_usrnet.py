@@ -193,6 +193,8 @@ class ConverseUSRNet(nn.Module):
             if isinstance(layer, Converse2D):
                 layer.backend = self.d.backend
                 layer.variant = self.d.variant
+            elif isinstance(layer, converse_utils.LayerNorm):
+                layer.backend = self.d.backend
         self.conv1 = nn.Conv2d(3, 64, 1, 1, 0)
         self.conv2 = nn.Conv2d(64, 3, 1, 1, 0)
         self.kernelnet = KernelNet()

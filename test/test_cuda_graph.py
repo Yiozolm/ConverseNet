@@ -1,10 +1,110 @@
 """Graph lifetime, invalidation, input changes and stream regression tests."""
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import torch
 from support import CUDATestCase
+
+
+class CUDAGraphSignatureCPU(unittest.TestCase):
+    """Signature checks do not require a graph, a compiler or a CUDA device."""
+
+    def setUp(self):
+        from models.converse_usrnet import ConverseUSRNet
+        from models.cuda_graph import USRNetCUDAGraph
+
+        self.model = ConverseUSRNet(num_iterations=1, num_blocks=1, backend='pytorch').eval()
+        self.runner = USRNetCUDAGraph(self.model)
+        self.device = torch.device('cpu')
+
+    def tearDown(self):
+        self.runner.clear()
+
+    def signature(self):
+        return self.runner._model_signature(self.device)[0]
+
+    def test_shared_parameters_and_buffers_keep_module_collection_order(self):
+        self.model.register_parameter('_shared_parameter', self.model.conv1.weight)
+        self.model.register_parameter('_empty_parameter', None)
+        self.model.register_buffer('_shared_buffer', self.model.conv2.bias)
+        self.model.register_buffer('_buffer_alias', self.model.conv2.bias)
+        self.model.register_buffer('_empty_buffer', None)
+        expected = tuple(self.model.parameters()) + tuple(self.model.buffers())
+        _, actual = self.runner._model_signature(self.device)
+        self.assertEqual(tuple(map(id, actual)), tuple(map(id, expected)))
+        # Parameter and buffer deduplication are independent in nn.Module.
+        self.assertEqual(sum(t is self.model.conv2.bias for t in actual), 2)
+
+    def test_shared_registration_changes_invalidate_unique_module_signature(self):
+        self.model.add_module('_module_alias', self.model.conv1)
+        holder = torch.nn.Module().eval()
+        holder.register_parameter('weight_alias', self.model.conv1.weight)
+        self.model.add_module('_parameter_alias_holder', holder)
+        modules = tuple(map(id, self.model.modules()))
+        tensors = tuple(map(id, self.model.parameters()))
+        initial = self.signature()
+        self.model._module_alias = self.model.conv2
+        self.assertEqual(tuple(map(id, self.model.modules())), modules)
+        changed_module = self.signature()
+        self.assertNotEqual(initial, changed_module)
+        holder.weight_alias = self.model.conv2.weight
+        self.assertEqual(tuple(map(id, self.model.parameters())), tensors)
+        self.assertNotEqual(changed_module, self.signature())
+
+    def test_configuration_layout_versions_and_backend_are_read_every_call(self):
+        initial = self.signature()
+        self.model.d.extra_config = (1, 2)
+        changed_config = self.signature()
+        self.assertNotEqual(initial, changed_config)
+        layer = next(m for m in self.model.modules() if type(m).__name__ == 'Converse2D')
+        pointer, version = layer.weight.data_ptr(), layer.weight._version
+        layer.weight.data = layer.weight.data.transpose(-1, -2)
+        self.assertEqual(layer.weight.data_ptr(), pointer)
+        self.assertEqual(layer.weight._version, version)
+        changed_layout = self.signature()
+        self.assertNotEqual(changed_config, changed_layout)
+        with torch.no_grad():
+            layer.weight.add_(.01)
+        changed_version = self.signature()
+        self.assertNotEqual(changed_layout, changed_version)
+        self.model.register_buffer('_state', torch.zeros(2))
+        added_buffer = self.signature()
+        self.model._state.add_(1)
+        self.assertNotEqual(added_buffer, self.signature())
+        with patch.dict(os.environ, {'CONVERSE2D_BACKEND': 'pytorch'}):
+            self.assertNotEqual(self.signature(), self._signature_with_cuda_backend())
+
+    def _signature_with_cuda_backend(self):
+        with patch.dict(os.environ, {'CONVERSE2D_BACKEND': 'cuda'}):
+            return self.signature()
+
+    def test_training_and_hooks_still_clear_entries(self):
+        entry = Mock()
+        self.runner._entries['sentinel'] = entry
+        self.model.d.train()
+        with self.assertRaisesRegex(RuntimeError, 'eval'):
+            self.signature()
+        entry.close.assert_called_once()
+        self.assertEqual(self.runner.cached_graphs, 0)
+        self.model.eval()
+        for register in (torch.nn.modules.module.register_module_forward_hook,
+                         torch.nn.modules.module.register_module_forward_pre_hook):
+            entry = Mock()
+            self.runner._entries['sentinel'] = entry
+            with register(lambda *args: None):
+                with self.assertRaisesRegex(RuntimeError, 'hooks'):
+                    self.signature()
+            entry.close.assert_called_once()
+            self.assertEqual(self.runner.cached_graphs, 0)
+        self.model.eval()
+        entry = Mock()
+        self.runner._entries['sentinel'] = entry
+        with self.model.d.register_forward_pre_hook(lambda m, args: args):
+            with self.assertRaisesRegex(RuntimeError, 'hooks'):
+                self.signature()
+        entry.close.assert_called_once()
+        self.assertEqual(self.runner.cached_graphs, 0)
 
 
 class CUDAGraphTests(CUDATestCase):

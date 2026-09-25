@@ -37,6 +37,27 @@ converse2d_CUDA = torch.ops.converse2d.forward if (
 ) else None
 
 
+def _alpha_residual(alpha, branch, residual, backend="auto"):
+    """Preserve the Python expression outside the checked FP32 CUDA helper."""
+    if any(value.dtype != torch.float32 for value in (alpha, branch, residual)):
+        raise ValueError("Converse2D alpha residual requires FP32 tensors")
+    backend = (os.environ.get("CONVERSE2D_BACKEND", "") or backend).lower()
+    if branch.is_cuda and backend != "pytorch":
+        _try_import_converse2d_ext()
+        if hasattr(torch.ops.converse2d, "_alpha_residual"):
+            return torch.ops.converse2d._alpha_residual(alpha, branch, residual)
+    return alpha * branch + residual
+
+
+def _channel_affine(scale, value, bias, backend="auto"):
+    backend = (os.environ.get("CONVERSE2D_BACKEND", "") or backend).lower()
+    if value.is_cuda and backend != "pytorch" and all(t.dtype == torch.float32 for t in (scale, value, bias)):
+        _try_import_converse2d_ext()
+        if hasattr(torch.ops.converse2d, "_channel_affine"):
+            return torch.ops.converse2d._channel_affine(scale, value, bias)
+    return scale * value + bias
+
+
 """
 # --------------------------------------------
 # LayerNorm for Vision Normalization
@@ -56,6 +77,7 @@ class LayerNorm(nn.Module):
         self.bias = nn.Parameter(torch.zeros(normalized_shape))
         self.eps = eps
         self.data_format = data_format
+        self.backend = "auto"
         if self.data_format not in ["channels_last", "channels_first"]:
             raise NotImplementedError
         self.normalized_shape = (normalized_shape,)
@@ -67,7 +89,12 @@ class LayerNorm(nn.Module):
             u = x.mean(1, keepdim=True)
             s = (x - u).pow(2).mean(1, keepdim=True)
             x = (x - u) / torch.sqrt(s + self.eps)
-            x = self.weight[:, None, None] * x + self.bias[:, None, None]
+            if torch.is_grad_enabled() or x.numel() < 2**21:
+                # The fused training prototype preserves first-order values,
+                # but only large inference tensors showed repeatable gains.
+                x = self.weight[:, None, None] * x + self.bias[:, None, None]
+            else:
+                x = _channel_affine(self.weight[:, None, None], x, self.bias[:, None, None], self.backend)
             return x
 
 
@@ -313,8 +340,12 @@ class ConverseBlockAlphaVariant(nn.Module):
         
                                   
     def forward(self, x):
-        x = self.alpha1 * self.conv1(x) + x
-        x = self.alpha2 * self.conv2(x) + x
+        if torch.is_grad_enabled() or x.numel() < 2**21:
+            x = self.alpha1 * self.conv1(x) + x
+            return self.alpha2 * self.conv2(x) + x
+        backend = self.conv1[3].backend
+        x = _alpha_residual(self.alpha1, self.conv1(x), x, backend)
+        x = _alpha_residual(self.alpha2, self.conv2(x), x, backend)
         return x
 
 

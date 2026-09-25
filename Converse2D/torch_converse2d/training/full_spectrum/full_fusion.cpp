@@ -4,6 +4,7 @@
 #include <ATen/ExpandUtils.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <climits>
+#include "batch_reduce.h"
 namespace converse2d::full_training {
 using at::Tensor;
 std::vector<Tensor> full_prepare_cuda(Tensor p,Tensor k);
@@ -16,11 +17,29 @@ std::vector<Tensor> full_scale1_forward_cuda(Tensor y,Tensor p,Tensor k,Tensor l
 std::vector<Tensor> full_scale1_adjoint_cuda(Tensor g,Tensor p,Tensor k,Tensor q,Tensor d,bool shared,bool need_y,bool need_p,bool need_k,bool need_l);
 std::vector<Tensor> full_scale2_forward_cuda(Tensor y,Tensor p,Tensor k,Tensor l);
 std::vector<Tensor> full_scale2_adjoint_cuda(Tensor g,Tensor p,Tensor k,Tensor q,Tensor d,bool need_y,bool need_p,bool need_k,bool need_l);
+std::vector<Tensor> full_scale3_forward_cuda(Tensor y,Tensor p,Tensor k,Tensor l);
+std::vector<Tensor> full_scale3_adjoint_cuda(Tensor g,Tensor p,Tensor k,Tensor q,Tensor d,bool need_y,bool need_p,bool need_k,bool need_l);
 
 bool scale2_fusion_eligible(const Tensor& y,const Tensor& p,int64_t s) {
     // A non-reduced contiguous W dimension keeps all four aliases within one
     // ATen reduction thread. Very large iterators can split reductions.
     return s==2 && y.size(3)>1 && p.numel()<=INT32_MAX/p.element_size();
+}
+
+bool scale3_fusion_eligible(const Tensor& y,const Tensor& p,int64_t s) {
+    // Match the single-thread, four-accumulator ATen alias reduction domain.
+    // W==1 and byte offsets requiring iterator splitting retain the generic
+    // reduction; the contiguous CUDA preparation is bounded by p.numel().
+    return s==3 && y.size(3)>1 && p.numel()<=INT32_MAX/p.element_size();
+}
+
+bool scale1_batch_fusion_eligible(const Tensor& y,const Tensor& p,const Tensor& k,
+                                 bool need_y,bool need_p,bool need_k) {
+    // All reductions then have B2/B4 inputs per output, a non-reduced fastest
+    // axis, and no 64-bit TensorIterator splitting. No channel reduction moves.
+    return need_k&&(need_y||need_p)&&(y.size(0)==2||y.size(0)==4)&&
+        k.size(0)==1&&k.size(1)==y.size(1)&&y.size(3)>1&&
+        p.numel()<=INT32_MAX/p.element_size();
 }
 
 Tensor aliases(Tensor t,int64_t s,bool mean) {
@@ -45,6 +64,12 @@ public:
     }
     if(scale2_fusion_eligible(y,p,s)) {
         auto out=full_scale2_forward_cuda(y,p,k,l);
+        ctx->save_for_backward({y,p,k,l,out[1],out[2]});ctx->saved_data["s"]=s;
+        ctx->saved_data["shared"]=false;
+        return out[0];
+    }
+    if(scale3_fusion_eligible(y,p,s)) {
+        auto out=full_scale3_forward_cuda(y,p,k,l);
         ctx->save_for_backward({y,p,k,l,out[1],out[2]});ctx->saved_data["s"]=s;
         ctx->saved_data["shared"]=false;
         return out[0];
@@ -80,6 +105,17 @@ public:
     const bool need_y=ctx->needs_input_grad(0),need_p=ctx->needs_input_grad(1);
     const bool need_k=ctx->needs_input_grad(2),need_l=ctx->needs_input_grad(3);
     if(s==1) {
+        if(scale1_batch_fusion_eligible(a[0],a[1],a[2],need_y,need_p,need_k)) {
+            auto stage=full_scale1_batch_prepare_cuda(incoming[0],a[1],a[2],a[4],a[5],
+                need_y&&!shared,need_p||(shared&&need_y));
+            auto gd=at::sum_to(at::real(stage.gd),a[5].sizes());
+            if(need_l)result[3]=at::sum_to(gd,a[3].sizes());
+            auto power=at::sum_to(gd,at::IntArrayRef({a[2].size(0),a[2].size(1),a[0].size(2),a[0].size(3)}));
+            result[2]=full_scale1_batch_kernel_cuda(stage,power,shared);
+            if(need_y)result[0]=shared?stage.gp:stage.gy;
+            if(need_p&&!shared)result[1]=stage.gp;
+            return result;
+        }
         // Keep every broadcast reduction and its input layout unchanged. Only
         // omit work whose entire gradient dependency is absent. Shared inputs
         // still accumulate y and prior contributions in the original order.
@@ -117,6 +153,22 @@ public:
                 gk=full_adjoint_kernel_cuda(a[2],direct,gkp,power,s);
             }
             result[2]=gk;
+        }
+        if(need_y)result[0]=pointwise[0];
+        if(need_p)result[1]=pointwise[1];
+        return result;
+    }
+    if(scale3_fusion_eligible(a[0],a[1],s)) {
+        auto pointwise=full_scale3_adjoint_cuda(incoming[0],a[1],a[2],a[4],a[5],need_y,need_p,need_k,need_l);
+        Tensor gd;
+        if(need_k||need_l)gd=at::sum_to(at::real(pointwise[4]),a[5].sizes());
+        if(need_l)result[3]=at::sum_to(gd,a[3].sizes());
+        if(need_k) {
+            auto direct=at::sum_to(pointwise[2],a[2].sizes()).conj();
+            auto power=at::sum_to(gd,at::IntArrayRef({a[2].size(0),a[2].size(1),a[0].size(2),a[0].size(3)}));
+            power=power/(s*s);
+            auto gkp=at::sum_to(pointwise[3],a[2].sizes());
+            result[2]=full_adjoint_kernel_cuda(a[2],direct,gkp,power,s);
         }
         if(need_y)result[0]=pointwise[0];
         if(need_p)result[1]=pointwise[1];

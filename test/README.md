@@ -19,6 +19,10 @@ while build checks, the CPU extension and the portable Python fallback still run
 | `test_inference_p0.py` | Frozen-input cache reuse without changing ATen arithmetic, cross-GradMode cache hits and layout invalidation |
 | `test_psf_preparation.py` | PSF boundary/layout cases, shared-ancestor gradient order, second/third derivatives, streams and per-call kernel FFT |
 | `test_scale2_kernel_fusion.py` | Exact non-broadcast s2 kernel VJPs, weak regularization, gradient subsets, conjugated spectra and Graph replay |
+| `test_scale3_fusion.py` | Exact nine-alias reduction order, separate mean factors, broadcast VJPs, strided/weak-regularization cases and guarded fallback |
+| `test_batch_reduce.py` | B2/B4 shared-kernel batch reductions, original accumulation order, gradient masks, fallback geometry, higher derivatives and Graph replay |
+| `test_peripheral_fusion.py` | Alpha residual FP32 multiply/add boundaries, gradient subsets, aliases, higher derivatives, layouts and streams |
+| `test_layernorm_affine.py` | Unchanged LayerNorm statistics, inference affine dispatch, training policy and private-helper higher derivatives |
 | `test_cuda_graph.py` | Graph ownership, replay, invalidation and training transitions |
 | `test_pretrained_fp32.py` | DnCNN/SRResNet checkpoint and inference compatibility |
 
@@ -43,3 +47,11 @@ and Adam steps. See `docs/fp32_p0.md` for the measured scope and rejected candid
 Its explicit `--deterministic-algorithms` lane makes external replicate-padding
 backward repeatable for exact comparisons. Default-mode results and their
 non-repeatable input gradients are preserved separately; see `docs/fp32_psf.md`.
+
+`tools/benchmark_fp32_roadmap.py` extends complete operator and model measurements
+to s3, peripheral expressions and Graph miss/hit lifetimes.
+`tools/benchmark_peripheral_inference.py` alternates original and fused inference
+expressions and compares both Graph runners using the same model object.
+`tools/profile_fp32_roadmap.py` records a fresh full-model Torch or Nsight trace.
+The independently checked real-photo fine-tuning and resume tools live under
+`tools/roadmap_quality/`; their results do not replace numerical release gates.
