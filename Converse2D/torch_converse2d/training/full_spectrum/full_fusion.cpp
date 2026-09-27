@@ -14,7 +14,7 @@ std::vector<Tensor> full_adjoint_div_cuda(Tensor t,Tensor q,Tensor d,bool need_g
 std::vector<Tensor> full_adjoint_prediction_cuda(Tensor g,Tensor p,Tensor k,Tensor gm,int64_t s,bool shared,bool need_p,bool need_k);
 Tensor full_adjoint_kernel_cuda(Tensor k,Tensor direct,Tensor prediction,Tensor power,int64_t s);
 std::vector<Tensor> full_scale1_forward_cuda(Tensor y,Tensor p,Tensor k,Tensor l);
-std::vector<Tensor> full_scale1_adjoint_cuda(Tensor g,Tensor p,Tensor k,Tensor q,Tensor d,bool shared,bool need_y,bool need_p,bool need_k,bool need_l);
+std::vector<Tensor> full_scale1_adjoint_cuda(Tensor g,Tensor p,Tensor k,Tensor y,Tensor d,bool shared,bool need_y,bool need_p,bool need_k,bool need_l);
 std::vector<Tensor> full_scale2_forward_cuda(Tensor y,Tensor p,Tensor k,Tensor l);
 std::vector<Tensor> full_scale2_adjoint_cuda(Tensor g,Tensor p,Tensor k,Tensor q,Tensor d,bool need_y,bool need_p,bool need_k,bool need_l);
 std::vector<Tensor> full_scale3_forward_cuda(Tensor y,Tensor p,Tensor k,Tensor l);
@@ -106,7 +106,7 @@ public:
     const bool need_k=ctx->needs_input_grad(2),need_l=ctx->needs_input_grad(3);
     if(s==1) {
         if(scale1_batch_fusion_eligible(a[0],a[1],a[2],need_y,need_p,need_k)) {
-            auto stage=full_scale1_batch_prepare_cuda(incoming[0],a[1],a[2],a[4],a[5],
+            auto stage=full_scale1_batch_prepare_cuda(incoming[0],a[1],a[2],a[0],a[5],
                 need_y&&!shared,need_p||(shared&&need_y));
             auto gd=at::sum_to(at::real(stage.gd),a[5].sizes());
             if(need_l)result[3]=at::sum_to(gd,a[3].sizes());
@@ -119,7 +119,7 @@ public:
         // Keep every broadcast reduction and its input layout unchanged. Only
         // omit work whose entire gradient dependency is absent. Shared inputs
         // still accumulate y and prior contributions in the original order.
-        auto pointwise=full_scale1_adjoint_cuda(incoming[0],a[1],a[2],a[4],a[5],shared,
+        auto pointwise=full_scale1_adjoint_cuda(incoming[0],a[1],a[2],a[0],a[5],shared,
             need_y&&!shared,need_p||(shared&&need_y),need_k,need_l);
         Tensor gd;
         if(pointwise[4].defined())gd=at::sum_to(at::real(pointwise[4]),a[5].sizes());

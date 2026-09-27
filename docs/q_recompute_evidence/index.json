@@ -1,0 +1,93 @@
+{
+  "comparison.json": {
+    "source": "artifacts\\q_recompute\\v1\\comparison.json",
+    "sha256": "6d7282d644721fa0ba4de9589ba2b3e3bc3dffeff28af60b8c401d8a56882494",
+    "bytes": 954,
+    "archive": "comparison.json.gz",
+    "archive_sha256": "523c3c8bda3099ac8f05f9b4de060fcb9fef3a27cf8a673d90c9e5cb055dafd5"
+  },
+  "baseline_gate.json": {
+    "source": "artifacts\\q_recompute\\baseline_gate\\result.json",
+    "sha256": "67592488522eed8abdb5ffdc67514cf81846ae2f2fa1530674e7ec0a4ab04577",
+    "bytes": 17096,
+    "archive": "baseline_gate.json.gz",
+    "archive_sha256": "e74f28c1592cade3d8eeaf7d82cc6d8416d2f940761f3395280ed59766bcfd8e"
+  },
+  "candidate_gate.json": {
+    "source": "artifacts\\q_recompute\\v1\\operator_gate\\result.json",
+    "sha256": "06086c355fa3502726c13aaae464c59d5a9f51d672d88e2cc5d3454b7c467169",
+    "bytes": 17205,
+    "archive": "candidate_gate.json.gz",
+    "archive_sha256": "f0a59c146bf46a4d69c6676f13e0e962f1d86273f1c9285af910d3e21a5fe3d8"
+  },
+  "baseline_epoch.json": {
+    "source": "artifacts\\q_recompute\\baseline_epoch\\result.json",
+    "sha256": "9cb6163b4793cab7e46c8feca998c267f8febe8f5699e71d2b3e6ac5a30a824a",
+    "bytes": 581205,
+    "archive": "baseline_epoch.json.gz",
+    "archive_sha256": "5a5c724c3986fb43d97de92037d97ed5fd99c713d63309f4884f7e7ab3762e3f"
+  },
+  "candidate_epoch.json": {
+    "source": "artifacts\\q_recompute\\v1\\recompute_epoch\\result.json",
+    "sha256": "8490b8cf34956c5baf6f7a1fa4605bdb1f04dffd37fbe5eb5a032adbd7d81f7a",
+    "bytes": 581139,
+    "archive": "candidate_epoch.json.gz",
+    "archive_sha256": "92600466af8d70e2de1199882f1eed257a3cd5b46f9c132ccea182bb27e92c67"
+  },
+  "experiment_release_tests.json": {
+    "source": "artifacts\\q_recompute\\v1\\release_tests\\result.json",
+    "sha256": "49868c29486bd9f0e1fa0903629c6be435f5d681e5c1d0b5d173bc77cf4d895b",
+    "bytes": 8425,
+    "archive": "experiment_release_tests.json.gz",
+    "archive_sha256": "b98edbdd449841902ddaeb08e42850e401cf400a34b3c22d3b03eba0486f3563"
+  },
+  "experiment_release_tests.log": {
+    "source": "artifacts\\q_recompute\\v1\\release_tests.log",
+    "sha256": "460add7f8871045d949103f4c2f392cd560a27469fde79676f7e15a58ec09a8f",
+    "bytes": 16525,
+    "archive": "experiment_release_tests.log.gz",
+    "archive_sha256": "783a0d96fea30e45189a240f364c20f894a5447f6d014f9f8b117f85aa2621c9"
+  },
+  "fp64_errors.json": {
+    "source": "artifacts\\q_recompute\\v1\\release_tests\\fp64_errors.json",
+    "sha256": "9f131899b4e64ce9aff246c146955e2cdaf858e99ae9348c9c8bc291df71a12b",
+    "bytes": 14019,
+    "archive": "fp64_errors.json.gz",
+    "archive_sha256": "bfe74a05df85a094644a8a49a5b3e81db93975f355922ca48115feb0820669db"
+  },
+  "build_initial_failure.log": {
+    "source": "artifacts\\q_recompute\\v1\\build.log",
+    "sha256": "2fe96e6156390d33f3c8cf2c34b886d3cf8087089979840a162d3e6df205fb68",
+    "bytes": 4858320,
+    "archive": "build_initial_failure.log.gz",
+    "archive_sha256": "a1040cddefccdfe5f4129933bf6ffd8279c3b0f3385d72e9fc0186c9d076398a"
+  },
+  "compile_failure.patch": {
+    "source": "artifacts\\q_recompute\\v1\\compile_failure.patch",
+    "sha256": "463e327a61f24cf0adcaa7e7ea9f0893869fd953e0370b4f497ce19339a31c1a",
+    "bytes": 14358,
+    "archive": "compile_failure.patch.gz",
+    "archive_sha256": "9b61f6a1e08e1373888623dc8344da1bceb7121dd5960ac960802648437e6d40"
+  },
+  "build_corrected.log": {
+    "source": "artifacts\\q_recompute\\v1\\build_corrected.log",
+    "sha256": "f7db25a54386e15838ba23f9df61dd8478aa85f7f6c73f7a03bed254e9b7deff",
+    "bytes": 4849592,
+    "archive": "build_corrected.log.gz",
+    "archive_sha256": "96be26f11dfb19e2008b833c12aac04b30836d171f0228ffe04b843d8cfcf482"
+  },
+  "landing_release_tests.json": {
+    "source": "artifacts/q_recompute/landing/release_tests/result.json",
+    "sha256": "2b26557de40eb086bfdbe4d0ef83d5f9b4afd197ff37a681573591f0da9ca45e",
+    "bytes": 8430,
+    "archive": "landing_release_tests.json.gz",
+    "archive_sha256": "3c3f461b8f003c44d19ab28df9da9133a38adbbedb82545f0ac0441f5b95a4cf"
+  },
+  "landing_release_tests.log": {
+    "source": "artifacts/q_recompute/landing/release_tests.log",
+    "sha256": "592a4fb5cb7ae7ed9a7c940de87250d9f2f9a56f611826918649c8862eb1401b",
+    "bytes": 16679,
+    "archive": "landing_release_tests.log.gz",
+    "archive_sha256": "acd1c667e9d28d7b2aff1c2b3e37540fbb00a2c00b190aa6ee8215bc777ab10a"
+  }
+}
