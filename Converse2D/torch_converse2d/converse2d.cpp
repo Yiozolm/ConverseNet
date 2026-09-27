@@ -11,6 +11,8 @@ TORCH_LIBRARY(converse2d, m) {
     m.def("_channel_layernorm(Tensor input, Tensor weight, Tensor bias, float eps=1e-5) -> Tensor");
 #ifdef CONVERSE2D_WITH_CUDA
     m.def("_training_full_spectral(Tensor y, Tensor p, Tensor k, Tensor regularizer, int scale) -> Tensor");
+    m.def("_training_pad_complex(Tensor x, int padding) -> Tensor");
+    m.def("_training_circular_s1(Tensor x, Tensor weight, Tensor bias, int padding, float eps=1e-5) -> Tensor");
 #endif
     m.def("clear_cache() -> ()");
     m.def("supports_cuda_graphs() -> bool");
@@ -24,6 +26,8 @@ TORCH_LIBRARY_IMPL(converse2d, CompositeImplicitAutograd, m) {
     m.impl("_channel_layernorm", TORCH_FN(converse2d::peripheral::channel_layernorm));
 #ifdef CONVERSE2D_WITH_CUDA
     m.impl("_training_full_spectral", TORCH_FN(converse2d::full_training::full_spectral));
+    m.impl("_training_pad_complex", TORCH_FN(converse2d::full_training::circular_pad_complex));
+    m.impl("_training_circular_s1", TORCH_FN(converse2d::full_training::circular_s1));
 #endif
     m.impl("clear_cache", TORCH_FN(clear_fb_cache));
     m.impl("supports_cuda_graphs", TORCH_FN(supports_cuda_graphs));

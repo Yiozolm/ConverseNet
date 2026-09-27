@@ -1,0 +1,65 @@
+{
+  "comparison.json": {
+    "source": "artifacts\\training_pad_glue\\v1\\comparison.json",
+    "sha256": "f36ddc473e0e279c719437ffa2b9276b216da14971a6cd98bf0991ecd0b1e2a7",
+    "bytes": 1047,
+    "archive": "comparison.json.gz",
+    "archive_sha256": "bfd2cd9427a3be4f51744094cc89ace3b1179ab3102fec625f7fb4deaa93a999"
+  },
+  "baseline_epoch.json": {
+    "source": "artifacts\\training_pad_glue\\baseline_epoch\\result.json",
+    "sha256": "ed41c679e762474336d7fa1f84772cc8be42afc72368336d35088f63fdc70dda",
+    "bytes": 582467,
+    "archive": "baseline_epoch.json.gz",
+    "archive_sha256": "67ed52f184fb38113d3da27dedaaa7bce92eb5d5c407ffa0f98a1edf9ec28f4c"
+  },
+  "candidate_epoch.json": {
+    "source": "artifacts\\training_pad_glue\\v1\\candidate_epoch\\result.json",
+    "sha256": "2eabc8a4494ffee6a875eb12d2a8a80982fdd408ecbfe57f59f4092e61c5c738",
+    "bytes": 582735,
+    "archive": "candidate_epoch.json.gz",
+    "archive_sha256": "090db597963284221284be3f988a92d152679f2c430a787db610a759280e40b0"
+  },
+  "first_release_tests.json": {
+    "source": "artifacts\\training_pad_glue\\v1\\release_tests\\result.json",
+    "sha256": "9ccd360da9402a26765554acb57d183f1bdc785f81262c68c847d2a28a7d47ee",
+    "bytes": 8684,
+    "archive": "first_release_tests.json.gz",
+    "archive_sha256": "309e33ccf3bef781e95891935d116092410dc4a10771ab62ae268b8448b3c1ea"
+  },
+  "first_release_tests.log": {
+    "source": "artifacts\\training_pad_glue\\v1\\release_tests.log",
+    "sha256": "7d518d4d14b8818300fc271bf3091ca4f940e79af5dd352b15fc36c9f3f22ec8",
+    "bytes": 19085,
+    "archive": "first_release_tests.log.gz",
+    "archive_sha256": "50abcf9ee7d4514a097933e62c40b99834bebf764f7ff6e853c1d80852eaef57"
+  },
+  "final_release_tests.json": {
+    "source": "artifacts\\training_pad_glue\\v1\\release_guarded\\result.json",
+    "sha256": "5e29593759b90d1289c418541f2c4b526a26f7bfc4f4cf16e2faaab4631e6ea1",
+    "bytes": 8686,
+    "archive": "final_release_tests.json.gz",
+    "archive_sha256": "cc8e91c6c41167851df90ddc7fbfd2fd2dd29ff6db029db3d0576475766579dc"
+  },
+  "final_release_tests.log": {
+    "source": "artifacts\\training_pad_glue\\v1\\release_guarded.log",
+    "sha256": "f62780e0ed82f4693c515d9663f63c83274f75c69cfa2730350b218764ebad2b",
+    "bytes": 19240,
+    "archive": "final_release_tests.log.gz",
+    "archive_sha256": "ba5703f43a8cea2844e06bb04cfe9e027e9ca42bbecd12031f7472068f149711"
+  },
+  "fp64_errors.json": {
+    "source": "artifacts\\training_pad_glue\\v1\\release_guarded\\fp64_errors.json",
+    "sha256": "9f131899b4e64ce9aff246c146955e2cdaf858e99ae9348c9c8bc291df71a12b",
+    "bytes": 14019,
+    "archive": "fp64_errors.json.gz",
+    "archive_sha256": "bfe74a05df85a094644a8a49a5b3e81db93975f355922ca48115feb0820669db"
+  },
+  "build.log": {
+    "source": "artifacts\\training_pad_glue\\v1\\build.log",
+    "sha256": "c342812e415e2725c7707f48b679796628d877d6ade32804843839a3a8798933",
+    "bytes": 4849987,
+    "archive": "build.log.gz",
+    "archive_sha256": "6e4a35c5f90b4c69b4f7c77fa8eab2b65cdd29d564274861a580dd1e3f60fb85"
+  }
+}
