@@ -12,6 +12,7 @@ TORCH_LIBRARY(converse2d, m) {
 #ifdef CONVERSE2D_WITH_CUDA
     m.def("_training_full_spectral(Tensor y, Tensor p, Tensor k, Tensor regularizer, int scale) -> Tensor");
     m.def("_training_pad_complex(Tensor x, int padding) -> Tensor");
+    m.def("_training_real_crop(Tensor(a) spectrum, int padding) -> Tensor(a)");
     m.def("_training_circular_s1(Tensor x, Tensor weight, Tensor bias, int padding, float eps=1e-5) -> Tensor");
 #endif
     m.def("clear_cache() -> ()");
@@ -27,6 +28,7 @@ TORCH_LIBRARY_IMPL(converse2d, CompositeImplicitAutograd, m) {
 #ifdef CONVERSE2D_WITH_CUDA
     m.impl("_training_full_spectral", TORCH_FN(converse2d::full_training::full_spectral));
     m.impl("_training_pad_complex", TORCH_FN(converse2d::full_training::circular_pad_complex));
+    m.impl("_training_real_crop", TORCH_FN(converse2d::full_training::real_crop));
     m.impl("_training_circular_s1", TORCH_FN(converse2d::full_training::circular_s1));
 #endif
     m.impl("clear_cache", TORCH_FN(clear_fb_cache));

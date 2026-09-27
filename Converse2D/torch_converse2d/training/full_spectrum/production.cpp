@@ -3,10 +3,11 @@
 #include "full_fusion.cpp"
 #include "psf_autograd.h"
 #include "circular_pad_autograd.h"
+#include "real_crop_autograd.h"
 #include <cmath>
 
 namespace converse2d::full_training {
-at::Tensor spatial(at::Tensor x, at::Tensor prior, at::Tensor weight, at::Tensor bias, int64_t scale, double eps) {
+static at::Tensor spatial_complex(at::Tensor x, at::Tensor prior, at::Tensor weight, at::Tensor bias, int64_t scale, double eps) {
     const auto h=x.size(2), w=x.size(3);
     // Independent per-call FP32 preparation preserves the original graph and
     // gradient accumulation order. The legacy half-spectrum scope is not used.
@@ -24,7 +25,11 @@ at::Tensor spatial(at::Tensor x, at::Tensor prior, at::Tensor weight, at::Tensor
         laid_out.copy_(solved);
         solved=laid_out;
     }
-    return at::real(at::fft_ifft2(solved));
+    return at::fft_ifft2(solved);
+}
+
+at::Tensor spatial(at::Tensor x,at::Tensor prior,at::Tensor weight,at::Tensor bias,int64_t scale,double eps) {
+    return at::real(spatial_complex(x,prior,weight,bias,scale,eps));
 }
 
 at::Tensor circular_pad_complex(at::Tensor x,int64_t padding) {
@@ -49,9 +54,9 @@ at::Tensor circular_s1(at::Tensor x,at::Tensor weight,at::Tensor bias,int64_t pa
     c10::cuda::CUDAGuard guard(x.device());
     auto padded=CircularPadComplex::apply(x,padding);
     // Preserve shared y/prior identity and the per-call differentiable kernel FFT.
-    auto result=spatial(padded,padded,weight,bias,1,eps);
-    // Preserve the original real/crop view, strides, offset and in-place behavior.
-    return result.slice(2,padding,padding+h).slice(3,padding,padding+w);
+    auto result=spatial_complex(padded,padded,weight,bias,1,eps);
+    // Native view metadata is preserved; only the ordinary VJP is fused.
+    return real_crop(result,padding);
 }
 }
 #endif

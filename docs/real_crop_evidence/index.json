@@ -1,0 +1,324 @@
+{
+  "epoch_comparison.json": {
+    "source": "artifacts\\training_real_crop\\v2\\comparison.json",
+    "source_sha256": "421987c144667ee1b129eb4e9380a8c4c024b7969aca7466ade356fe8075f91a",
+    "source_is_gzip": false,
+    "archive": "epoch_comparison.json.gz",
+    "archive_sha256": "78158b0b98897314dcba87692c1838272921e3f43aa7685196eaf702371eb702",
+    "content_sha256": "421987c144667ee1b129eb4e9380a8c4c024b7969aca7466ade356fe8075f91a",
+    "content_bytes": 1117
+  },
+  "baseline_epoch.json": {
+    "source": "artifacts\\training_real_crop\\baseline_epoch\\result.json",
+    "source_sha256": "ce8c07bf41e04d59202407c033e45d16ebc1f99d7a469e30d50430cd4828361d",
+    "source_is_gzip": false,
+    "archive": "baseline_epoch.json.gz",
+    "archive_sha256": "8436241881b22de00e6dedd88192225ced5f3396130aa556ec25120763f3b660",
+    "content_sha256": "ce8c07bf41e04d59202407c033e45d16ebc1f99d7a469e30d50430cd4828361d",
+    "content_bytes": 584409
+  },
+  "candidate_epoch.json": {
+    "source": "artifacts\\training_real_crop\\v2\\candidate_epoch\\result.json",
+    "source_sha256": "b19fdde8c5c1b9bcb477c788ee74b6c9ae2fbbfc5af7650de793a7c747912924",
+    "source_is_gzip": false,
+    "archive": "candidate_epoch.json.gz",
+    "archive_sha256": "7bfa01ddb6322ae0fcb743c54330110a9272ed8e3587f5ce644eed6a3ac9da4f",
+    "content_sha256": "b19fdde8c5c1b9bcb477c788ee74b6c9ae2fbbfc5af7650de793a7c747912924",
+    "content_bytes": 584413
+  },
+  "initial_release_tests.json": {
+    "source": "artifacts\\training_real_crop\\v1\\release_initial\\result.json",
+    "source_sha256": "0626988be19fb443fe2b96795a00ec1a21479b6d779df4cd51e97c08e709945a",
+    "source_is_gzip": false,
+    "archive": "initial_release_tests.json.gz",
+    "archive_sha256": "2b34410594b6f0916981fd664a7e7cb79bedebef8dc1f16d799c68e4d2d98891",
+    "content_sha256": "0626988be19fb443fe2b96795a00ec1a21479b6d779df4cd51e97c08e709945a",
+    "content_bytes": 8929
+  },
+  "initial_release_tests.log": {
+    "source": "artifacts\\training_real_crop\\v1\\release_initial.log",
+    "source_sha256": "9fac95227dd9eb218ea696f332c3910daf6a4071ecb06ad7bf210c683e4f66a6",
+    "source_is_gzip": false,
+    "archive": "initial_release_tests.log.gz",
+    "archive_sha256": "946dfe7f9a7f96840a1d797ec568f50d263fd4af5ee136f426506af6b9c8a92b",
+    "content_sha256": "9fac95227dd9eb218ea696f332c3910daf6a4071ecb06ad7bf210c683e4f66a6",
+    "content_bytes": 21105
+  },
+  "final_release_tests.json": {
+    "source": "artifacts\\training_real_crop\\v2\\release_tests\\result.json",
+    "source_sha256": "67c471e1309e46f6ef6fb908ecb94d99eca85fe4f98e0379f00f363a7a34457d",
+    "source_is_gzip": false,
+    "archive": "final_release_tests.json.gz",
+    "archive_sha256": "8c4a945928d92bbf1b66599e8952ba34aabb064227f823fc7a217b915d492dc9",
+    "content_sha256": "67c471e1309e46f6ef6fb908ecb94d99eca85fe4f98e0379f00f363a7a34457d",
+    "content_bytes": 8927
+  },
+  "final_release_tests.log": {
+    "source": "artifacts\\training_real_crop\\v2\\release_tests.log",
+    "source_sha256": "167933b7e11e6685ae9082389826ee575ce14d20fb9df1753e301a06926704a2",
+    "source_is_gzip": false,
+    "archive": "final_release_tests.log.gz",
+    "archive_sha256": "f8a846bfdf8f5d151934365a05d5321537fd3eba3a5365f7703b412e1afae131",
+    "content_sha256": "167933b7e11e6685ae9082389826ee575ce14d20fb9df1753e301a06926704a2",
+    "content_bytes": 21105
+  },
+  "fp64_errors.json": {
+    "source": "artifacts\\training_real_crop\\v2\\release_tests\\fp64_errors.json",
+    "source_sha256": "9f131899b4e64ce9aff246c146955e2cdaf858e99ae9348c9c8bc291df71a12b",
+    "source_is_gzip": false,
+    "archive": "fp64_errors.json.gz",
+    "archive_sha256": "bfe74a05df85a094644a8a49a5b3e81db93975f355922ca48115feb0820669db",
+    "content_sha256": "9f131899b4e64ce9aff246c146955e2cdaf858e99ae9348c9c8bc291df71a12b",
+    "content_bytes": 14019
+  },
+  "final_build.log": {
+    "source": "artifacts\\training_real_crop\\v2\\build.log",
+    "source_sha256": "7c861cc129beb437df8c202d8abefa9a479cb3f588b9a3bf7cce9e68675ccf2c",
+    "source_is_gzip": false,
+    "archive": "final_build.log.gz",
+    "archive_sha256": "388db2b8f7d6a88069c71141e32530d3a3150f095e624add439360abb8d64aed",
+    "content_sha256": "7c861cc129beb437df8c202d8abefa9a479cb3f588b9a3bf7cce9e68675ccf2c",
+    "content_bytes": 4850431
+  },
+  "vjp_timing.json": {
+    "source": "artifacts\\training_real_crop\\v2\\vjp_timing.json",
+    "source_sha256": "848f131fbc7825304be26dd3f16ec7ce46e4d7fe9772d16113e89bf9731fccd0",
+    "source_is_gzip": false,
+    "archive": "vjp_timing.json.gz",
+    "archive_sha256": "f50185514de16e4ee00b0d4d4affb1eafdfd6329cb2d277240a9c27302b565cf",
+    "content_sha256": "848f131fbc7825304be26dd3f16ec7ce46e4d7fe9772d16113e89bf9731fccd0",
+    "content_bytes": 15228
+  },
+  "diagnosis_summary.json": {
+    "source": "artifacts\\real_crop_diagnosis\\summary.json",
+    "source_sha256": "42638dafd588419c8030bd1341eca8b05fb9cc61abb94821d48053518f476dcb",
+    "source_is_gzip": false,
+    "archive": "diagnosis_summary.json.gz",
+    "archive_sha256": "f265a654640922eb3676a0618804cd209211214a2f33a0a933b55d6f6b387ba0",
+    "content_sha256": "42638dafd588419c8030bd1341eca8b05fb9cc61abb94821d48053518f476dcb",
+    "content_bytes": 2707
+  },
+  "trace_analysis.json": {
+    "source": "artifacts\\real_crop_diagnosis\\trace_analysis.json",
+    "source_sha256": "a4ab94bb72157689c531dcf304644af6d530444d65dca39547d5a006238e4f73",
+    "source_is_gzip": false,
+    "archive": "trace_analysis.json.gz",
+    "archive_sha256": "bd30b4144a2739b35bc10167078af97e05fa98221f148435d3570e0db50438a9",
+    "content_sha256": "a4ab94bb72157689c531dcf304644af6d530444d65dca39547d5a006238e4f73",
+    "content_bytes": 60151
+  },
+  "telemetry_analysis.json": {
+    "source": "artifacts\\real_crop_diagnosis\\telemetry_analysis.json",
+    "source_sha256": "16f46dd83be55518b91f173bdafd86e300bcc55bddb63e152f15c37579f0f139",
+    "source_is_gzip": false,
+    "archive": "telemetry_analysis.json.gz",
+    "archive_sha256": "6e28d090e125352a233e35b447b3337612da64f6ff31df0d6ef3b2d1ed20c564",
+    "content_sha256": "16f46dd83be55518b91f173bdafd86e300bcc55bddb63e152f15c37579f0f139",
+    "content_bytes": 25453
+  },
+  "same_process.json": {
+    "source": "artifacts\\real_crop_diagnosis\\same_process\\result.json",
+    "source_sha256": "a692af30c9a325d8c2914d813dbd82687bf3dd2075f1100627c23497259a4f5e",
+    "source_is_gzip": false,
+    "archive": "same_process.json.gz",
+    "archive_sha256": "19530734e8b24b240acbf5c300be9e2b9f2fcac93a184bb193017ee419696b48",
+    "content_sha256": "a692af30c9a325d8c2914d813dbd82687bf3dd2075f1100627c23497259a4f5e",
+    "content_bytes": 199710
+  },
+  "same_process_telemetry.json": {
+    "source": "artifacts\\real_crop_diagnosis\\same_process\\telemetry.json",
+    "source_sha256": "4e92888e4b3791148b32b898a0b38f134021d942fc13987deb341b765cff668e",
+    "source_is_gzip": false,
+    "archive": "same_process_telemetry.json.gz",
+    "archive_sha256": "e01b7b7ecee5114c2bf0b30ec1c0282c7e245063fa28e0f5d97e8f935c65653a",
+    "content_sha256": "4e92888e4b3791148b32b898a0b38f134021d942fc13987deb341b765cff668e",
+    "content_bytes": 35529
+  },
+  "native.trace.json": {
+    "source": "artifacts\\real_crop_diagnosis\\same_process\\native.trace.json.gz",
+    "source_sha256": "053c082486cf3030dc1a5f5b704cde4c0dbf558ae45d6483c9e693d7ba24b603",
+    "source_is_gzip": true,
+    "archive": "native.trace.json.gz",
+    "archive_sha256": "053c082486cf3030dc1a5f5b704cde4c0dbf558ae45d6483c9e693d7ba24b603",
+    "content_sha256": "0d0f96db3e340aaa14e08861ef85d7e9b366b115e04bd099ed2268170fcbca79",
+    "content_bytes": 16286052
+  },
+  "fused.trace.json": {
+    "source": "artifacts\\real_crop_diagnosis\\same_process\\fused.trace.json.gz",
+    "source_sha256": "b3e6f25f4b5c648eebf2d48728347186c448e9e04bb33fe164bb0aa98391ba2b",
+    "source_is_gzip": true,
+    "archive": "fused.trace.json.gz",
+    "archive_sha256": "b3e6f25f4b5c648eebf2d48728347186c448e9e04bb33fe164bb0aa98391ba2b",
+    "content_sha256": "2ece9a17a6323bb7efa5bf2237afdb6168ba51635805b486fd8ee2ee6acd89dc",
+    "content_bytes": 15680747
+  },
+  "sustained.json": {
+    "source": "artifacts\\real_crop_diagnosis\\sustained\\result.json",
+    "source_sha256": "a499e6ee369cc157a2694e65f0d51e3342b94da1c0bd9d0f40201c8b76d64342",
+    "source_is_gzip": false,
+    "archive": "sustained.json.gz",
+    "archive_sha256": "b8820f646e04cf1bf3f1a2685e87ac067bf63f182057a792d5fa61c753034c1f",
+    "content_sha256": "a499e6ee369cc157a2694e65f0d51e3342b94da1c0bd9d0f40201c8b76d64342",
+    "content_bytes": 218230
+  },
+  "sustained_original_scope.json": {
+    "source": "artifacts\\real_crop_diagnosis\\sustained\\result.original_scope.json",
+    "source_sha256": "2c5e5eb9e52562b265a82b144ebdef3f1c720062f9ed8c5691c14d7ee9a79d6f",
+    "source_is_gzip": false,
+    "archive": "sustained_original_scope.json.gz",
+    "archive_sha256": "cc10b1739e3ac63d13a8b53ee224b42dbfe25dfcfb44b92944299356ec5e2e7c",
+    "content_sha256": "2c5e5eb9e52562b265a82b144ebdef3f1c720062f9ed8c5691c14d7ee9a79d6f",
+    "content_bytes": 217854
+  },
+  "sustained_telemetry.json": {
+    "source": "artifacts\\real_crop_diagnosis\\sustained\\telemetry.json",
+    "source_sha256": "fe01722e7092d225c8e4aa05dc480d3a4b9ee269ddea682764c885833b22582c",
+    "source_is_gzip": false,
+    "archive": "sustained_telemetry.json.gz",
+    "archive_sha256": "0d6a456a0cfaad27b0ea120c944093f66b5bbf0cc83e2662372d1b09badf6555",
+    "content_sha256": "fe01722e7092d225c8e4aa05dc480d3a4b9ee269ddea682764c885833b22582c",
+    "content_bytes": 72540
+  },
+  "no_telemetry.json": {
+    "source": "artifacts\\real_crop_diagnosis\\no_telemetry\\result.json",
+    "source_sha256": "fae11541a8fe82d0a248d5af2048b2a4d74673ffeecfb1e1a628669d5e243ca4",
+    "source_is_gzip": false,
+    "archive": "no_telemetry.json.gz",
+    "archive_sha256": "a9cea942dd7ffbe5cf34abd3750fd128a6c1a55d27ecc7015f2977239257d0ab",
+    "content_sha256": "fae11541a8fe82d0a248d5af2048b2a4d74673ffeecfb1e1a628669d5e243ca4",
+    "content_bytes": 217872
+  },
+  "direct_a1.json": {
+    "source": "artifacts\\real_crop_diagnosis\\direct_0_native\\result.json",
+    "source_sha256": "df887b2c2bee48422d5ba079601f460322331e87fb2d56140033af9297e89a67",
+    "source_is_gzip": false,
+    "archive": "direct_a1.json.gz",
+    "archive_sha256": "c28d24b2e5b8e6c4792b2f0a45aff82d0afffbd93d3e852bb02b3b5fc1ea2796",
+    "content_sha256": "df887b2c2bee48422d5ba079601f460322331e87fb2d56140033af9297e89a67",
+    "content_bytes": 59335
+  },
+  "direct_b1.json": {
+    "source": "artifacts\\real_crop_diagnosis\\direct_1_fused_fresh\\result.json",
+    "source_sha256": "56f34d54a5a852b36f0e628902b0d0c77507ae6417a32c5e36f7fa182e08aa23",
+    "source_is_gzip": false,
+    "archive": "direct_b1.json.gz",
+    "archive_sha256": "6cf31ee956617058a2829a538912b6f97faee06a25d94c96163f9bfa12f7b85d",
+    "content_sha256": "56f34d54a5a852b36f0e628902b0d0c77507ae6417a32c5e36f7fa182e08aa23",
+    "content_bytes": 59581
+  },
+  "direct_b2.json": {
+    "source": "artifacts\\real_crop_diagnosis\\direct_2_fused_fresh\\result.json",
+    "source_sha256": "b1295280c57dad17678ff8e7a6cf7d8a05757961fe925ffce062554d6a289cbb",
+    "source_is_gzip": false,
+    "archive": "direct_b2.json.gz",
+    "archive_sha256": "afeda7088e756408a2e5abab87444ab8095f199996e20a86153540bce7cd44a9",
+    "content_sha256": "b1295280c57dad17678ff8e7a6cf7d8a05757961fe925ffce062554d6a289cbb",
+    "content_bytes": 59587
+  },
+  "direct_a2.json": {
+    "source": "artifacts\\real_crop_diagnosis\\direct_3_native_fresh\\result.json",
+    "source_sha256": "1abc03d34f38e99e81da6bb317f18a62d1d28615c641ba6984fca8ba8d92eccd",
+    "source_is_gzip": false,
+    "archive": "direct_a2.json.gz",
+    "archive_sha256": "a13e7ee8166a6e7ccc019cbcd034c155de976857c1fd7b0679f46a96c0ca622a",
+    "content_sha256": "1abc03d34f38e99e81da6bb317f18a62d1d28615c641ba6984fca8ba8d92eccd",
+    "content_bytes": 59339
+  },
+  "direct_setup_failure.json": {
+    "source": "artifacts\\real_crop_diagnosis\\direct_1_fused\\setup_failure.json",
+    "source_sha256": "4bb2a6bc4ec924fb06fdc93a0bf90798259a7327e355a36c26e9f570c4e46d79",
+    "source_is_gzip": false,
+    "archive": "direct_setup_failure.json.gz",
+    "archive_sha256": "48ba3599edfd27d5719bbcd169592af91e306578b041eef733347f525fbeff93",
+    "content_sha256": "4bb2a6bc4ec924fb06fdc93a0bf90798259a7327e355a36c26e9f570c4e46d79",
+    "content_bytes": 379
+  },
+  "same_process_harness.py": {
+    "source": "artifacts\\real_crop_diagnosis\\same_process\\harness.py",
+    "source_sha256": "e70cf24d08d0d644c5665df2d4f3528f4b0a6dc9123873a4612333eb1eb27ee2",
+    "source_is_gzip": false,
+    "archive": "same_process_harness.py.gz",
+    "archive_sha256": "105e05a7eda5a127a953faeaa38f4b2598bd1ae296366fb9736e0106a04524af",
+    "content_sha256": "e70cf24d08d0d644c5665df2d4f3528f4b0a6dc9123873a4612333eb1eb27ee2",
+    "content_bytes": 11336
+  },
+  "sustained_harness.py": {
+    "source": "artifacts\\real_crop_diagnosis\\sustained\\harness.py",
+    "source_sha256": "6cd1c52d8c35ff083465f052e766c1c2d4c7ca78e23bd01355927acbefe53243",
+    "source_is_gzip": false,
+    "archive": "sustained_harness.py.gz",
+    "archive_sha256": "0451a3b9645ca43f10443e56fe9fca92f0e5c3905d087d70273a59150f4bad16",
+    "content_sha256": "6cd1c52d8c35ff083465f052e766c1c2d4c7ca78e23bd01355927acbefe53243",
+    "content_bytes": 12255
+  },
+  "no_telemetry_harness.py": {
+    "source": "artifacts\\real_crop_diagnosis\\no_telemetry\\harness.py",
+    "source_sha256": "fbef0324fc5de683b402aa0e22f8539041447ef6cc888863b61880c73c0920b1",
+    "source_is_gzip": false,
+    "archive": "no_telemetry_harness.py.gz",
+    "archive_sha256": "195e5f83bba2f3b3ba8d73abddf39c98c74e95435686a81c3ee1ccab811ea780",
+    "content_sha256": "fbef0324fc5de683b402aa0e22f8539041447ef6cc888863b61880c73c0920b1",
+    "content_bytes": 13239
+  },
+  "direct_harness.py": {
+    "source": "artifacts\\real_crop_diagnosis\\direct_0_native\\harness.py",
+    "source_sha256": "3e02b8ee9e18663ed7bc6736201ae6f2ec17449eb8d3a3d4ad14df5201be6ecf",
+    "source_is_gzip": false,
+    "archive": "direct_harness.py.gz",
+    "archive_sha256": "b3b6a2c9f89493ba5392a3d91421d03d952f10f3cf482ad2516ea44a96bfd05f",
+    "content_sha256": "3e02b8ee9e18663ed7bc6736201ae6f2ec17449eb8d3a3d4ad14df5201be6ecf",
+    "content_bytes": 4485
+  },
+  "timing_diagnosis.png": {
+    "source": "artifacts\\real_crop_diagnosis\\timing_diagnosis.png",
+    "archive": "timing_diagnosis.png",
+    "format": "png",
+    "source_sha256": "c1e34c3560039136060b0b26217a7dd753cd958a4b591da7f25e62775a36a167",
+    "archive_sha256": "c1e34c3560039136060b0b26217a7dd753cd958a4b591da7f25e62775a36a167"
+  },
+  "landing_build.log": {
+    "source": "artifacts\\training_real_crop\\landing\\build.log",
+    "source_sha256": "4f84e857868a6e8fe3e0a02f338e227135f1bb582bcca58dec8b96292cc1be28",
+    "source_is_gzip": false,
+    "archive": "landing_build.log.gz",
+    "archive_sha256": "06fe88e43076f62f1755a4329080e96afe02b6cc86bcc4bcba36b349150fffb2",
+    "content_sha256": "4f84e857868a6e8fe3e0a02f338e227135f1bb582bcca58dec8b96292cc1be28",
+    "content_bytes": 4850431
+  },
+  "landing_release_tests.json": {
+    "source": "artifacts\\training_real_crop\\landing\\release_tests\\result.json",
+    "source_sha256": "c949b44905ba339746f0fa49a16443cb342024f4612b9b62fa18f054bc938870",
+    "source_is_gzip": false,
+    "archive": "landing_release_tests.json.gz",
+    "archive_sha256": "ced3ffbbf420578d1959ad7dfa29f175aac290da9ead61a8ae59bcfc4dfd9a49",
+    "content_sha256": "c949b44905ba339746f0fa49a16443cb342024f4612b9b62fa18f054bc938870",
+    "content_bytes": 8932
+  },
+  "landing_release_tests.log": {
+    "source": "artifacts\\training_real_crop\\landing\\release_tests.log",
+    "source_sha256": "10853f0703107be29bfaa5ba12e6fa94afaf229d20df5f4bc85808c4ef515ee1",
+    "source_is_gzip": false,
+    "archive": "landing_release_tests.log.gz",
+    "archive_sha256": "a7ee8e3eee23d833f918b53475b9e38a86f4eea011fd38cf04475f7299930e9f",
+    "content_sha256": "10853f0703107be29bfaa5ba12e6fa94afaf229d20df5f4bc85808c4ef515ee1",
+    "content_bytes": 21105
+  },
+  "landing_fp64_errors.json": {
+    "source": "artifacts\\training_real_crop\\landing\\release_tests\\fp64_errors.json",
+    "source_sha256": "9f131899b4e64ce9aff246c146955e2cdaf858e99ae9348c9c8bc291df71a12b",
+    "source_is_gzip": false,
+    "archive": "landing_fp64_errors.json.gz",
+    "archive_sha256": "bfe74a05df85a094644a8a49a5b3e81db93975f355922ca48115feb0820669db",
+    "content_sha256": "9f131899b4e64ce9aff246c146955e2cdaf858e99ae9348c9c8bc291df71a12b",
+    "content_bytes": 14019
+  },
+  "landing_source_delta.json": {
+    "source": "artifacts\\training_real_crop\\landing\\source_delta.json",
+    "source_sha256": "cc7993e345e01e9daa024cf8374d36b0e2a3182bc78807c41adb55e9533d258c",
+    "source_is_gzip": false,
+    "archive": "landing_source_delta.json.gz",
+    "archive_sha256": "c029b25cea97d0b8537ec47700388e20e9ba24781db3430fdf28c6d6180f02f5",
+    "content_sha256": "cc7993e345e01e9daa024cf8374d36b0e2a3182bc78807c41adb55e9533d258c",
+    "content_bytes": 505
+  }
+}
