@@ -1,0 +1,32 @@
+{
+  "kind": "pre_generation_candidate_selection",
+  "method": "fuse low-precision conversion with spatial padding",
+  "scope": "s1 inference; preserve FP32 padded buffer and unchanged solver",
+  "baseline": {
+    "path": "artifacts\\v4_campaign\\mixed_fusion_baseline_001.json",
+    "sha256": "aa4697064c6e190a85c44e594cf21a7624f76f568f818c63e17918197fe9bef0",
+    "cases": 16,
+    "passed": true
+  },
+  "ncu": {
+    "path": "artifacts\\v4_campaign\\mixed_fusion_baseline_ncu_001\\launcher.json",
+    "sha256": "87ed041098b5fb9c9ff75cf5615ff5b85e4a6a4ab792b270a8a36ef207e9bfb4",
+    "kernel_count": 15,
+    "aggregate": {
+      "dram_read_bytes": 186408704.0,
+      "dram_write_bytes": 84763904.0,
+      "profiled_kernel_duration_sum_ns": 745696.0,
+      "dram_total_bytes": 271172608.0
+    }
+  },
+  "evidence": "Six conversion/padding kernels precede the unchanged solver; one-pass conversion+padding can avoid a separate unpadded FP32 allocation. Stage probes are nonadditive.",
+  "candidate_blocks": [
+    128,
+    256,
+    512
+  ],
+  "selection": "Whole-call paired timings, then exact model comparison and paired model timings; no output quantization or weight arithmetic change",
+  "production_changes": false,
+  "selected_module_scope": "contiguous CUDA FP16 s1 circular positive-padding inference only; other dtypes/modes fall back",
+  "primitive_validation_scope": "FP16/BF16 and four padding modes, not blanket module performance admission"
+}

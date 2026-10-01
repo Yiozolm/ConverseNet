@@ -1,0 +1,67 @@
+{
+  "selected_block": 256,
+  "branches": [
+    {
+      "block": 128,
+      "report": "artifacts\\v4_campaign\\mixed_fusion_perf_b128_001.json",
+      "sha256": "2dc7dd639e7bc55794f9dc5ff0ef7f42d9d965ecec059bbdd8140f4543190fdd",
+      "all_declared_operator_requirements_passed": false,
+      "geometric_mean_paired_speedup": {
+        "wall_ms": 1.2327635781515396,
+        "cuda_event_ms": 1.2163527744605718
+      },
+      "primary_large_warm_ratios": [
+        {
+          "wall_ms": 1.3363027534380736,
+          "cuda_event_ms": 1.3217133165182657
+        },
+        {
+          "wall_ms": 1.2509026321748866,
+          "cuda_event_ms": 1.2546625884712863
+        }
+      ]
+    },
+    {
+      "block": 256,
+      "report": "artifacts\\v4_campaign\\mixed_fusion_perf_b256_002.json",
+      "sha256": "eec97e8c50ad0819981d72d1789296b31c43fe943d51506ab8ed661bf1947573",
+      "all_declared_operator_requirements_passed": true,
+      "geometric_mean_paired_speedup": {
+        "wall_ms": 1.2548031925246523,
+        "cuda_event_ms": 1.2556844594496448
+      },
+      "primary_large_warm_ratios": [
+        {
+          "wall_ms": 1.2890836870821436,
+          "cuda_event_ms": 1.2950947879333323
+        },
+        {
+          "wall_ms": 1.2540943398743423,
+          "cuda_event_ms": 1.2727538234597016
+        }
+      ]
+    },
+    {
+      "block": 512,
+      "report": "artifacts\\v4_campaign\\mixed_fusion_perf_b512_001.json",
+      "sha256": "8d714ecc66b39405b2292fe56fef4568a90b1879761f8ed5eb385e876f40e8ff",
+      "all_declared_operator_requirements_passed": true,
+      "geometric_mean_paired_speedup": {
+        "wall_ms": 1.277843408008853,
+        "cuda_event_ms": 1.2796044583857624
+      },
+      "primary_large_warm_ratios": [
+        {
+          "wall_ms": 1.2625043850169773,
+          "cuda_event_ms": 1.2635105933717283
+        },
+        {
+          "wall_ms": 1.1280982107000364,
+          "cuda_event_ms": 1.1271315098171062
+        }
+      ]
+    }
+  ],
+  "reason": "256 and512 meet every operator requirement. Their cross-workload geometric mean ratios differ by less than2%; choose the original256 default, which has stronger and more consistent benefit on the primary B4/C128 workload. No claim of globally optimal block size.",
+  "remaining_admission": "Actual fullmodel gate and matched-worker NCU traffic; no production promotion yet."
+}

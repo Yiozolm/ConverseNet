@@ -1,0 +1,20 @@
+{
+  "prior_report": "artifacts\\v4_campaign\\mixed_fusion_gate_b256_001.json",
+  "prior_report_sha256": "d130b619681ad4a4c3258743863587a1787e30917ef461e3dc54e2f54787e6f1",
+  "prior_full_gate_passed": false,
+  "failure_names": [
+    "module/fp16/circular/g0/weak/no_grad",
+    "module/fp16/circular/g0/weak/inference_mode",
+    "module/fp16/reflect/g2/weak/no_grad",
+    "module/fp16/reflect/g2/weak/inference_mode",
+    "module/fp16/broadcast2x3/weak/no_grad",
+    "module/fp16/broadcast2x3/weak/inference_mode",
+    "module/bf16/reflect/g2/weak/no_grad",
+    "module/bf16/reflect/g2/weak/inference_mode"
+  ],
+  "new_accelerated_scope": "FP16 contiguous CUDA circular s1 inference, FP32 weights/bias/output, eps>=1e-5",
+  "weak_regularization": "unchanged original module fallback; legacy budget failures retained",
+  "budget_or_reference_changes": false,
+  "kernel_source_changes": false,
+  "admission": "Active scope must pass all strict budgets; fallback must remain exact and finite. Never overwrite full-matrix failures."
+}
