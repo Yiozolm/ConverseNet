@@ -2,8 +2,7 @@
 
 This branch contains the FP32 implementation: full-spectrum training and
 half-spectrum inference, selected by autograd requirements. Build and API:
-[Converse2D](Converse2D/README.md). Validation and historical source:
-[release notes](docs/fp32_release.md).
+[Converse2D](Converse2D/README.md).
 
 The project description and published results below are from the original work;
 they are not new performance or convergence measurements for this branch.

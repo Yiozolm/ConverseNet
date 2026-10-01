@@ -39,17 +39,18 @@ passthrough and training passthrough inherited from main.
 Release benchmarks, quality campaigns, snapshots and note generation are local
 tools under `tools/release/`, excluded by `.gitignore`; they are not needed for
 this suite. Their measured source versions remain in commit `0a99235` under the
-old `test/` paths. Release notes and measured results stay under `docs/`.
+old `test/` paths. Experiment reports and measured results remain in Git history
+at commit `8750661`; they are excluded from the release tree.
 
 The tracked `tools/benchmark_fp32_p0.py` compares isolated checked builds for
 this optimization round. It records complete operator/VJP timing, memory,
 FP64 errors and tensor hashes; `--include-model` adds full USRNet inference
-and Adam steps. See `docs/fp32_p0.md` for the measured scope and rejected candidate.
+and Adam steps.
 
 `tools/benchmark_fp32_psf.py` measures the next PSF/s2 training-fusion batch.
 Its explicit `--deterministic-algorithms` lane makes external replicate-padding
 backward repeatable for exact comparisons. Default-mode results and their
-non-repeatable input gradients are preserved separately; see `docs/fp32_psf.md`.
+non-repeatable input gradients are preserved in the historical experiment reports.
 
 `tools/benchmark_fp32_roadmap.py` extends complete operator and model measurements
 to s3, peripheral expressions and Graph miss/hit lifetimes.

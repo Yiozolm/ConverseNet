@@ -68,12 +68,6 @@ The original `models.converse_core.converse2d_reference` and explicit
 that independent Python reference for numerical checking. Production modules
 require FP32; AMP and training-spectrum reuse are outside this release.
 
-See [release validation](../docs/fp32_release.md) for measured scope and the
-pre-cleanup source snapshot, and the [P0 optimization record](../docs/fp32_p0.md)
-for current scoped performance measurements. Neither establishes long-run convergence.
-The subsequent [PSF/s2 training record](../docs/fp32_psf.md) includes full-model
-Adam steps and separates deterministic admission from default-mode padding noise.
-
 ## Optional CUDA Graph execution
 
 `USRNetCUDAGraph(model, enabled=False)` calls the model directly on CPU or CUDA,

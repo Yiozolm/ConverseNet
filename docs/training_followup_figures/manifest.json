@@ -1,6 +1,0 @@
-{
-  "source": "artifacts\\training_followup\\training_time_v1.json",
-  "source_sha256": "665691184085211f7e22f2bd7312eb243f93e35d4fbba70e2216ecd2c2c004fe",
-  "image_sha256": "a3ec5d9e28ec39375d4d56106a12989ba3b19da71620a3b628bff4904ba25980",
-  "tool_sha256": "d8afc5c83b9b7749efdbd59eabfc31a179f24bfcc7249c98faab248e08179105"
-}
