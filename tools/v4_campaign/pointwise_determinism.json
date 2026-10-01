@@ -1,0 +1,521 @@
+{
+  "kind": "pointwise_reference_determinism_fix",
+  "fixture": "test_pointwise_wgrad.fixture(seed=4101), needs=(True,True,True)",
+  "production_unchanged": true,
+  "budgets_unchanged": true,
+  "reason": "Align unit-test native cuDNN baseline with the deterministic admission protocol, enabled=True, benchmark=False; restore flags after each test.",
+  "original_report": {
+    "path": "artifacts\\v4_campaign\\pointwise_baseline_determinism_001.json",
+    "sha256": "c3b3581da6e88c08984fddf0e41eb9e42c44ccd6984f7d7f9d8d1dfed630f663"
+  },
+  "diagnostic_rows": [
+    {
+      "deterministic": false,
+      "repeat": 0,
+      "hashes": {
+        "baseline": "c9d10f8913bae7df9dcada7aa975c92320360d6c42635b24ad4ef24fb8a03e41",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 1.8404617652123534e-06,
+          "rel_l2": 4.362162046395195e-07
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 1.5181712190017784,
+          "rel_l2": 1.010126884465723
+        },
+        "limits": {
+          "max_abs": 2.76069264781853e-06,
+          "rel_l2": 5.452702557993993e-07
+        },
+        "passed": false
+      }
+    },
+    {
+      "deterministic": false,
+      "repeat": 1,
+      "hashes": {
+        "baseline": "6edd380547f77cdf80401cbb99e9231237eb535f9852c06d8820b4438ab5c472",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 2.078880344313916e-06,
+          "rel_l2": 4.410145284032055e-07
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 1.3440581557572715,
+          "rel_l2": 0.9991365076824016
+        },
+        "limits": {
+          "max_abs": 3.118320516470874e-06,
+          "rel_l2": 5.512681605040069e-07
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": false,
+      "repeat": 2,
+      "hashes": {
+        "baseline": "0c2bd5f0e23cc5f6ab12b2057f0cb61b2a6a95f5c19ff6c5837c1ca2119068bb",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 2.555717502517041e-06,
+          "rel_l2": 4.3873759862439456e-07
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 1.0932883148731234,
+          "rel_l2": 1.0043217566206555
+        },
+        "limits": {
+          "max_abs": 3.833576253775561e-06,
+          "rel_l2": 5.484219982804932e-07
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": false,
+      "repeat": 3,
+      "hashes": {
+        "baseline": "52f3efcb83123a93eea176dc1609b52af3f4692074c7afdadc1d962b69d19c53",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 2.3172989234154784e-06,
+          "rel_l2": 4.3701493203434604e-07
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 1.2057728303348592,
+          "rel_l2": 1.0082806866456215
+        },
+        "limits": {
+          "max_abs": 3.4759483851232176e-06,
+          "rel_l2": 5.462686650429325e-07
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": false,
+      "repeat": 4,
+      "hashes": {
+        "baseline": "460b30dd0caf94410c4f055ef53b2fd2e0ae6976505f09f328f191ad99cf194e",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 2.328356592418146e-06,
+          "rel_l2": 4.395653363633645e-07
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 1.2000464579683285,
+          "rel_l2": 1.0024305360187282
+        },
+        "limits": {
+          "max_abs": 3.492534888627219e-06,
+          "rel_l2": 5.494566704542057e-07
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": false,
+      "repeat": 5,
+      "hashes": {
+        "baseline": "d0f1a1762e91ac41744cc82462efb62481c1a228f74650715c686318b4a0b30b",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 2.555717502517041e-06,
+          "rel_l2": 4.4164958111824723e-07
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 1.0932883148731234,
+          "rel_l2": 0.99769983847897
+        },
+        "limits": {
+          "max_abs": 3.833576253775561e-06,
+          "rel_l2": 5.52061976397809e-07
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": false,
+      "repeat": 6,
+      "hashes": {
+        "baseline": "9605ee620386f42908836b8010921b0df917dba3f56c789aa930a705de22e828",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 2.555717502517041e-06,
+          "rel_l2": 4.412150888543328e-07
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 1.0932883148731234,
+          "rel_l2": 0.9986823362957455
+        },
+        "limits": {
+          "max_abs": 3.833576253775561e-06,
+          "rel_l2": 5.51518861067916e-07
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": false,
+      "repeat": 7,
+      "hashes": {
+        "baseline": "82b7a21c0531b2b76c5ebc3dcc615421b4d164e96d8349c20ac5c4ad7583ffa2",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 2.328356592418146e-06,
+          "rel_l2": 4.3930086469669676e-07
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 1.2000464579683285,
+          "rel_l2": 1.0030340278301149
+        },
+        "limits": {
+          "max_abs": 3.492534888627219e-06,
+          "rel_l2": 5.491260808708709e-07
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": true,
+      "repeat": 0,
+      "hashes": {
+        "baseline": "f7e07099d6f488629872c2e4232ac7c82a6925b01b6040f6bbc2609acbf2907c",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 5.5418107209881384e-06,
+          "rel_l2": 1.135980063315596e-06
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 0.5041919008595068,
+          "rel_l2": 0.3878885994353617
+        },
+        "limits": {
+          "max_abs": 8.312716081482208e-06,
+          "rel_l2": 1.419975079144495e-06
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": true,
+      "repeat": 1,
+      "hashes": {
+        "baseline": "f7e07099d6f488629872c2e4232ac7c82a6925b01b6040f6bbc2609acbf2907c",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 5.5418107209881384e-06,
+          "rel_l2": 1.135980063315596e-06
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 0.5041919008595068,
+          "rel_l2": 0.3878885994353617
+        },
+        "limits": {
+          "max_abs": 8.312716081482208e-06,
+          "rel_l2": 1.419975079144495e-06
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": true,
+      "repeat": 2,
+      "hashes": {
+        "baseline": "f7e07099d6f488629872c2e4232ac7c82a6925b01b6040f6bbc2609acbf2907c",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 5.5418107209881384e-06,
+          "rel_l2": 1.135980063315596e-06
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 0.5041919008595068,
+          "rel_l2": 0.3878885994353617
+        },
+        "limits": {
+          "max_abs": 8.312716081482208e-06,
+          "rel_l2": 1.419975079144495e-06
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": true,
+      "repeat": 3,
+      "hashes": {
+        "baseline": "f7e07099d6f488629872c2e4232ac7c82a6925b01b6040f6bbc2609acbf2907c",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 5.5418107209881384e-06,
+          "rel_l2": 1.135980063315596e-06
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 0.5041919008595068,
+          "rel_l2": 0.3878885994353617
+        },
+        "limits": {
+          "max_abs": 8.312716081482208e-06,
+          "rel_l2": 1.419975079144495e-06
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": true,
+      "repeat": 4,
+      "hashes": {
+        "baseline": "f7e07099d6f488629872c2e4232ac7c82a6925b01b6040f6bbc2609acbf2907c",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 5.5418107209881384e-06,
+          "rel_l2": 1.135980063315596e-06
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 0.5041919008595068,
+          "rel_l2": 0.3878885994353617
+        },
+        "limits": {
+          "max_abs": 8.312716081482208e-06,
+          "rel_l2": 1.419975079144495e-06
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": true,
+      "repeat": 5,
+      "hashes": {
+        "baseline": "f7e07099d6f488629872c2e4232ac7c82a6925b01b6040f6bbc2609acbf2907c",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 5.5418107209881384e-06,
+          "rel_l2": 1.135980063315596e-06
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 0.5041919008595068,
+          "rel_l2": 0.3878885994353617
+        },
+        "limits": {
+          "max_abs": 8.312716081482208e-06,
+          "rel_l2": 1.419975079144495e-06
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": true,
+      "repeat": 6,
+      "hashes": {
+        "baseline": "f7e07099d6f488629872c2e4232ac7c82a6925b01b6040f6bbc2609acbf2907c",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 5.5418107209881384e-06,
+          "rel_l2": 1.135980063315596e-06
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 0.5041919008595068,
+          "rel_l2": 0.3878885994353617
+        },
+        "limits": {
+          "max_abs": 8.312716081482208e-06,
+          "rel_l2": 1.419975079144495e-06
+        },
+        "passed": true
+      }
+    },
+    {
+      "deterministic": true,
+      "repeat": 7,
+      "hashes": {
+        "baseline": "f7e07099d6f488629872c2e4232ac7c82a6925b01b6040f6bbc2609acbf2907c",
+        "candidate": "24746158e258ffba8a18094efe7619eedd2afb2460e5a7ddaa375adbe973d669",
+        "fp64": "c2167457dc993c8cf621c72ea9cc3d2e043f2fe185503dcef46dec26a98613c6"
+      },
+      "check": {
+        "regime": "normal",
+        "baseline": {
+          "finite": true,
+          "max_abs": 5.5418107209881384e-06,
+          "rel_l2": 1.135980063315596e-06
+        },
+        "candidate": {
+          "finite": true,
+          "max_abs": 2.7941360816186034e-06,
+          "rel_l2": 4.4063371574598004e-07
+        },
+        "ratio": {
+          "max_abs": 0.5041919008595068,
+          "rel_l2": 0.3878885994353617
+        },
+        "limits": {
+          "max_abs": 8.312716081482208e-06,
+          "rel_l2": 1.419975079144495e-06
+        },
+        "passed": true
+      }
+    }
+  ],
+  "original_release_failure": {
+    "path": ".build/fftfree-padcancel-checked-release-v4.log",
+    "sha256": "5b4c8ef12b06b3d96baf5e20f43afe5cbfdb66dbd7e914aed3d3ae9eba1fd54b",
+    "failed_subcases": 1,
+    "decision": "Failure preserved; not relabeled"
+  },
+  "intermediate_test_setup_error": {
+    "path": ".build/fftfree-padcancel-release-v5.log",
+    "sha256": "47b13a027e977ca4d29b8cfa6f8f2de6209bdaf7914f3e27312653dd48afd7b0",
+    "failed_subcases": 5,
+    "reason": "cudnn.flags default disabled cuDNN; fixed by explicit enabled=True; diagnostic not admission"
+  }
+}

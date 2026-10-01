@@ -54,6 +54,13 @@ class PointwiseWgrad(CUDATestCase):
         environment = patch.dict(os.environ, {'CONVERSE2D_BACKEND': ''})
         environment.start()
         self.addCleanup(environment.stop)
+        # Match the declared admission protocol. The native cuDNN FP32 weight
+        # gradient otherwise uses a nondeterministic reduction: its error
+        # budget changes between identical calls while GEMM/FP64 stay fixed.
+        cudnn = torch.backends.cudnn.flags(enabled=True, benchmark=False, deterministic=True,
+                                         allow_tf32=False)
+        cudnn.__enter__()
+        self.addCleanup(cudnn.__exit__, None, None, None)
 
     def assert_three_way(self, raw, needs=(True, True, True), *, higher=False):
         reference, _ = evaluate(raw, needs, dtype=torch.float64, higher=higher)
