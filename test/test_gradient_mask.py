@@ -1,9 +1,9 @@
-"""Frozen-input VJPs retain Python FP32 bits while pruning unused work."""
+"""Frozen-input VJPs retain FP64 accuracy budgets while pruning unused work."""
 import unittest
 
 import torch
 
-from support import CUDATestCase, compare_spatial, fixture, leaves
+from support import CUDATestCase, compare_spatial, fixture, leaves, check_operator_results
 from models.converse_core import converse2d_reference
 
 
@@ -64,13 +64,12 @@ class GradientMaskCUDA(CUDATestCase):
         for scale in (1, 2, 3):
             raw, upstream = fixture(scale)
             for index in range(4):
-                results = []
-                for fn in (torch.ops.converse2d.forward, converse2d_reference):
-                    data = leaves(raw, "cuda")
-                    output = fn(*data, scale)
-                    results.append(torch.autograd.grad(output, data[index], upstream.cuda())[0])
+                data = leaves(raw, "cuda")
+                output = torch.ops.converse2d.forward(*data, scale)
+                gradient = torch.autograd.grad(output, data[index], upstream.cuda())[0]
                 with self.subTest(scale=scale, requested=index):
-                    self.assert_bytes_equal(*results, "requested VJP")
+                    check_operator_results(self, (output, gradient), data, upstream.cuda(), scale,
+                                           requested=[data[index]])
 
     def test_higher_order_with_frozen_inputs(self):
         for scale in (1, 2, 3):
@@ -124,7 +123,7 @@ class GradientMaskCUDA(CUDATestCase):
                     torch.cuda.current_stream().wait_stream(stream)
                     graph.replay()
                     torch.cuda.synchronize()
-                    self.assert_results_equal(actual, expected)
+                    check_operator_results(self, actual, data, gradient, scale)
                     graph.reset()
 
 

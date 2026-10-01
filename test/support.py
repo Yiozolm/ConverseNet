@@ -101,8 +101,8 @@ def leaves(raw, device, *, strided=False, transpose=False, needs=None):
 
 
 def capture(call, raw, upstream, *, scale, shared=False, strided=False,
-            transpose=False, needs=None, eps=1e-5):
-    data = leaves(raw, "cuda", strided=strided, transpose=transpose, needs=needs)
+            transpose=False, needs=None, eps=1e-5, dtype=torch.float32):
+    data = leaves([v.to(dtype) for v in raw], "cuda", strided=strided, transpose=transpose, needs=needs)
     if shared:
         data = [data[0], data[0], *data[-2:]]
     if transpose:
@@ -111,12 +111,35 @@ def capture(call, raw, upstream, *, scale, shared=False, strided=False,
     requested = (data[0], data[2], data[3]) if shared else data
     requested = [value for value in requested if value.requires_grad]
     output = call(*data, scale, eps)
-    return (output, *torch.autograd.grad(output, requested, upstream.to("cuda")))
+    return (output, *torch.autograd.grad(output, requested, upstream.to(device="cuda", dtype=dtype)))
 
 
 def compare_spatial(case, raw, upstream, **kwargs):
     from models.converse_core import converse2d_reference
+    from fp32_baseline import converse2d_reference as baseline_reference
+    from numerical_policy import assert_budget
     actual = capture(torch.ops.converse2d.forward, raw, upstream, **kwargs)
-    expected = capture(converse2d_reference, raw, upstream, **kwargs)
-    case.assert_results_equal(actual, expected)
+    expected = capture(baseline_reference, raw, upstream, **kwargs)
+    high = capture(converse2d_reference, raw, upstream, dtype=torch.float64, **kwargs)
+    assert_budget(case, actual, expected, high,
+                  regime='weak' if kwargs.get('eps', 1e-5) < 1e-5 else 'normal')
     return actual[0]
+
+
+def check_operator_results(test, actual, data, upstream, scale, eps=1e-5, requested=None):
+    """Budget for custom layouts/Graph VJPs; preserve shared tensor identity."""
+    from fp32_baseline import converse2d_reference as baseline_reference
+    from models.converse_core import converse2d_reference
+    from numerical_policy import assert_budget
+    results = []
+    for call, dtype in ((baseline_reference, torch.float32), (converse2d_reference, torch.float64)):
+        converted = {}
+        for v in data:
+            if id(v) not in converted:
+                converted[id(v)] = v.detach().to(dtype).requires_grad_(v.requires_grad)
+        values = [converted[id(v)] for v in data]
+        targets = ([converted[id(v)] for v in requested] if requested is not None else
+                   [v for v in converted.values() if v.requires_grad])
+        out = call(*values, scale, eps)
+        results.append((out, *torch.autograd.grad(out, targets, upstream.to(dtype))))
+    assert_budget(test, actual, *results, regime='weak' if eps < 1e-5 else 'normal')

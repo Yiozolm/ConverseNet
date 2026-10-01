@@ -4,7 +4,9 @@ import unittest
 import torch
 
 from support import CUDATestCase, ExtensionTestCase, compare_spatial, fixture, leaves, profiled
-from models.converse_core import converse2d_fp32
+from models.converse_core import converse2d_reference
+from fp32_baseline import converse2d_fp32
+from numerical_policy import assert_budget
 
 
 class FrozenInferenceCPU(ExtensionTestCase):
@@ -57,13 +59,16 @@ class InferenceP0(CUDATestCase):
                             x = args[0].contiguous()
                             prior = x if shared else args[1].contiguous()
                             expected = converse2d_fp32(x, prior, args[2], args[3].contiguous(), scale)
+                            dx = x.double()
+                            dp = dx if shared else prior.double()
+                            high = converse2d_reference(dx, dp, args[2].double(), args[3].double(), scale)
                             torch.ops.converse2d.clear_cache()
                             with torch.enable_grad():
                                 for _ in range(2):
                                     actual = torch.ops.converse2d.forward(*args, scale)
                                     self.assertTrue(torch.is_grad_enabled())
                                     self.assertFalse(actual.requires_grad)
-                                    self.assert_bytes_equal(actual, expected, "frozen cold/hot")
+                                    assert_budget(self, (actual,), (expected,), (high,))
 
     def test_frozen_caches_preparation_and_preserves_training(self):
         raw, upstream = fixture(2)

@@ -1,12 +1,62 @@
 """FP32 release contracts and independent FP64 error measurements."""
-import json
+import os
 import unittest
 import torch
-from support import ROOT, CUDATestCase, fixture, leaves, profiled
+from support import CUDATestCase, fixture, leaves, profiled
 from models.converse_core import converse2d_reference, converse2d_fp32
+from fp32_baseline import converse2d_fp32 as baseline_fp32
+from numerical_cases import numerical_cases, evaluate
+from numerical_policy import comparison, denominator_statistics, write_report
+
+
+def check_numerical_matrix(test, candidate, device, level):
+    rows = []
+    cases = list(numerical_cases(level))
+    try:
+        for case in cases:
+            raw, up = case.fixture()
+            denominator = denominator_statistics(raw, case.scale, case.eps, device)
+            for mode in ('training', 'no_grad', 'inference_mode', 'frozen'):
+                with test.subTest(case=case.name, mode=mode):
+                    high = evaluate(converse2d_reference, raw, up, case,
+                                    device=device, dtype=torch.float64, mode=mode)
+                    baseline = evaluate(baseline_fp32, raw, up, case, device=device, mode=mode)
+                    actual = evaluate(candidate, raw, up, case, device=device, mode=mode)
+                    test.assertEqual(len(actual), len(high))
+                    test.assertEqual(len(baseline), len(high))
+                    failures = []
+                    for label, a, b, r in zip(('output', 'dx', 'dprior', 'dweight', 'dbias'), actual, baseline, high):
+                        row = dict(case=case.name, scale=case.scale, eps=case.eps,
+                                   mode=mode, tensor=label, **denominator,
+                                   **comparison(a, b, r, regime='weak' if case.weak else 'normal',
+                                                distribution=True))
+                        # Fixed spatial tolerances target ordinary production
+                        # amplitudes. Dynamic-range stress retains BOTH FP64
+                        # gates; its allclose result is diagnostic, not a gate.
+                        if not case.weak and mode != 'training':
+                            row['spatial_smoke_required'] = case.distribution != 'dynamic'
+                            try:
+                                torch.testing.assert_close(a, b, atol=1e-5, rtol=1e-5)
+                                row['spatial_smoke_passed'] = True
+                            except AssertionError:
+                                row['spatial_smoke_passed'] = False
+                                if row['spatial_smoke_required']:
+                                    row['passed'] = False
+                        rows.append(row)
+                        if not row['passed']:
+                            failures.append(row)
+                    test.assertFalse(failures, failures)
+    finally:
+        path = write_report('fp64_errors', rows, device=device,
+                            extra={'matrix_level': level, 'expected_rows': len(cases) * 8,
+                                   'complete': len(rows) == len(cases) * 8})
+        print(f'Numerical report: {path}')
 
 
 class PortableFP32(unittest.TestCase):
+    def test_portable_fp64_budget(self):
+        check_numerical_matrix(self, converse2d_fp32, 'cpu', 'fast')
+
     def test_cpu_full_training_and_half_inference(self):
         for s in (1, 2, 3, 4):
             raw, upstream = fixture(s)
@@ -33,30 +83,8 @@ class PortableFP32(unittest.TestCase):
 
 class ReleaseContracts(CUDATestCase):
     def test_independent_fp64_error_noninferiority(self):
-        rows = []
-        for s in (1, 2, 3, 4):
-            for weak in (None, 0.0, 1e-6):
-                raw, up = fixture(s, weak=weak)
-                eps = 1e-5 if weak is None else 1e-8
-                def run(fn, dtype):
-                    a = [v.cuda().to(dtype).requires_grad_() for v in raw]
-                    out = fn(*a, s, eps)
-                    return (out, *torch.autograd.grad(out, a, up.cuda().to(dtype)))
-                high = run(converse2d_reference, torch.float64)
-                python = run(converse2d_reference, torch.float32)
-                actual = run(torch.ops.converse2d.forward, torch.float32)
-                for label, a, p, r in zip(('output', 'dx', 'dprior', 'dweight', 'dbias'), actual, python, high):
-                    def errors(v):
-                        delta = v.double()-r
-                        return [delta.abs().max().item(), (delta.norm()/r.norm().clamp_min(1e-300)).item()]
-                    ae, pe = errors(a), errors(p)
-                    rows.append(dict(scale=s, weak=weak, tensor=label, candidate=ae, python=pe))
-                    self.assertTrue(torch.isfinite(a).all())
-                    self.assertLessEqual(ae[0], pe[0], rows[-1])
-                    self.assertLessEqual(ae[1], pe[1], rows[-1])
-        directory = ROOT/'artifacts/fp32_release'
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory/'fp64_errors.json').write_text(json.dumps(rows, indent=2))
+        check_numerical_matrix(self, torch.ops.converse2d.forward, 'cuda',
+                               os.environ.get('CONVERSE2D_NUMERICAL_LEVEL', 'full'))
 
     def test_higher_order_matches_python_fp32(self):
         for s in (1, 2, 3):

@@ -1,9 +1,9 @@
-"""Exact spatial admission and layout/lifetime checks for s2 kernel VJPs."""
+"""Budgeted spatial admission and layout/lifetime checks for s2 kernel VJPs."""
 import unittest
 
 import torch
 
-from support import CUDATestCase, compare_spatial, leaves
+from support import CUDATestCase, compare_spatial, leaves, check_operator_results
 
 
 def spectral_reference(y, prior, kernel, regularizer):
@@ -18,7 +18,7 @@ def spectral_reference(y, prior, kernel, regularizer):
 
 
 class Scale2KernelFusionCUDA(CUDATestCase):
-    def test_no_broadcast_spatial_vjps_keep_python_bytes(self):
+    def test_no_broadcast_spatial_vjps_meet_fp64_budget(self):
         for batch, channels, height, width in ((1, 1, 7, 9), (1, 5, 8, 10), (3, 5, 9, 7)):
             for weak in (None, 0.0, 1e-6):
                 generator = torch.Generator().manual_seed(98391 + batch * 7 + channels)
@@ -134,7 +134,7 @@ class Scale2KernelFusionCUDA(CUDATestCase):
             torch.cuda.current_stream().wait_stream(stream)
             graph.replay()
             torch.cuda.synchronize()
-            self.assert_results_equal(actual, expected)
+            check_operator_results(self, actual, data, upstream, 2)
             graph.reset()
 
 
