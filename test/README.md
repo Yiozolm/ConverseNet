@@ -148,3 +148,10 @@ An optimization that changes those operations must supply its own independent
 FP64 budget test; do not globally weaken `assert_bytes_equal`. Cache and stream
 consistency, spectrum routing, dtype rejection, higher derivatives and per-call
 training kernel FFT checks remain required. Fast-math, AMP and TF32 stay disabled.
+
+The opt-in [FP16/BF16 boundary study](../tools/v4_mixed_precision/README.md)
+has separate experimental tests and quantized-reference budgets. Its Python
+adapter casts low precision storage to FP32 before calling this same checked
+operator. Production dtype rejection and the FP32 budgets above still apply.
+Pretrained quantization sensitivity and short optimizer trajectories are
+research evidence, not mixed-precision production or convergence approval.
