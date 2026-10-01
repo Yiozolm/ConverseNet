@@ -208,6 +208,19 @@ class Converse2D(nn.Module):
         if any(t.dtype != torch.float32 for t in (x, self.weight, self.bias)):
             raise ValueError("Converse2D requires FP32 tensors")
 
+        backend = (os.environ.get("CONVERSE2D_BACKEND", "") or self.backend).lower()
+        if (type(self.scale) is int and self.scale == 1 and self.variant == "v7"
+                and type(self.padding) is int and self.padding_mode == "circular" and x.ndim == 4
+                and 0 < self.padding <= min(x.shape[-2:]) and x.is_cuda
+                and x.is_contiguous() and not x.is_neg() and not x.is_conj()
+                and torch.is_grad_enabled()
+                and any(t.requires_grad for t in (x, self.weight, self.bias))
+                and backend in ("auto", "cuda")):
+            _try_import_converse2d_ext()
+            if _HAS_CONVERSE2D_EXT and hasattr(torch.ops.converse2d, "_training_circular_s1"):
+                return torch.ops.converse2d._training_circular_s1(
+                    x, self.weight, self.bias, int(self.padding), float(self.eps))
+
         if self.padding > 0:
             x = nn.functional.pad(x, pad=[self.padding, self.padding, self.padding, self.padding], mode=self.padding_mode, value=0)
 

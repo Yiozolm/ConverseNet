@@ -2,6 +2,7 @@
 #include <ATen/ATen.h>
 #include <ATen/Dispatch.h>
 #include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
 #include <c10/util/complex.h>
 #include <vector>
@@ -90,9 +91,12 @@ Tensor full_adjoint_kernel_cuda(Tensor k0,Tensor a0,Tensor b0,Tensor power0,I s)
 }
 
 #include "scale1.cuh"
+#include "recompute_q.cuh"
 #include "batch_reduce.cuh"
 #include "scale2.cuh"
 #include "scale3.cuh"
 #include "psf.cuh"
+#include "circular_pad.cuh"
+#include "real_crop.cuh"
 
 } // namespace converse2d::full_training

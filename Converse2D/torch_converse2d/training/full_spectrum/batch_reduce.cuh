@@ -3,17 +3,18 @@
 // Only s1/B2 or B4/KB1/KC=C with an input VJP and a kernel VJP may use this.
 
 template<class T>__global__ void scale1_batch_prepare(
-    const Z<T>*g,const Z<T>*k,const Z<T>*q,const T*d,Z<T>*gy,Z<T>*gd,I n,I m) {
+    const Z<T>*g,const Z<T>*p,const Z<T>*k,const Z<T>*y,const T*d,Z<T>*gy,Z<T>*gd,I n,I m) {
     const I i=I(blockIdx.x)*blockDim.x+threadIdx.x;if(i>=n)return;
     const Z<T>t=product(g[i],k[i%m]),den(d[i%m],0);
     // These are exactly the original scale1_adjoint expressions. The gy
     // output may temporarily be gp; the second launch then completes gp.
     gy[i]=t/den;
-    gd[i]=product(-t,cj(q[i]/den));
+    const Z<T> qi=scale1_recompute_q(y[i],p[i],k[i%m],d[i%m]);
+    gd[i]=product(-t,cj(qi/den));
 }
 
 template<class T,int Batch>__global__ void scale1_batch_kernel(
-    const Z<T>*g,const Z<T>*p,const Z<T>*k,const Z<T>*q,
+    const Z<T>*g,const Z<T>*p,const Z<T>*k,const Z<T>*y,const T*d,
     const Z<T>*gy,Z<T>*gp,const T*power,Z<T>*out,I m,bool shared) {
     const I i=I(blockIdx.x)*blockDim.x+threadIdx.x;if(i>=m)return;
     const Z<T>zero(0,0),ki=k[i];
@@ -26,7 +27,8 @@ template<class T,int Batch>__global__ void scale1_batch_kernel(
         // sum_to's ATen reduction is non-fastest-axis, with four independent
         // accumulators initialized to +0. Do not combine direct and prediction
         // before their reductions, and do not conjugate before summing direct.
-        direct[b]=add(zero,product(gi,cj(q[j])));
+        const Z<T> qi=scale1_recompute_q(y[j],p[j],ki,d[i]);
+        direct[b]=add(zero,product(gi,cj(qi)));
         prediction[b]=add(zero,product(gm,cj(p[j])));
         if(gp) {
             // A unique (C,H,W) owner consumes every batch's intermediate gy
@@ -46,12 +48,13 @@ template<class T,int Batch>__global__ void scale1_batch_kernel(
 }
 
 Scale1BatchAdjoint full_scale1_batch_prepare_cuda(
-    Tensor g0,Tensor p0,Tensor k0,Tensor q0,Tensor d0,bool need_independent_y,bool need_prior) {
+    Tensor g0,Tensor p0,Tensor k0,Tensor y0,Tensor d0,bool need_independent_y,bool need_prior) {
     TORCH_CHECK(need_independent_y||need_prior,"batch reduction needs a reusable input-gradient output");
     Scale1BatchAdjoint stage;
     // Materialize once, and retain all four read-only inputs until stage two.
-    stage.g=plain(g0);stage.p=plain(p0);stage.k=plain(k0);stage.q=plain(q0);
-    auto d=plain(d0);
+    stage.g=plain(g0);stage.p=plain(p0);stage.k=plain(k0);
+    stage.y=y0.is_same(p0)?stage.p:plain(y0);stage.d=plain(d0);
+    auto d=stage.d;
     if(need_independent_y)stage.gy=at::empty(stage.g.sizes(),stage.g.options());
     if(need_prior)stage.gp=at::empty(stage.p.sizes(),stage.p.options());
     stage.intermediate_gy=stage.gy.defined()?stage.gy:stage.gp;
@@ -61,7 +64,7 @@ Scale1BatchAdjoint full_scale1_batch_prepare_cuda(
     auto stream=c10::cuda::getCurrentCUDAStream();
     CONVERSE_DISPATCH_FP32(d.scalar_type(),"full_scale1_batch_prepare",[&]{
         scale1_batch_prepare<scalar_t><<<(stage.g.numel()+255)/256,256,0,stream>>>(
-            stage.g.data_ptr<Z<scalar_t>>(),stage.k.data_ptr<Z<scalar_t>>(),stage.q.data_ptr<Z<scalar_t>>(),
+            stage.g.data_ptr<Z<scalar_t>>(),stage.p.data_ptr<Z<scalar_t>>(),stage.k.data_ptr<Z<scalar_t>>(),stage.y.data_ptr<Z<scalar_t>>(),
             d.data_ptr<scalar_t>(),stage.intermediate_gy.data_ptr<Z<scalar_t>>(),stage.gd.data_ptr<Z<scalar_t>>(),
             stage.g.numel(),stage.k.numel());
     });
@@ -78,7 +81,7 @@ Tensor full_scale1_batch_kernel_cuda(const Scale1BatchAdjoint& stage,Tensor powe
             constexpr int Batch=decltype(tag)::value;
             scale1_batch_kernel<scalar_t,Batch><<<(stage.k.numel()+255)/256,256,0,stream>>>(
                 stage.g.data_ptr<Z<scalar_t>>(),stage.p.data_ptr<Z<scalar_t>>(),stage.k.data_ptr<Z<scalar_t>>(),
-                stage.q.data_ptr<Z<scalar_t>>(),stage.intermediate_gy.data_ptr<Z<scalar_t>>(),
+                stage.y.data_ptr<Z<scalar_t>>(),stage.d.data_ptr<scalar_t>(),stage.intermediate_gy.data_ptr<Z<scalar_t>>(),
                 optional_data<Z<scalar_t>>(stage.gp),power.data_ptr<scalar_t>(),out.data_ptr<Z<scalar_t>>(),
                 stage.k.numel(),shared);
         };
