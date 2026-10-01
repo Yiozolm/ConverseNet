@@ -4,6 +4,15 @@ This branch contains the FP32 implementation: full-spectrum training and
 half-spectrum inference, selected by autograd requirements. Build and API:
 [Converse2D](Converse2D/README.md).
 
+The v4 development branch also provides a guarded FP32 GEMM weight gradient
+for USRNet prior pointwise convolutions: CUDA training, batch 4, C128 to C64,
+96x96, contiguous inputs and trainable weights. Other shapes, inference,
+frozen weights and the `pytorch` backend retain native convolution. Forward,
+input/bias gradients and higher derivatives use native ATen; checkpoint keys
+are unchanged. This path requires AMP and both TF32 flags to be disabled.
+See the [numerical policy](test/README.md#v4-numerical-acceptance) and
+[isolated experiments](tools/v4_experiments/README_c128_to64.md).
+
 The project description and published results below are from the original work;
 they are not new performance or convergence measurements for this branch.
 

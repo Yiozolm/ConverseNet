@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
 from models.converse_core import converse2d_reference, converse2d_fp32
+from models.pointwise import PointwiseConv2d
 
 
 _HAS_CONVERSE2D_EXT = False
@@ -375,12 +376,12 @@ class ConverseBlockAlphaVariant(nn.Module):
                                    nn.GELU(),
                                    Converse2D(2*out_channels, 2*out_channels, kernel_size, scale=scale, padding=padding, padding_mode=padding_mode, eps=eps), 
                                    nn.GELU(),
-                                   nn.Conv2d(2*out_channels, out_channels, 1, 1, 0))
+                                   PointwiseConv2d(2*out_channels, out_channels, 1, 1, 0))
                                   
         self.conv2 = nn.Sequential(LayerNorm(in_channels, eps=1e-5, data_format="channels_first"),
                                    nn.Conv2d(out_channels, 2*out_channels, 1, 1, 0),
                                    nn.GELU(),
-                                   nn.Conv2d(2*out_channels, out_channels, 1, 1, 0))
+                                   PointwiseConv2d(2*out_channels, out_channels, 1, 1, 0))
         
                                   
     def forward(self, x):

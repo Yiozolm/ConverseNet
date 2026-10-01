@@ -1,0 +1,117 @@
+{
+  "status": "accepted_production",
+  "baseline_commit": "7fadfcc",
+  "scope": {
+    "model": "ConverseUSRNet AlphaVariant prior",
+    "batch": 4,
+    "input_channels": 128,
+    "output_channels": 64,
+    "height": 96,
+    "width": 96,
+    "dtype": "float32",
+    "layout": "contiguous CUDA strided tensors without lazy value flags",
+    "inference": "native",
+    "B1": "native fallback",
+    "pytorch_backend": "native",
+    "native_components": [
+      "forward",
+      "dx",
+      "dbias",
+      "all higher-order VJPs"
+    ]
+  },
+  "broad_candidate_rejected": {
+    "cases": 168,
+    "failed_tensors": 63,
+    "failures_preserved": true
+  },
+  "restricted_prototype": {
+    "gate_cases": 168,
+    "actual_active_calls": 70,
+    "actual_native_fallback_calls": 70,
+    "complete_layer_calls": 70,
+    "complete_layer_wall_speedup_min_median_max": [
+      1.239313038735593,
+      1.2930177132557934,
+      1.3407036242035677
+    ]
+  },
+  "production": {
+    "operator_cases": 157,
+    "active_actual": 70,
+    "fallback_actual": 70,
+    "model_tensor_comparisons": 6670,
+    "model_passed": true,
+    "B4_Adam_speedups": [
+      {
+        "wall_ms": 1.0227755061639785,
+        "cuda_event_ms": 1.02274839129077
+      },
+      {
+        "wall_ms": 1.0239221973536734,
+        "cuda_event_ms": 1.023902530868775
+      }
+    ],
+    "arithmetic_AST_identity": {
+      "passed": true,
+      "allowed_normalization": "_fp32_policy -> fp32_policy identifier only",
+      "prototype_path": "C:\\Users\\Boyce\\.codex\\worktrees\\d3aa\\ConverseNet\\tools\\v4_experiments\\pointwise_wgrad.py",
+      "prototype_sha256": "8c39566200fdec62a3f7c6864ab0e186b2a7ded887e2e6bf229fc85e8cdd0eac",
+      "production_path": "C:\\Users\\Boyce\\.codex\\worktrees\\d3aa\\ConverseNet\\models\\pointwise.py",
+      "production_sha256": "b1c35cda4cbddb3e12465235deab4e159291538a73e13ad3695694f7cd5eff36",
+      "methods": {
+        "forward": "792d550c8f3fa28a576c854156607d077f11cdc5b12c157bb326674e372a8cbd",
+        "backward": "2d95aeeb5cd6726d840dded442a9af1b018e927fe60c4b5b0a5b977a13f9fb58"
+      }
+    },
+    "python_source_sha256": {
+      "tools\\v4_experiments\\wgrad_study_c128_to64.py": "4733e4e5620ebf407d18ba5b6facf0e0e5a889bb83f1ac13ae1c927884ee1ab5",
+      "tools\\v4_experiments\\pointwise_wgrad_c128_to64.py": "dbeebe493e1d9fe6646338227d3b7e1f8ffc82fad1e96f4041725feaafaa1b64",
+      "tools\\v4_experiments\\pointwise_wgrad.py": "8c39566200fdec62a3f7c6864ab0e186b2a7ded887e2e6bf229fc85e8cdd0eac",
+      "test\\numerical_policy.py": "ad8902d08a11df1aae769920fe736c2c59c34b96a76f2cb9003f84d040cc34b0",
+      "test\\fp32_baseline.py": "cca6d30273af8c4704c1c02cc07ffb42a163bae62f279db5fcb1129720b76441",
+      "test\\extension_loader.py": "a170018ae3a9cd90d93e5bfcea816d6ccf07e0ac1ce138e17b07ad74bdd89d8d",
+      "models\\converse_usrnet.py": "ca71724183569e843d7746df1aa7a0f80d920784995e25591b58cb661406a17b",
+      "models\\util_converse.py": "b3041ce6960888d323c8dee6bcf42ee63740842fc22cf1005e4d256ba24d63d3",
+      "model_zoo\\converse_usrnet.pth": "729529b8bc8cbda152d6b60734b01032b49c20fcb8b6da2fb33141d9c3378d82",
+      "tools\\v4_experiments\\wgrad_production_study.py": "fb7d90040e7f6fe38f81dcc559d6b2890d5c20b9d5bc1eb097c96bae151eccd3",
+      "tools\\v4_experiments\\wgrad_model_c128_to64.py": "ce9a54a3bf96c49374b4ae965260471d26d6ab13f6b7d4984013a499a2db03a1",
+      "models\\pointwise.py": "b1c35cda4cbddb3e12465235deab4e159291538a73e13ad3695694f7cd5eff36",
+      "models\\converse_core.py": "cca6d30273af8c4704c1c02cc07ffb42a163bae62f279db5fcb1129720b76441",
+      "tools\\roadmap_quality\\usrnet_training_data.py": "9cd4634db7702e9070529d59d8bdc53eee0a6031da1d06b0e9bece8058275578"
+    }
+  },
+  "release_suite": {
+    "tests": 154,
+    "passed": true,
+    "log_sha256": "07993ce4aca31487f97431ac43ce09e83b258dd60bbb424dc6a1ef13af2d3dcb"
+  },
+  "provenance": {
+    "broad_gate": {
+      "path": "artifacts/v4_campaign/wgrad_gate_v1.json",
+      "sha256": "37e156084dc12a6717c344dc97a9e2ce5746d58f40366fa3524ec48c8cb233bf"
+    },
+    "restricted_gate": {
+      "path": "artifacts/v4_campaign/wgrad_c128_gate_seed29.json",
+      "sha256": "0e66e35033c322c9822227ec72c11de5cb8164dba31c60521ef09ba3f55d3c9e"
+    },
+    "restricted_perf": {
+      "path": "artifacts/v4_campaign/wgrad_c128_perf_seed29.json",
+      "sha256": "80b30d68feb691b8889c27df29d8988a2b9842039c1b3573a64160f0b1eed852"
+    },
+    "prototype_model": {
+      "path": "artifacts/v4_campaign/wgrad_c128_model_v1.json",
+      "sha256": "cdfb3ba69041f6b38f1b34eb92f65ed2e80c5a38c8512fca1d92a32367be57b1"
+    },
+    "production": {
+      "path": "artifacts/v4_campaign/wgrad_production_v1.json",
+      "sha256": "a619eadafbb50990adfa850161c8eec86f97c1990648f0c6edfe55e1561b6ab1"
+    }
+  },
+  "convergence_evidence": false,
+  "notes": [
+    "Error budgets unchanged; broad C64-to128 candidate remains rejected.",
+    "Layer speedups include both layout copies and native dx/dbias; full-model speedups are separately measured.",
+    "Only production B4 scope is enabled; faster B1 prototype results do not expand production routing."
+  ]
+}

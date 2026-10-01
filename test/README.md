@@ -16,6 +16,7 @@ while build checks, the CPU extension and the portable Python fallback still run
 | `test_full_spectrum_default.py` | Full/half routing; budgeted FP32 output/VJP; shared/broadcast kernels, gradient masks, weak regularization and strided layouts |
 | `test_fp32_release.py` | Frozen FP32 baseline, independent FP64 budgets, denominator statistics, training and three inference contexts, higher derivatives, cache/streams and dtype contracts |
 | `test_numerical_policy.py` | Budget boundaries, improved-but-different candidates, nonfinite rejection, zero baseline, outliers and report preservation |
+| `test_pointwise_wgrad.py` | B4/C128-to-64/96x96 production GEMM weight VJP, FP64 budgets, masks, native higher-order fallback, checkpoint compatibility and backend isolation |
 | `test_gradient_mask.py` | All gradient subsets, broadcast reductions, higher derivatives and masked backward Graph replay; verifies unused reductions are skipped |
 | `test_inference_p0.py` | Frozen-input cache reuse without changing ATen arithmetic, cross-GradMode cache hits and layout invalidation |
 | `test_negative_metadata.py` | Lazy negative kernels, cold PSF materialization and same-pointer/version cache invalidation across all three GradMode contexts |
@@ -130,6 +131,16 @@ three Adam steps, and records output, loss, gradients, updated parameters and
 optimizer tensors with a 3e-5 model smoke tolerance. It is not proof
 of convergence; long training/quality campaigns remain necessary for release
 claims involving convergence.
+
+The guarded USRNet pointwise weight gradient has separate real-image B4 tests
+under `tools/v4_experiments/`. The ordinary small model smoke never activates
+this path. Promotion additionally requires all 140 actual prior pointwise
+calls (70 active and 70 native), three B4 seeds with three Adam updates, and
+paired complete-layer and complete-model timings. The model control switches
+only `PointwiseConv2d.backend` to `pytorch`, keeping every Converse solver on
+the same checked CUDA build. `wgrad_production_study.py` runs the actual
+production module and records its Python source hashes separately from the
+C++ binary manifest. Prototype results do not substitute for production tests.
 
 Private peripheral and preparation tests still carry their own exact contracts.
 An optimization that changes those operations must supply its own independent
