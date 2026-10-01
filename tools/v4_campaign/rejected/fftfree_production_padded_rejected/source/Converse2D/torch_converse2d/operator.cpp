@@ -8,7 +8,6 @@
 #include <ATen/core/grad_mode.h>
 #include <climits>
 #include <cmath>
-#include <limits>
 using at::Tensor;
 #ifdef CONVERSE2D_WITH_CUDA
 #include <c10/cuda/CUDAGraphsC10Utils.h>
@@ -113,10 +112,7 @@ Tensor converse2d_nearest_k2_s2(Tensor x, Tensor weight, Tensor bias,
     const bool differentiable = at::GradMode::is_enabled() &&
         (x.requires_grad() || weight.requires_grad() || bias.requires_grad());
 #ifdef CONVERSE2D_WITH_CUDA
-    // Two-component FP32 arithmetic requires a finite nonzero regularizer.
-    // Preserve the original ATen behavior for eps outside normal FP32 range.
-    if (x.is_cuda() && !differentiable && eps >= std::numeric_limits<float>::min()
-            && eps <= std::numeric_limits<float>::max()) {
+    if (x.is_cuda() && !differentiable) {
         TORCH_CHECK(!at::autocast::is_autocast_enabled(at::kCUDA), "autocast must be disabled");
         // Check differentiability above, before changing GradMode. Frozen
         // GradMode inputs are inference too; requires_grad leaves under

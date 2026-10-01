@@ -1,0 +1,89 @@
+{
+  "inputs": {
+    "sources": {
+      "common/fp32_dispatch.h": "8edbdf1f5ad194dcfc81666712ef0c1e38aa33a0141ff73857bbde527d60f868",
+      "common/spectrum_ops.h": "28b655e29bc2ce569c26d7c476f27eac8c1133fc2442fc709fca767e3f6ed5bf",
+      "converse2d.cpp": "792c06e3d6182d63e1a387311a18b0bae54dfcfe532ccc56eff9a6cdb7619a7e",
+      "inference/cache.cpp": "ceb0caede5c678574a45fcbd858aafe7225eff50343b2b3d942498998e37dc8e",
+      "inference/cache.h": "b1fd9eab896e3734430895d45535ceb8aa9999bf1cc61f886034a2a4d43dd81b",
+      "inference/cache_state.h": "18d7fddeb0727d4e0f0c4c990e0ac7a7dab9af5a2214955a4584b942e3d8537d",
+      "inference/detail/alias_kernels.cuh": "5c813a697719c862aa6d2277e91059f860ee6236d0f251c4d2f6b3cd8352e367",
+      "inference/detail/math.cuh": "02219ff82b62565b708ec6c9ea5f6ca22c568b6c7e0eef3e8672c435ac3ae4dc",
+      "inference/inference.h": "c52d78d55fc910ef95f72ad96eeb28ef8a9423bfcfbe54771c6e573b9d1d6e98",
+      "inference/inference_dispatch.cu": "5508064e1eeca297b4f3f6593f4e794a490778597851f1c5745ca7fb265f997c",
+      "inference/inference_generic.cu": "9a13caabb59abd59a2513ac901ced39fa14d5c8a962062446bbd66f721e42031",
+      "inference/inference_preparation.cpp": "f64a48e9ed1df109f2c390ad40e5b5dcfe2a8bb8dede37eee751631101b6c445",
+      "inference/inference_prepare.cu": "c9de0f20a0746f47d89e666ecfca3d7b759c34be682ac0a9f9515b9bdb0e9c01",
+      "inference/inference_scale1.cu": "33ce9d55970a6ca26ececa1e0d20c6bb3357019996118182f0d4d730f73496a7",
+      "inference/inference_scale2.cu": "281b6f56509caa93a10a3227158723bf7f339ca2044d95f071980d80a784d9ad",
+      "inference/inference_scale3.cu": "4ef7e677f52656713afcdbeeb36b18c0d0ed12206ac27b59d2db812280558eea",
+      "inference/launchers.cuh": "ead652ef7c30d77e5d61f0133b53a31cbe2e23ec85f2c9b06b7508a5ac781a1d",
+      "operator.cpp": "6e10f40cc6506e662f09ab2e1a368981834c114f252dc184b13a3844089b16d0",
+      "operator.h": "9efd1835ee4f67555762461d0a39b77f4e4dd6d2acdb28d030c2bad5ac74d171",
+      "peripheral/alpha_residual.cpp": "e344002c1e71b381807b2d206a048ce91fc586f8f4df9d8ef0b56019f927ee9c",
+      "peripheral/alpha_residual.cu": "41c8de54d3eccbbb9185b4721e831de49faad5b37790247cec77186c60858744",
+      "peripheral/alpha_residual.h": "d01c26ddd7ab7a4ddb06fb3eb76c7583e322f9c856293e5e29ff5da867b7761f",
+      "peripheral/layernorm.cpp": "b09e7f7b4d531d1797cb71d4b872a50257ef1529db8de932610628a6099e1bd6",
+      "peripheral/layernorm.cu": "7bde4fa43fe6b1a338dbe64fc28d6796e0f4874a442352496cf9f7485994e043",
+      "peripheral/layernorm.h": "05ca4ecd0cd0d14013f8295ab254e6d06de17847b2e8e53e59eaf78bd338aae1",
+      "reference/reference.cpp": "d4b5a0c434e2ecf8eefdbdf170946e11306aaa0e694a421fde33f6e45a964a2a",
+      "reference/reference.h": "5c3258424a1f9b50d6eb6f786df512427256f9b0acb4edc4d524e20c5dedc2ef",
+      "training/full_spectrum/batch_reduce.cuh": "33074eafa79f9eb07de753127b252d73d65d05d9e8b6f8e6ae9d421584b31967",
+      "training/full_spectrum/batch_reduce.h": "8f7aa78502e292a0cdc0cb08f1745416f37e5309169762642a1f07c8920aa88e",
+      "training/full_spectrum/circular_pad.cuh": "94487566ef8e6170d84a2e02ae587e56bcb5cec5aa7265ec0dffe23ef62b6c27",
+      "training/full_spectrum/circular_pad_autograd.h": "04bcdb918d38c3dc5f8cebddbcd3f72063393a0b34b3f8948561c6f8bc2bead2",
+      "training/full_spectrum/full_fusion.cpp": "a3fd736038c7ef8b1ac71531936d664e2623fec26aa93aeac156038c55e90d94",
+      "training/full_spectrum/full_fusion.cu": "6d6c7123622b6c5262557e83a699ccb69e2850509530aed6bf1f62b2aff54a77",
+      "training/full_spectrum/full_fusion.h": "a759810192dcdbbf44d80936072358775d3076c91cb758393e41eea49277e9b3",
+      "training/full_spectrum/production.cpp": "03c21939dca263a0217dc594583bb3a42df1fdb8894a4696572cec9ef2705a9c",
+      "training/full_spectrum/psf.cuh": "29b2226c2b20962e61d6cd6e66fef16d4c434a49b5b40513ae79472e93237e24",
+      "training/full_spectrum/psf_autograd.h": "f2692f0fb867887bb8b32dfaa0d78bb3fefc31d1ab2594bb09ed84a2ba81e317",
+      "training/full_spectrum/real_crop.cuh": "2586247b00a75d10024be7725e535c8b7fca950a4533bfbfbe64e4bc9f7ff6c9",
+      "training/full_spectrum/real_crop_autograd.h": "f9e96c65be1816185f4240381a1111d7eac3afcc204761a85a8d53c4e22d0574",
+      "training/full_spectrum/recompute_q.cuh": "5869d4e590d1d50a56f3c0078709a66c8032700f57a19c45f43dff44db0409c5",
+      "training/full_spectrum/scale1.cuh": "ed31d3d2ceefca3dcce5a5275835ec27b6435d85f075a9529385869b75e1e153",
+      "training/full_spectrum/scale2.cuh": "c93ed3680b59ea60a80303e7a71f083426af9ef551d5542253949ad0c04e6f21",
+      "training/full_spectrum/scale3.cuh": "b0fc6a647775fb61f7d6eefcf2493e6a30399cdf7980a70ceae9655b56f423f7",
+      "../build_config.py": "37fed6640cfbc5617d3e020f7f2076ba743becde602ae4aea7159943563ee800",
+      "../setup.py": "f075d226739e80a6e661c6d37ca59caffa5a8668f2d1a93544b14da250aa802b"
+    },
+    "torch": "2.11.0+cu130",
+    "cuda": "13.0",
+    "toolchain": {
+      "cl": {
+        "path": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe",
+        "size": 677776,
+        "mtime_ns": 1789901967487114900
+      },
+      "nvcc": {
+        "path": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin\\nvcc.exe",
+        "size": 19934832,
+        "mtime_ns": 1752731225000000000
+      },
+      "environment": {
+        "CUDA_HOME": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0",
+        "CUDA_PATH": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0",
+        "TORCH_CUDA_ARCH_LIST": "",
+        "CXX": "",
+        "CC": "",
+        "CL": "",
+        "_CL_": "",
+        "NVCC_PREPEND_FLAGS": "",
+        "NVCC_APPEND_FLAGS": "",
+        "INCLUDE": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.44.35207\\include;C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Auxiliary\\VS\\include;C:\\Program Files (x86)\\Windows Kits\\10\\include\\10.0.26100.0\\ucrt;C:\\Program Files (x86)\\Windows Kits\\10\\\\include\\10.0.26100.0\\\\um;C:\\Program Files (x86)\\Windows Kits\\10\\\\include\\10.0.26100.0\\\\shared;C:\\Program Files (x86)\\Windows Kits\\10\\\\include\\10.0.26100.0\\\\winrt;C:\\Program Files (x86)\\Windows Kits\\10\\\\include\\10.0.26100.0\\\\cppwinrt",
+        "LIB": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.44.35207\\lib\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\lib\\10.0.26100.0\\ucrt\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\\\lib\\10.0.26100.0\\\\um\\x64"
+      }
+    },
+    "cxx_flags": [
+      "/O2",
+      "/std:c++17"
+    ],
+    "cuda_flags": [
+      "-O3",
+      "-lineinfo"
+    ],
+    "loader_sha256": "a170018ae3a9cd90d93e5bfcea816d6ccf07e0ac1ce138e17b07ad74bdd89d8d"
+  },
+  "library": "converse2d_checked_ext.pyd",
+  "binary_sha256": "d83cbbfcdb767c2427feca5872c76c5ed36a589a2548d8d98f06dd230e63ff32"
+}

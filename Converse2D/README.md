@@ -14,14 +14,32 @@ direct indexed copies. Eligible s2 kernels without batch/channel broadcast
 also form their kernel gradient in the fused VJP, preserving the existing
 FP32 operation boundaries and broadcast fallback.
 
-`torch.no_grad()`, `torch.inference_mode()`, or all-frozen inputs select the
-half-spectrum inference path, including versioned fixed-kernel caches and
+For the public arbitrary-prior `forward`, `torch.no_grad()`,
+`torch.inference_mode()`, or all-frozen inputs select the half-spectrum
+inference path, including versioned fixed-kernel caches and
 graph-owned caches. `model.eval()` alone does not disable gradients.
 Frozen inputs under GradMode keep their existing ATen half-spectrum solve;
 they can reuse fixed-kernel preparation without switching its rounding order.
 Cache entries snapshot kernel sizes, strides and storage offset as well as its
 identity/version. First-order backward skips unused gradient outputs and
 reductions; higher-order derivatives keep the ATen fallback.
+
+The Python `Converse2D` module establishes an exact nearest-upsampled prior.
+For CUDA inference with kernel size 2 and scale 2, its private `_nearest_k2_s2`
+entry instead uses a pixel-local FP32 solve. Two-component FP32 accumulation
+and division correction meet the same frozen-FP32/independent-FP64 budgets;
+device arithmetic never uses FP64. Regularization is computed in that kernel.
+An exceptional power-of-two rescaling handles finite intermediates that would
+otherwise overflow the compensated calculation. This is not a guarantee of
+accurate results for every finite FP32 input.
+
+Valid small padding is omitted because cropping complete 2x2 phase blocks
+cancels it. This eligible module output is contiguous with storage offset zero,
+instead of a view into the padded output. Invalid padding retains the original
+errors; larger valid padding still uses pad/solve/crop. The fast path requires
+normal-range FP32 `eps`; other positive finite values retain padded FFT
+semantics. CPU, differentiable calls, arbitrary priors and `backend="pytorch"`
+keep their existing routing, gradient order and higher derivatives.
 
 ## Build
 

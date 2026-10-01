@@ -1,0 +1,16 @@
+{
+  "accepted": false,
+  "reason": "Actual production whole-model speedups 1.0275163 and 1.0264887 below preregistered 1.03; no threshold change",
+  "source_sha256": {
+    "Converse2D/build_config.py": "8474da3068bcb48dc5ce76f5b681cdc0b332efc18e2f9fc331330d0af62be81a",
+    "Converse2D/torch_converse2d/converse2d.cpp": "ec249558a4ed5bdbc3a61f6683fde2f7416b6aa2ec12ebc052934078592f0d2b",
+    "Converse2D/torch_converse2d/operator.cpp": "fed56517628533cbdde3827cc07127262b236e12448011107a60a189ae2012f2",
+    "Converse2D/torch_converse2d/operator.h": "24abb097003f1076d98e963ceeb1a452d210236e81ed74a2411011266a713db4",
+    "Converse2D/torch_converse2d/inference/nearest_k2_s2.cu": "4fe7291cab033f8d387f0c00809ef2f5ff8846d7a522d955f8ed9791114f2b91",
+    "Converse2D/torch_converse2d/inference/nearest_k2_s2.h": "83b4e4924645318f932e684cde4050e603d212e58515588eef89de58ae8e890e",
+    "models/util_converse.py": "340ae5d453bdc74d54312175a2650baaab80faf6c5aba21238bd49025f56951a",
+    "test/test_nearest_k2_s2.py": "d29ba644ced58eff5283227ac8f5b63d49feb27694ec1f7593b4e8c61f7aaad5",
+    "tools/v4_fftfree_production.py": "35d262247ee2eafc3740c08cd68e56397ff869f028c456867174bfb64889195f"
+  },
+  "report_sha256": "c21dfe4a24db05eb2b8aecabc460aa70546bd96b704568ec6f94383f5078dc8d"
+}

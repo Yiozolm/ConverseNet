@@ -17,6 +17,7 @@ while build checks, the CPU extension and the portable Python fallback still run
 | `test_fp32_release.py` | Frozen FP32 baseline, independent FP64 budgets, denominator statistics, training and three inference contexts, higher derivatives, cache/streams and dtype contracts |
 | `test_numerical_policy.py` | Budget boundaries, improved-but-different candidates, nonfinite rejection, zero baseline, outliers and report preservation |
 | `test_pointwise_wgrad.py` | B4/C128-to-64/96x96 production GEMM weight VJP, FP64 budgets, masks, native higher-order fallback, checkpoint compatibility and backend isolation |
+| `test_nearest_k2_s2.py` | Explicit nearest-prior FP32 inference, pad cancellation/layout, extreme finite weights/eps, CPU and differentiable fallbacks, arbitrary-prior isolation and Graph updates |
 | `test_gradient_mask.py` | All gradient subsets, broadcast reductions, higher derivatives and masked backward Graph replay; verifies unused reductions are skipped |
 | `test_inference_p0.py` | Frozen-input cache reuse without changing ATen arithmetic, cross-GradMode cache hits and layout invalidation |
 | `test_negative_metadata.py` | Lazy negative kernels, cold PSF materialization and same-pointer/version cache invalidation across all three GradMode contexts |

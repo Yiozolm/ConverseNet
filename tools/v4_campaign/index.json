@@ -1,0 +1,1090 @@
+{
+  "schema_version": 1,
+  "kind": "compact_v4_campaign_history",
+  "generated_by": {
+    "path": "tools/v4_campaign/archive_cpu.py",
+    "bytes": 11677,
+    "sha256": "2c5e1f6f7c4df6a5097337d27ae645ce4cc58697c482d0441839cb6613e99048"
+  },
+  "scope": "Source and decision archive only; not a replacement gate report or a new acceptance decision.",
+  "old_records_preserved_verbatim": true,
+  "protocol": {
+    "path": "tools/v4_campaign/protocol.json",
+    "bytes": 2240,
+    "sha256": "ef69c4a3cb90e1e45d66890d178def36e3a2b1a6850e210ae414b02004d44057"
+  },
+  "archived_files": [
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/power_fma_rejected/candidate.patch",
+        "bytes": 791,
+        "sha256": "2bf69d39faa731158486eaf3832b08a70b89475eb9aa7466168b4071a8e7771d"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/power_fma_rejected/candidate.patch",
+        "bytes": 791,
+        "sha256": "2bf69d39faa731158486eaf3832b08a70b89475eb9aa7466168b4071a8e7771d"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/power_fma_rejected/decision.json",
+        "bytes": 768,
+        "sha256": "da0d567201c518fd1361242f616f685666204f7c5d10d17ac19824c7a8dd6d94"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/power_fma_rejected/decision.json",
+        "bytes": 768,
+        "sha256": "da0d567201c518fd1361242f616f685666204f7c5d10d17ac19824c7a8dd6d94"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/power_fma_rejected/source_manifest.json",
+        "bytes": 6951,
+        "sha256": "39e6e8aa689bea37ef9efb225da6ef78d754ea489ca4ff4e667803eaae15ed2c"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/power_fma_rejected/source_manifest.json",
+        "bytes": 6951,
+        "sha256": "39e6e8aa689bea37ef9efb225da6ef78d754ea489ca4ff4e667803eaae15ed2c"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/div_vjp_rejected/candidate.patch",
+        "bytes": 4677,
+        "sha256": "ad2f07b127047ef9cd500ae75e38c772e2e1900b178c636b58c0807c2cc02efd"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/div_vjp_rejected/candidate.patch",
+        "bytes": 4677,
+        "sha256": "ad2f07b127047ef9cd500ae75e38c772e2e1900b178c636b58c0807c2cc02efd"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/div_vjp_rejected/decision.json",
+        "bytes": 1048,
+        "sha256": "6ee089852571923878449946da04ba34871eba59b102c77730b4555049cae71d"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/div_vjp_rejected/decision.json",
+        "bytes": 1048,
+        "sha256": "6ee089852571923878449946da04ba34871eba59b102c77730b4555049cae71d"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/div_vjp_rejected/source_manifest.json",
+        "bytes": 6951,
+        "sha256": "cf13a35419ba1dcd7cacf7eff1a55007b8e692fc9270e9982a5bea30450b06b0"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/div_vjp_rejected/source_manifest.json",
+        "bytes": 6951,
+        "sha256": "cf13a35419ba1dcd7cacf7eff1a55007b8e692fc9270e9982a5bea30450b06b0"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_output_fma_rejected/kernel.cu",
+        "bytes": 3576,
+        "sha256": "98b7e2e81158d6b3ce98fab96bb0947494b09d83ffc1240411ee83768647541d"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_output_fma_rejected/kernel.cu",
+        "bytes": 3576,
+        "sha256": "98b7e2e81158d6b3ce98fab96bb0947494b09d83ffc1240411ee83768647541d"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_output_fma_rejected/decision.json",
+        "bytes": 663,
+        "sha256": "f65c8ee37f1b893d580c3081b123af59064f4f6db390a401bf8276fb17ced1cd"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_output_fma_rejected/decision.json",
+        "bytes": 663,
+        "sha256": "f65c8ee37f1b893d580c3081b123af59064f4f6db390a401bf8276fb17ced1cd"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/decision.json",
+        "bytes": 1290,
+        "sha256": "a8df100fe0ae0bcade5d0c3c23c91db72bb9dea824ddd501b1a649cc15e3adcc"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_production_padded_rejected/decision.json",
+        "bytes": 1290,
+        "sha256": "a8df100fe0ae0bcade5d0c3c23c91db72bb9dea824ddd501b1a649cc15e3adcc"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/source_manifest.json",
+        "bytes": 7160,
+        "sha256": "729ef6c84ff8f1d4fcd24972135dba9a9ff0ed72491f01b091c95f96de4ce13e"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_production_padded_rejected/source_manifest.json",
+        "bytes": 7160,
+        "sha256": "729ef6c84ff8f1d4fcd24972135dba9a9ff0ed72491f01b091c95f96de4ce13e"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/source/Converse2D/build_config.py",
+        "bytes": 2776,
+        "sha256": "8474da3068bcb48dc5ce76f5b681cdc0b332efc18e2f9fc331330d0af62be81a"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_production_padded_rejected/source/Converse2D/build_config.py",
+        "bytes": 2776,
+        "sha256": "8474da3068bcb48dc5ce76f5b681cdc0b332efc18e2f9fc331330d0af62be81a"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/source/Converse2D/torch_converse2d/converse2d.cpp",
+        "bytes": 2501,
+        "sha256": "ec249558a4ed5bdbc3a61f6683fde2f7416b6aa2ec12ebc052934078592f0d2b"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_production_padded_rejected/source/Converse2D/torch_converse2d/converse2d.cpp",
+        "bytes": 2501,
+        "sha256": "ec249558a4ed5bdbc3a61f6683fde2f7416b6aa2ec12ebc052934078592f0d2b"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/source/Converse2D/torch_converse2d/inference/nearest_k2_s2.cu",
+        "bytes": 6125,
+        "sha256": "4fe7291cab033f8d387f0c00809ef2f5ff8846d7a522d955f8ed9791114f2b91"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_production_padded_rejected/source/Converse2D/torch_converse2d/inference/nearest_k2_s2.cu",
+        "bytes": 6125,
+        "sha256": "4fe7291cab033f8d387f0c00809ef2f5ff8846d7a522d955f8ed9791114f2b91"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/source/Converse2D/torch_converse2d/inference/nearest_k2_s2.h",
+        "bytes": 211,
+        "sha256": "83b4e4924645318f932e684cde4050e603d212e58515588eef89de58ae8e890e"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_production_padded_rejected/source/Converse2D/torch_converse2d/inference/nearest_k2_s2.h",
+        "bytes": 211,
+        "sha256": "83b4e4924645318f932e684cde4050e603d212e58515588eef89de58ae8e890e"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/source/Converse2D/torch_converse2d/operator.cpp",
+        "bytes": 6362,
+        "sha256": "fed56517628533cbdde3827cc07127262b236e12448011107a60a189ae2012f2"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_production_padded_rejected/source/Converse2D/torch_converse2d/operator.cpp",
+        "bytes": 6362,
+        "sha256": "fed56517628533cbdde3827cc07127262b236e12448011107a60a189ae2012f2"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/source/Converse2D/torch_converse2d/operator.h",
+        "bytes": 339,
+        "sha256": "24abb097003f1076d98e963ceeb1a452d210236e81ed74a2411011266a713db4"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_production_padded_rejected/source/Converse2D/torch_converse2d/operator.h",
+        "bytes": 339,
+        "sha256": "24abb097003f1076d98e963ceeb1a452d210236e81ed74a2411011266a713db4"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/source/models/util_converse.py",
+        "bytes": 19443,
+        "sha256": "340ae5d453bdc74d54312175a2650baaab80faf6c5aba21238bd49025f56951a"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_production_padded_rejected/source/models/util_converse.py",
+        "bytes": 19443,
+        "sha256": "340ae5d453bdc74d54312175a2650baaab80faf6c5aba21238bd49025f56951a"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/source/test/test_nearest_k2_s2.py",
+        "bytes": 11580,
+        "sha256": "d29ba644ced58eff5283227ac8f5b63d49feb27694ec1f7593b4e8c61f7aaad5"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_production_padded_rejected/source/test/test_nearest_k2_s2.py",
+        "bytes": 11580,
+        "sha256": "d29ba644ced58eff5283227ac8f5b63d49feb27694ec1f7593b4e8c61f7aaad5"
+      }
+    },
+    {
+      "source": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/source/tools/v4_fftfree_production.py",
+        "bytes": 20310,
+        "sha256": "35d262247ee2eafc3740c08cd68e56397ff869f028c456867174bfb64889195f"
+      },
+      "archived": {
+        "path": "tools/v4_campaign/rejected/fftfree_production_padded_rejected/source/tools/v4_fftfree_production.py",
+        "bytes": 20310,
+        "sha256": "35d262247ee2eafc3740c08cd68e56397ff869f028c456867174bfb64889195f"
+      }
+    }
+  ],
+  "pinned_git_sources": {
+    "commit": "cc244e3e49dcd896962e14c98095243b41ee578a",
+    "files": [
+      {
+        "git_source": "cc244e3e49dcd896962e14c98095243b41ee578a:research/run_algorithms.py",
+        "archived": {
+          "path": "tools/v4_campaign/pinned_cc244e3/research/run_algorithms.py",
+          "bytes": 5929,
+          "sha256": "68958153d88b9326a4641d6e9b8f38eee7dbd6a30994f60a7e1968e59c27164d"
+        }
+      },
+      {
+        "git_source": "cc244e3e49dcd896962e14c98095243b41ee578a:research/algorithms.py",
+        "archived": {
+          "path": "tools/v4_campaign/pinned_cc244e3/research/algorithms.py",
+          "bytes": 5296,
+          "sha256": "2ca5f02ee9581d5693f2c1d361a2fbc199bc7a689573df3f1562aea1d0b82286"
+        }
+      },
+      {
+        "git_source": "cc244e3e49dcd896962e14c98095243b41ee578a:research/training_candidates.py",
+        "archived": {
+          "path": "tools/v4_campaign/pinned_cc244e3/research/training_candidates.py",
+          "bytes": 10488,
+          "sha256": "f601f90bdd907bdc65c785d33a64cd871784164b964e5e2ce5f11a8973bc5df6"
+        }
+      },
+      {
+        "git_source": "cc244e3e49dcd896962e14c98095243b41ee578a:models/converse_core.py",
+        "archived": {
+          "path": "tools/v4_campaign/pinned_cc244e3/models/converse_core.py",
+          "bytes": 3950,
+          "sha256": "8b31f77ae03fafad69f6e8d3f696fe02166aa0d8fe258a2937de3ab619041ccd"
+        }
+      }
+    ],
+    "note": "Files are preserved independently of Git ref reachability; legacy helper still names cc244e3 explicitly."
+  },
+  "experiments": [
+    {
+      "id": "pointwise_wgrad_c128_to64",
+      "status": "accepted_production",
+      "accepted_commit": "09f0f12",
+      "compact_evidence": {
+        "path": "tools/v4_experiments/results_c128_to64.json",
+        "bytes": 5219,
+        "sha256": "68e5742ad9a69132ffd6c74d96b8be77295ea06736ad1f403f9931258aba9f4e"
+      },
+      "rejected_broad_scope": {
+        "cases": 168,
+        "failed_tensors": 63,
+        "failures_preserved": true
+      },
+      "model_speedups": [
+        {
+          "wall_ms": 1.0227755061639785,
+          "cuda_event_ms": 1.02274839129077
+        },
+        {
+          "wall_ms": 1.0239221973536734,
+          "cuda_event_ms": 1.023902530868775
+        }
+      ],
+      "convergence_evidence": false
+    },
+    {
+      "id": "power_fma",
+      "status": "rejected_numeric",
+      "baseline_commit": "09f0f12",
+      "failed_test_subcases": 40,
+      "fp64_matrix_total": 1760,
+      "fp64_matrix_failed": 12,
+      "performance": "not run: numeric gate failed",
+      "original_decision": {
+        "path": "artifacts/v4_campaign/power_fma_rejected/decision.json",
+        "bytes": 768,
+        "sha256": "da0d567201c518fd1361242f616f685666204f7c5d10d17ac19824c7a8dd6d94"
+      },
+      "archived_decision": {
+        "path": "tools/v4_campaign/rejected/power_fma_rejected/decision.json",
+        "bytes": 768,
+        "sha256": "da0d567201c518fd1361242f616f685666204f7c5d10d17ac19824c7a8dd6d94"
+      },
+      "source_flags": {
+        "cxx_flags": [
+          "/O2",
+          "/std:c++17"
+        ],
+        "cuda_flags": [
+          "-O3",
+          "-lineinfo"
+        ],
+        "torch": "2.11.0+cu130",
+        "cuda": "13.0",
+        "architecture": "",
+        "binary_sha256": "4799e42b780b4465acd65c0ac08d5936a792fdba0a413e779b023a3ea32a8204"
+      }
+    },
+    {
+      "id": "division_vjp_reuse",
+      "status": "rejected_numeric",
+      "baseline_commit": "09f0f12",
+      "failed_test_subcases": 81,
+      "fp64_matrix_total": 1760,
+      "fp64_matrix_failed": 26,
+      "performance": "not run: numeric gate failed",
+      "original_decision": {
+        "path": "artifacts/v4_campaign/div_vjp_rejected/decision.json",
+        "bytes": 1048,
+        "sha256": "6ee089852571923878449946da04ba34871eba59b102c77730b4555049cae71d"
+      },
+      "archived_decision": {
+        "path": "tools/v4_campaign/rejected/div_vjp_rejected/decision.json",
+        "bytes": 1048,
+        "sha256": "6ee089852571923878449946da04ba34871eba59b102c77730b4555049cae71d"
+      },
+      "source_flags": {
+        "cxx_flags": [
+          "/O2",
+          "/std:c++17"
+        ],
+        "cuda_flags": [
+          "-O3",
+          "-lineinfo"
+        ],
+        "torch": "2.11.0+cu130",
+        "cuda": "13.0",
+        "architecture": "",
+        "binary_sha256": "d83cbbfcdb767c2427feca5872c76c5ed36a589a2548d8d98f06dd230e63ff32"
+      }
+    },
+    {
+      "id": "fftfree_residual",
+      "status": "rejected_numeric",
+      "raw_gate": {
+        "path": "artifacts/v4_campaign/fftfree_gate_001.json",
+        "bytes": 7394898,
+        "sha256": "a6b7f88b5db9f183d038bf5610cddee0870154a8b469f4890b44420f31b224dd"
+      },
+      "gate_status": "complete",
+      "gate_passed": false,
+      "cases": 2163,
+      "failed_cases": [
+        "matrix/17/1x1/kb1kc3/weak_1e-6/contiguous/no_grad",
+        "matrix/17/1x1/kb1kc3/weak_1e-6/contiguous/inference_mode",
+        "matrix/17/1x1/kb1kc3/weak_1e-6/contiguous/frozen_gradmode",
+        "matrix/17/1x1/kb1kc3/weak_1e-6/strided/no_grad",
+        "matrix/17/1x1/kb1kc3/weak_1e-6/strided/inference_mode",
+        "matrix/17/1x1/kb1kc3/weak_1e-6/strided/frozen_gradmode",
+        "matrix/17/1x1/kb1kc3/weak_1e-6/transpose/no_grad",
+        "matrix/17/1x1/kb1kc3/weak_1e-6/transpose/inference_mode",
+        "matrix/17/1x1/kb1kc3/weak_1e-6/transpose/frozen_gradmode",
+        "matrix/17/7x5/kb1kc3/signed/transpose/no_grad",
+        "matrix/17/7x5/kb1kc3/signed/transpose/inference_mode",
+        "matrix/17/7x5/kb1kc3/signed/transpose/frozen_gradmode",
+        "matrix/29/1x1/kb1kc3/weak_1e-3/contiguous/no_grad",
+        "matrix/29/1x1/kb1kc3/weak_1e-3/contiguous/inference_mode",
+        "matrix/29/1x1/kb1kc3/weak_1e-3/contiguous/frozen_gradmode",
+        "matrix/29/1x1/kb1kc3/weak_1e-3/strided/no_grad",
+        "matrix/29/1x1/kb1kc3/weak_1e-3/strided/inference_mode",
+        "matrix/29/1x1/kb1kc3/weak_1e-3/strided/frozen_gradmode",
+        "matrix/43/1x1/kb1kc3/weak_1e-3/transpose/no_grad",
+        "matrix/43/1x1/kb1kc3/weak_1e-3/transpose/inference_mode",
+        "matrix/43/1x1/kb1kc3/weak_1e-3/transpose/frozen_gradmode",
+        "matrix/43/5x1/kb1kc3/weak_1e-3/transpose/no_grad",
+        "matrix/43/5x1/kb1kc3/weak_1e-3/transpose/inference_mode",
+        "matrix/43/5x1/kb1kc3/weak_1e-3/transpose/frozen_gradmode",
+        "synthetic/seed17/h7w5/kb1kc3/signed/transpose"
+      ],
+      "contracts_passed": true,
+      "source_flags": {
+        "cxx_flags": [
+          "/O2",
+          "/std:c++17"
+        ],
+        "cuda_flags": [
+          "-O3",
+          "-lineinfo",
+          "--fmad=false"
+        ],
+        "torch": "2.11.0+cu130",
+        "cuda": "13.0",
+        "architecture": "12.0",
+        "binary_sha256": "5be4d0cf1ca602cb71341b912c0c23dee5d82e729a7c8c64057e074d8b92e14f"
+      }
+    },
+    {
+      "id": "fftfree_output_fma",
+      "status": "rejected_numeric",
+      "raw_gate": {
+        "path": "artifacts/v4_campaign/fftfree_output_fma_gate_002.json",
+        "bytes": 7396286,
+        "sha256": "c1d8b707449bf5dc412a66c6fc61ef0ca526b81f222818c95c0164a7dafc02fb"
+      },
+      "gate_status": "complete",
+      "gate_passed": false,
+      "cases": 2163,
+      "failed_cases": [
+        "matrix/17/7x5/kb1kc3/signed/transpose/no_grad",
+        "matrix/17/7x5/kb1kc3/signed/transpose/inference_mode",
+        "matrix/17/7x5/kb1kc3/signed/transpose/frozen_gradmode",
+        "matrix/43/1x1/kb1kc1/weak_1e-6/contiguous/no_grad",
+        "matrix/43/1x1/kb1kc1/weak_1e-6/contiguous/inference_mode",
+        "matrix/43/1x1/kb1kc1/weak_1e-6/contiguous/frozen_gradmode",
+        "matrix/43/1x1/kb1kc1/weak_1e-6/strided/no_grad",
+        "matrix/43/1x1/kb1kc1/weak_1e-6/strided/inference_mode",
+        "matrix/43/1x1/kb1kc1/weak_1e-6/strided/frozen_gradmode",
+        "matrix/43/1x1/kb1kc1/weak_1e-6/transpose/no_grad",
+        "matrix/43/1x1/kb1kc1/weak_1e-6/transpose/inference_mode",
+        "matrix/43/1x1/kb1kc1/weak_1e-6/transpose/frozen_gradmode",
+        "matrix/43/5x6/kb1kc1/signed/contiguous/no_grad",
+        "matrix/43/5x6/kb1kc1/signed/contiguous/inference_mode",
+        "matrix/43/5x6/kb1kc1/signed/contiguous/frozen_gradmode",
+        "matrix/43/5x6/kb1kc1/signed/strided/no_grad",
+        "matrix/43/5x6/kb1kc1/signed/strided/inference_mode",
+        "matrix/43/5x6/kb1kc1/signed/strided/frozen_gradmode",
+        "synthetic/seed17/h7w5/kb1kc3/signed/transpose"
+      ],
+      "contracts_passed": true,
+      "source_flags": {
+        "cxx_flags": [
+          "/O2",
+          "/std:c++17"
+        ],
+        "cuda_flags": [
+          "-O3",
+          "-lineinfo",
+          "--fmad=false"
+        ],
+        "torch": "2.11.0+cu130",
+        "cuda": "13.0",
+        "architecture": "12.0",
+        "binary_sha256": "04052cd037f9ab8e80b2aa67ce45098718d47ea88b2a496d7e16fe3a02df58e7"
+      }
+    },
+    {
+      "id": "fftfree_compensated",
+      "status": "rejected_whole_model_performance",
+      "raw_gate": {
+        "path": "artifacts/v4_campaign/fftfree_compensated_gate_003.json",
+        "bytes": 12769405,
+        "sha256": "2ec404d4ed48a4717b6fb17e141672dd43cad0913af47c466a07a364fde77bb6"
+      },
+      "gate_status": "complete",
+      "gate_passed": true,
+      "cases": 3459,
+      "failed_cases": [],
+      "contracts_passed": true,
+      "source_flags": {
+        "cxx_flags": [
+          "/O2",
+          "/std:c++17"
+        ],
+        "cuda_flags": [
+          "-O3",
+          "-lineinfo",
+          "--fmad=false",
+          "--ftz=false",
+          "--prec-div=true"
+        ],
+        "torch": "2.11.0+cu130",
+        "cuda": "13.0",
+        "architecture": "12.0",
+        "binary_sha256": "38ffc4d5d43553dd349e0b6cb725072aafdb9e676662fe7cc296f78274c095e7"
+      },
+      "raw_performance": {
+        "path": "artifacts/v4_campaign/fftfree_compensated_perf_003.json",
+        "bytes": 976564,
+        "sha256": "c767a857494e8189443ea7b9612de917804f080691b809340aec569babac3dde"
+      },
+      "performance_passed": false,
+      "model_quality_passed": true,
+      "complete_call_performance_passed": true,
+      "model_runs": [
+        {
+          "median_speedup": {
+            "wall_ms": 1.0178724452166132,
+            "cuda_ms": 1.017972165346224
+          },
+          "passed": false,
+          "paired_speedups": {
+            "wall_ms": [
+              1.0178724452166132,
+              1.0387708818353554,
+              1.0231079646823178,
+              1.0157271485016846,
+              1.0311131580334914,
+              1.0157779970526688,
+              1.0110541390632486,
+              1.0332663245742373,
+              0.9977586918958236
+            ],
+            "cuda_ms": [
+              1.017972165346224,
+              1.0384728150312024,
+              1.0231359794499129,
+              1.0158093166019784,
+              1.031164183202651,
+              1.015662984537792,
+              1.0108554950796411,
+              1.0332083521086313,
+              0.9976799784075124
+            ]
+          }
+        },
+        {
+          "median_speedup": {
+            "wall_ms": 1.0172056520585118,
+            "cuda_ms": 1.0173340761091019
+          },
+          "passed": false,
+          "paired_speedups": {
+            "wall_ms": [
+              1.0157012102332137,
+              1.0172056520585118,
+              1.0200591679893358,
+              1.0220925894954895,
+              1.0057497611285564,
+              1.0185724094142181,
+              1.038211091058786,
+              1.0041075560155794,
+              1.000251500311042
+            ],
+            "cuda_ms": [
+              1.0156763550015335,
+              1.0173340761091019,
+              1.0200731001121204,
+              1.0221507445041826,
+              1.0059363263614165,
+              1.0185787064824732,
+              1.0382912849013413,
+              1.0040599522679885,
+              1.0003525758055587
+            ]
+          }
+        }
+      ],
+      "unchanged_model_threshold": 1.03
+    },
+    {
+      "id": "fftfree_fused_lambda_prototype",
+      "status": "passed_prototype_only",
+      "raw_gate": {
+        "path": "artifacts/v4_campaign/fftfree_fused_lambda_gate_004.json",
+        "bytes": 13087369,
+        "sha256": "a174a01ea69e72d5cb8227d9f2c4ac7586c02ba6786b7c33b403776cd4655289"
+      },
+      "gate_status": "complete",
+      "gate_passed": true,
+      "cases": 3519,
+      "failed_cases": [],
+      "contracts_passed": true,
+      "source_flags": {
+        "cxx_flags": [
+          "/O2",
+          "/std:c++17"
+        ],
+        "cuda_flags": [
+          "-O3",
+          "-lineinfo",
+          "--fmad=false",
+          "--ftz=false",
+          "--prec-div=true"
+        ],
+        "torch": "2.11.0+cu130",
+        "cuda": "13.0",
+        "architecture": "12.0",
+        "binary_sha256": "cc648948f8aa63314658b359b7e00bc7f657c8583a549ca9b074c71f8c9357be"
+      },
+      "raw_performance": {
+        "path": "artifacts/v4_campaign/fftfree_fused_lambda_perf_004.json",
+        "bytes": 977147,
+        "sha256": "1be1c712037baf45c117c2ab894a683d2a5a5481d9110f0b665ccf503378de9b"
+      },
+      "performance_passed": true,
+      "model_quality_passed": true,
+      "complete_call_performance_passed": true,
+      "model_runs": [
+        {
+          "median_speedup": {
+            "wall_ms": 1.0363304841193186,
+            "cuda_ms": 1.0364002555573046
+          },
+          "passed": true,
+          "paired_speedups": {
+            "wall_ms": [
+              1.0505147600913118,
+              1.0189128546978383,
+              1.037814188981507,
+              1.020955434961664,
+              1.0167492675197622,
+              1.0749095997950004,
+              1.1108626407585303,
+              1.0363304841193186,
+              1.0274904289567248
+            ],
+            "cuda_ms": [
+              1.0504881746977386,
+              1.0189639128382744,
+              1.0379310690418182,
+              1.0209863997191722,
+              1.0168250489591453,
+              1.0747536705841871,
+              1.1108924818311616,
+              1.0364002555573046,
+              1.0275649291676459
+            ]
+          }
+        },
+        {
+          "median_speedup": {
+            "wall_ms": 1.0369843846359568,
+            "cuda_ms": 1.0370438532291237
+          },
+          "passed": true,
+          "paired_speedups": {
+            "wall_ms": [
+              1.0069852411215652,
+              1.0462329719808912,
+              1.0369843846359568,
+              1.019659666986532,
+              1.0245026181652692,
+              1.0199349969918388,
+              1.0380573815853857,
+              1.0546379619545152,
+              1.0432942683068573
+            ],
+            "cuda_ms": [
+              1.007033574843309,
+              1.0462223301911926,
+              1.0370438532291237,
+              1.019620506810948,
+              1.0245625750159852,
+              1.0196026566969876,
+              1.0380705944269235,
+              1.054967839412826,
+              1.0435896116099632
+            ]
+          }
+        }
+      ],
+      "unchanged_model_threshold": 1.03
+    },
+    {
+      "id": "fftfree_initial_padded_production",
+      "status": "rejected_whole_model_performance",
+      "raw_report": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/fftfree_production_all_001.json",
+        "bytes": 15070954,
+        "sha256": "c21dfe4a24db05eb2b8aecabc460aa70546bd96b704568ec6f94383f5078dc8d"
+      },
+      "report_status": "complete",
+      "report_passed": false,
+      "gate_passed": true,
+      "gate_cases": 3519,
+      "model_quality_passed": true,
+      "model_runs": [
+        {
+          "median_speedup": {
+            "wall_ms": 1.0275162981141601,
+            "cuda_ms": 1.0276665428351697
+          },
+          "passed": false,
+          "paired_speedups": {
+            "wall_ms": [
+              1.0275162981141601,
+              0.9814906436185084,
+              1.0778059184414412,
+              1.0305976432122765,
+              1.0179161775155539,
+              1.0388227445222789,
+              1.018491308933325,
+              1.0295125271210952,
+              0.99737637585426
+            ],
+            "cuda_ms": [
+              1.0276665428351697,
+              0.9822820820734797,
+              1.0777881112026189,
+              1.0312411161139974,
+              1.0175995298017881,
+              1.038274713405512,
+              1.0179760484528058,
+              1.0299082757408973,
+              0.9978680130997745
+            ]
+          }
+        },
+        {
+          "median_speedup": {
+            "wall_ms": 1.0264887249075805,
+            "cuda_ms": 1.0271212013087903
+          },
+          "passed": false,
+          "paired_speedups": {
+            "wall_ms": [
+              1.072803670554666,
+              1.0018949169880103,
+              0.968744036652771,
+              1.019574928633442,
+              1.0484127489309258,
+              1.0480285354090986,
+              1.0413849143799894,
+              0.9840824859383169,
+              1.0264887249075805
+            ],
+            "cuda_ms": [
+              1.073165105418011,
+              1.001953667223113,
+              0.9688392773971798,
+              1.0195848322579621,
+              1.0484341209323458,
+              1.0476737155082472,
+              1.041494317239216,
+              0.9847223727048415,
+              1.0271212013087903
+            ]
+          }
+        }
+      ],
+      "unchanged_model_threshold": 1.03,
+      "original_decision": {
+        "path": "artifacts/v4_campaign/fftfree_production_padded_rejected/decision.json",
+        "bytes": 1290,
+        "sha256": "a8df100fe0ae0bcade5d0c3c23c91db72bb9dea824ddd501b1a649cc15e3adcc"
+      },
+      "source_flags": {
+        "cxx_flags": [
+          "/O2",
+          "/std:c++17"
+        ],
+        "cuda_flags": [
+          "-O3",
+          "-lineinfo"
+        ],
+        "torch": "2.11.0+cu130",
+        "cuda": "13.0",
+        "architecture": "",
+        "binary_sha256": "55f3d193066daf3d0cb0642c17bf06af5052e692ebdfab169196e18bdc494904"
+      }
+    },
+    {
+      "id": "nearest_spectral_recheck",
+      "status": "rejected_numeric",
+      "raw_report": {
+        "path": "artifacts/v4_campaign/nearest_v4_recheck.json",
+        "bytes": 348670,
+        "sha256": "0ee18f51b0fed0042dc307e5cef4240f95e524d486b4e9082cc93a9da714969c"
+      },
+      "routes": {
+        "old_nearest_spectral": {
+          "passed": false,
+          "tensor_count": 96,
+          "failed_tensors": 10
+        },
+        "exact_phase_nearest_spectral": {
+          "passed": false,
+          "tensor_count": 96,
+          "failed_tensors": 9
+        }
+      },
+      "performance": "not run"
+    },
+    {
+      "id": "fftfree_overflow_guard_and_pad_cancellation",
+      "status": "accepted",
+      "accepted": true,
+      "note": "Root is running fresh validation; no pass or commit is inferred from earlier candidates.",
+      "accuracy_scope": "Fresh actual production direct-op and pad/crop module gates plus release tests",
+      "performance_scope": "Fresh actual production cold/warm callers and complete pretrained model",
+      "unchanged_model_threshold": 1.03,
+      "report": {
+        "path": "tools/v4_campaign/fftfree_accepted.json",
+        "sha256": "f77bc64c09ec824b155900d7c33ac134adf87328f117caff38c5a8a2486a58cd"
+      },
+      "model_speedups": [
+        1.089652852673704,
+        1.0382488053536192
+      ],
+      "notes": "Fresh production checks passed. Earlier rejected candidates and reports retain their decisions. No convergence claim."
+    }
+  ],
+  "baseline_s1_profile": {
+    "status": "measured_baseline_diagnostic",
+    "kernel": "scale1_forward",
+    "measured_input_shape": [
+      4,
+      128,
+      100,
+      100
+    ],
+    "shared_x_prior": true,
+    "kernel_shape": [
+      1,
+      128,
+      3,
+      3
+    ],
+    "dram_throughput_percent": 88.33652,
+    "dram_GB_per_second": 395.358185,
+    "sm_throughput_percent": 31.234921,
+    "interpretation": "This measured s1 kernel is close to its DRAM throughput ceiling; this does not prove all shapes are memory-bound.",
+    "profiler_is_not_benchmark": true,
+    "raw_report": {
+      "path": "artifacts/v4_campaign/power_fma_baseline_ncu/capture.ncu-rep",
+      "bytes": 2696083,
+      "sha256": "b01f5246a7129ad8f147379d7a43b4413252eaf1a90eccb376eaf12537ebcea4"
+    },
+    "raw_metrics_csv": {
+      "path": "artifacts/v4_campaign/power_fma_baseline_ncu/metrics.csv",
+      "bytes": 161724,
+      "sha256": "f7cbdc24d8fe18cee7f5bdde429429f447849f17da7fa1a8d1980516e7f6d1d5"
+    },
+    "launcher": {
+      "path": "artifacts/v4_campaign/power_fma_baseline_ncu/launcher.json",
+      "bytes": 7987,
+      "sha256": "323882fea33f3ac9614e2a9af07aa6a6e2a9700cf05808b640805fc79c998c37"
+    },
+    "static_comparison": {
+      "path": "artifacts/v4_campaign/power_fma_sass_comparison.json",
+      "bytes": 65757,
+      "sha256": "272b8c0abdbb5002b89429c493be7fa1bab44dbbd6c6adc980c5450abbd0f74f"
+    },
+    "binary_identity": {
+      "baseline_sass": {
+        "path": "C:\\Users\\Boyce\\.codex\\worktrees\\d3aa\\ConverseNet\\artifacts\\v4_campaign\\power_fma_baseline.sass",
+        "sha256": "c4fbfe9c00def6ccee9f7881aeb738faef08d58af84e0a21274eefcfa412d172"
+      },
+      "candidate_sass": {
+        "path": "C:\\Users\\Boyce\\.codex\\worktrees\\d3aa\\ConverseNet\\artifacts\\v4_campaign\\power_fma_candidate.sass",
+        "sha256": "eebf0ea5396024800989933acc22d2baeb3649bc323f167fcb0de0da659eaa8e"
+      },
+      "baseline_ncu_csv": {
+        "path": "C:\\Users\\Boyce\\.codex\\worktrees\\d3aa\\ConverseNet\\artifacts\\v4_campaign\\power_fma_baseline_ncu\\metrics.csv",
+        "sha256": "f7cbdc24d8fe18cee7f5bdde429429f447849f17da7fa1a8d1980516e7f6d1d5"
+      },
+      "baseline_ncu_checked_binary_sha256": "4ad9d5161e64b689c7865d34d92fe57948bab8f7d43bcc9087d3333685350f74",
+      "independently_built_frozen_baseline_binary_sha256": "d3cc54ca6b8718936e5c3abd26775e0dbf2dbc44a1761c3a9509f5b0d2cbeadc",
+      "baseline_ncu_build_inputs_match_frozen_checkout": true,
+      "baseline_binary_matches_independently_built_frozen_checkout": false
+    },
+    "limits": [
+      "Static instruction reductions are not timing evidence.",
+      "NOP padding may hide reduced work in total static instruction count.",
+      "NCU duration/throughput below are a single profiled kernel diagnosis, not an unprofiled complete-call benchmark.",
+      "Baseline NCU and independently built frozen checkout have identical manifest inputs but different binary SHA; they are not described as the same binary."
+    ]
+  },
+  "small_source_groups": [
+    {
+      "directory": "tools/v4_arithmetic",
+      "total_bytes": 10213,
+      "files": [
+        {
+          "path": "tools/v4_arithmetic/freeze_baseline.py",
+          "bytes": 3854,
+          "sha256": "3dbfbd5ed6a62745b45fdc52c4746bd316a736cabf9701eefa5db1642cc790f1"
+        },
+        {
+          "path": "tools/v4_arithmetic/profile_ncu.py",
+          "bytes": 1975,
+          "sha256": "7ce9a67a0a93b0b90e3cb1dd792b369287bb4ce7af8e2b078d01dbd0c427475e"
+        },
+        {
+          "path": "tools/v4_arithmetic/profile_worker.py",
+          "bytes": 1111,
+          "sha256": "6427af619f6e44b77f36883f610b661c15505b774369c1bd964494caf035e184"
+        },
+        {
+          "path": "tools/v4_arithmetic/recheck_nearest.py",
+          "bytes": 3273,
+          "sha256": "d57a12e1e8dd5afa1a36f06ec59a9955b4ac0882d91e8e96a844383cb91a796f"
+        }
+      ]
+    },
+    {
+      "directory": "tools/v4_fftfree",
+      "total_bytes": 41915,
+      "files": [
+        {
+          "path": "tools/v4_fftfree/bindings.cpp",
+          "bytes": 305,
+          "sha256": "f75549d75b4a85986001fc9107e3e74d71dd509b89e3d9568c08ae18f7b2a665"
+        },
+        {
+          "path": "tools/v4_fftfree/historical_fixture.json",
+          "bytes": 4394,
+          "sha256": "1497e16fd5faa3ad48188d576d93c11bc9bf04bbb43b7b7dba2b1386e7380dba"
+        },
+        {
+          "path": "tools/v4_fftfree/inference.py",
+          "bytes": 2002,
+          "sha256": "bc93c6ef9ad159851be1b2dcedb3d4d299a5c3c4543f463dc28cd4fa34f08185"
+        },
+        {
+          "path": "tools/v4_fftfree/kernel.cu",
+          "bytes": 3560,
+          "sha256": "e00f329d53bcc6416e3e7ee65f48e090a36ca1f1aa83a78139169487e38c688e"
+        },
+        {
+          "path": "tools/v4_fftfree/loader.py",
+          "bytes": 4775,
+          "sha256": "b3f67fb2c0c9a28a46f7da7ba29b33ba861300e3ae6850631fa12cdb24deea0d"
+        },
+        {
+          "path": "tools/v4_fftfree/README.md",
+          "bytes": 4788,
+          "sha256": "b6f68fd0caae0cfa4528fcc7c3c85b1d02497d76fc31f421e58c4e0cdc2075d4"
+        },
+        {
+          "path": "tools/v4_fftfree/study.py",
+          "bytes": 22091,
+          "sha256": "472884944dc9089517c5efaa6c1e588511084c95defb3a517348790b8c696e31"
+        }
+      ]
+    },
+    {
+      "directory": "tools/v4_fftfree_compensated",
+      "total_bytes": 54620,
+      "files": [
+        {
+          "path": "tools/v4_fftfree_compensated/bindings.cpp",
+          "bytes": 327,
+          "sha256": "5a9f05d96d966e74c5a1dcc4c3893ccc36933cca2df0b998f099e5b1f5e696fc"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated/candidate_origin.json",
+          "bytes": 920,
+          "sha256": "28c2cd4f7ab15c68ec45d6b3b7bf4b23bb8c09a5a466c9a0f1d3a301e69857fd"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated/cpu_compensated.py",
+          "bytes": 3546,
+          "sha256": "4938fbb3edd66384822bee9218575958f85d1615d25a33c0b5c1d854e5f74e69"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated/historical_fixture.json",
+          "bytes": 4394,
+          "sha256": "1497e16fd5faa3ad48188d576d93c11bc9bf04bbb43b7b7dba2b1386e7380dba"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated/inference.py",
+          "bytes": 2014,
+          "sha256": "eddbb7eea0ea03e3791fc11337e5381c34ba663cf3f413f8067f8054e7cf8d59"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated/kernel.cu",
+          "bytes": 5421,
+          "sha256": "d9c6d30645c5ce6187bf1c8059de1f071f03f0fa0979dd8b57411d3aa6defad1"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated/loader.py",
+          "bytes": 4918,
+          "sha256": "ae1ad79e7fa989c9f0d6492296e8f99d3861dc3ff7b5bf200a33582d2fffbe18"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated/README.md",
+          "bytes": 7393,
+          "sha256": "55131a589259e601e64bbc47b54e42bcc8b0652f2a1d0883a64ebeba44fffdbd"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated/study.py",
+          "bytes": 25687,
+          "sha256": "d47b3cf74167feba5a19df65c12576f817d433a676b6e1e368cfbab3d302fbd9"
+        }
+      ]
+    },
+    {
+      "directory": "tools/v4_fftfree_compensated_fused_lambda",
+      "total_bytes": 59853,
+      "files": [
+        {
+          "path": "tools/v4_fftfree_compensated_fused_lambda/bindings.cpp",
+          "bytes": 361,
+          "sha256": "e701f5f51720a4ab3c093f233f8eba539f603d4d8aef1f7222d161b1c5256cb6"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated_fused_lambda/candidate_origin.json",
+          "bytes": 1264,
+          "sha256": "2ff29986dde3eb92e4e4092bd71501ffdeda308bad7c82801bbff27a5549f554"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated_fused_lambda/cpu_compensated.py",
+          "bytes": 3953,
+          "sha256": "5f1828bd77d3dc06cfcf75ad09b833efd49892d0a3ad0ab13e38a90816f0fe6f"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated_fused_lambda/historical_fixture.json",
+          "bytes": 4394,
+          "sha256": "1497e16fd5faa3ad48188d576d93c11bc9bf04bbb43b7b7dba2b1386e7380dba"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated_fused_lambda/inference.py",
+          "bytes": 1966,
+          "sha256": "62bfed9de45f773aae3dead7b7f5a641969ac54f8c597627e0defee483d669ca"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated_fused_lambda/kernel.cu",
+          "bytes": 6111,
+          "sha256": "24627f36c236c482373edf931d025d11e55857f74be5c1d4b127cc8a91b310ff"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated_fused_lambda/loader.py",
+          "bytes": 4957,
+          "sha256": "66fec2c7c71f6d947c6c7091308f59e9a5be764b91f13b29f50e48aad47f1599"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated_fused_lambda/README.md",
+          "bytes": 8942,
+          "sha256": "b79b377a14d8a74fc8a4a16034f9122110d42a31129dcd2d49643e87c95e002b"
+        },
+        {
+          "path": "tools/v4_fftfree_compensated_fused_lambda/study.py",
+          "bytes": 27905,
+          "sha256": "ea41be0759b899700c9c2f792a6b22a583f86dcabb8742c85585c9809d558d3c"
+        }
+      ]
+    }
+  ],
+  "standalone_helpers": [
+    {
+      "path": "tools/v4_fftfree_perf.py",
+      "bytes": 21382,
+      "sha256": "b8267409bea58051fc78a0edc2d80f46e9d1421993cada9a12ae97d81c1d324b"
+    },
+    {
+      "path": "tools/v4_fftfree_fused_lambda_perf.py",
+      "bytes": 21820,
+      "sha256": "3a421ccd4a894e30a68540e1dfffeda046dec0bc9fd680f55345ecc23df10b95"
+    },
+    {
+      "path": "tools/v4_fftfree_production.py",
+      "bytes": 26777,
+      "sha256": "4847ecbe28cc8856d33e8f6a93cb2a271c6c56525498183e7393d9baabd8580f"
+    }
+  ],
+  "reproducibility": "After a checked build, the current production helper supports --stage all --output NEW.json without prototype arguments and records fresh actual-production admission. Optional --prototype-gate and --prototype-perf must be supplied together and must be authentic full reports, regenerated against the pinned baseline or retained verbatim. Never fabricate compact stubs. This index is descriptive provenance, not a replacement numerical/performance gate report.",
+  "excluded_from_archive": [
+    "binaries",
+    "full numerical/performance reports",
+    "Nsight captures",
+    "SASS dumps",
+    "tensor snapshots"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "status": "rejected_numeric",
+  "cases": 2163,
+  "failed_cases": 19,
+  "contracts_passed": true,
+  "committed": false,
+  "report": "artifacts\\v4_campaign\\fftfree_output_fma_gate_002.json",
+  "report_sha256": "c1d8b707449bf5dc412a66c6fc61ef0ca526b81f222818c95c0164a7dafc02fb",
+  "source_sha256": {
+    "inference.py": "bc93c6ef9ad159851be1b2dcedb3d4d299a5c3c4543f463dc28cd4fa34f08185",
+    "kernel.cu": "98b7e2e81158d6b3ce98fab96bb0947494b09d83ffc1240411ee83768647541d",
+    "loader.py": "b3f67fb2c0c9a28a46f7da7ba29b33ba861300e3ae6850631fa12cdb24deea0d",
+    "study.py": "472884944dc9089517c5efaa6c1e588511084c95defb3a517348790b8c696e31"
+  }
+}

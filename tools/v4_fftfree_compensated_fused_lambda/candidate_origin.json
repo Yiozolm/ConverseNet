@@ -1,0 +1,17 @@
+{
+  "kind": "new_floatfloat_fused_lambda_candidate",
+  "derived_from": "tools/v4_fftfree_compensated, lambda prepared in ATen",
+  "source_sha256": {
+    "bindings.cpp": "5a9f05d96d966e74c5a1dcc4c3893ccc36933cca2df0b998f099e5b1f5e696fc",
+    "candidate_origin.json": "28c2cd4f7ab15c68ec45d6b3b7bf4b23bb8c09a5a466c9a0f1d3a301e69857fd",
+    "cpu_compensated.py": "4938fbb3edd66384822bee9218575958f85d1615d25a33c0b5c1d854e5f74e69",
+    "historical_fixture.json": "1497e16fd5faa3ad48188d576d93c11bc9bf04bbb43b7b7dba2b1386e7380dba",
+    "inference.py": "eddbb7eea0ea03e3791fc11337e5381c34ba663cf3f413f8067f8054e7cf8d59",
+    "kernel.cu": "d9c6d30645c5ce6187bf1c8059de1f071f03f0fa0979dd8b57411d3aa6defad1",
+    "loader.py": "ae1ad79e7fa989c9f0d6492296e8f99d3861dc3ff7b5bf200a33582d2fffbe18",
+    "README.md": "55131a589259e601e64bbc47b54e42bcc8b0652f2a1d0883a64ebeba44fffdbd",
+    "study.py": "d47b3cf74167feba5a19df65c12576f817d433a676b6e1e368cfbab3d302fbd9"
+  },
+  "original_3459_inputs_sha256": "b02c0f8ab35471941a108e234c0265f559651f93706fa3d3c317a60393ab2501",
+  "note": "Only regularizer preparation is newly fused. Earlier compensated numerical pass and insufficient whole-model speedup remain historical evidence, not admission of this variant."
+}

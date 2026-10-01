@@ -1,0 +1,13 @@
+{
+  "baseline_commit": "7fadfcc",
+  "order": ["fp32_pointwise_wgrad_gemm", "full_spectrum_arithmetic", "cufftdx_inference", "k2_s2_fftfree", "nearest_spectral_gradients"],
+  "precision": "FP32/complex64 candidate; independent FP64 reference only; no AMP/TF32/fast-math",
+  "numerical_gate": "All affected output and VJP tensors meet test/numerical_policy.py normal/weak budgets; no post-hoc threshold changes",
+  "semantics": "Keep routing, broadcast reductions, shared-input gradient accumulation order, per-call differentiable kernel FFT, higher-order ATen fallback, streams and graph lifetime",
+  "performance_scope": "Complete forward plus requested VJPs including all copies, dispatch and synchronization; separate complete model Adam steps; profiler not used for timing",
+  "performance_protocol": "5 warmups; at least 9 alternating AB/BA rounds with 10 calls each; a second independent repeat for any promotion. Restore identical initial parameters and Adam state outside each model timing round and use identical data sequences for each route; no input/hook/profiler work hidden outside one route only.",
+  "performance_gate": "At least 1.03x median complete-call speedup in the claimed target on both runs, positive paired improvement in at least ceil(rounds*7/9) rounds; no material slowdown above 2% on the claimed deployment workloads. A training optimization must additionally show positive full-model B4 Adam-step improvement in both runs.",
+  "quality_gate": "Frozen weights/data, at least 3 seeds x 3 optimizer steps on an actually active candidate shape; every output/loss/gradient/parameter/optimizer tensor must be finite and satisfy atol=rtol=3e-5 model smoke. Operator tensors separately meet independent FP64 budgets. Assert expected active call count per model forward: 140 for both prior pointwise directions, 70 if only one direction is admitted. This is regression coverage, not convergence proof.",
+  "commit_policy": "Commit one passing production change at a time, with reproducible tools/tests and compact evidence. Keep rejected experiments and original failure records without relabelling.",
+  "gpu_policy": "Only the root agent runs GPU work; CPU-only source review and harness work may run in parallel."
+}

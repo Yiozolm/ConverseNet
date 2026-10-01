@@ -1,0 +1,17 @@
+{
+  "status": "rejected_numeric",
+  "committed": false,
+  "baseline_commit": "09f0f12",
+  "failed_test_subcases": 40,
+  "fp64_matrix_total": 1760,
+  "fp64_matrix_failed": 12,
+  "performance": "not run: numeric gate failed",
+  "sources_and_binary_sha256": {
+    "candidate.patch": "2bf69d39faa731158486eaf3832b08a70b89475eb9aa7466168b4071a8e7771d",
+    "converse2d_checked_ext.pyd": "4799e42b780b4465acd65c0ac08d5936a792fdba0a413e779b023a3ea32a8204",
+    "full_fusion.cu": "8274a29e2f34b4e6b766d549ac79c895e88a607e1b209cff87d253a72afbd31f",
+    "source_manifest.json": "39e6e8aa689bea37ef9efb225da6ef78d754ea489ca4ff4e667803eaae15ed2c"
+  },
+  "log": ".build/power-fma-release.log",
+  "sass_diff": "artifacts/v4_campaign/power_fma_sass_comparison.json"
+}

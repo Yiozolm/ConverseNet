@@ -1,0 +1,14 @@
+diff --git a/Converse2D/torch_converse2d/training/full_spectrum/full_fusion.cu b/Converse2D/torch_converse2d/training/full_spectrum/full_fusion.cu
+index 3f25306..10a1c4b 100644
+--- a/Converse2D/torch_converse2d/training/full_spectrum/full_fusion.cu
++++ b/Converse2D/torch_converse2d/training/full_spectrum/full_fusion.cu
+@@ -37,8 +37,7 @@ template <class T> __device__ Z<T> product(Z<T> a, Z<T> b) {
+ }
+ template <class T> __device__ T norm(Z<T> z);
+ template <> __device__ float norm(Z<float> z) {
+-    return __fadd_rn(__fmul_rn(z.real(), z.real()),
+-                     __fmul_rn(z.imag(), z.imag()));
++    return __fmaf_rn(z.real(), z.real(), __fmul_rn(z.imag(), z.imag()));
+ }
+ __device__ I kc(I bc, I C, I KB, I KC) {
+     return (KB == 1 ? 0 : bc / C) * KC + (KC == 1 ? 0 : bc % C);

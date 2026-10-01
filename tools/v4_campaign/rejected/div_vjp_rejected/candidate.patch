@@ -1,0 +1,96 @@
+diff --git a/Converse2D/torch_converse2d/training/full_spectrum/batch_reduce.cuh b/Converse2D/torch_converse2d/training/full_spectrum/batch_reduce.cuh
+index 2196d24..5490a2b 100644
+--- a/Converse2D/torch_converse2d/training/full_spectrum/batch_reduce.cuh
++++ b/Converse2D/torch_converse2d/training/full_spectrum/batch_reduce.cuh
+@@ -8,9 +8,10 @@ template<class T>__global__ void scale1_batch_prepare(
+     const Z<T>t=product(g[i],k[i%m]),den(d[i%m],0);
+     // These are exactly the original scale1_adjoint expressions. The gy
+     // output may temporarily be gp; the second launch then completes gp.
+-    gy[i]=t/den;
++    const Z<T>gyi=t/den;
++    gy[i]=gyi;
+     const Z<T> qi=scale1_recompute_q(y[i],p[i],k[i%m],d[i%m]);
+-    gd[i]=product(-t,cj(qi/den));
++    gd[i]=product(-gyi,cj(qi));
+ }
+ 
+ template<class T,int Batch>__global__ void scale1_batch_kernel(
+diff --git a/Converse2D/torch_converse2d/training/full_spectrum/full_fusion.cu b/Converse2D/torch_converse2d/training/full_spectrum/full_fusion.cu
+index 3f25306..ab0a280 100644
+--- a/Converse2D/torch_converse2d/training/full_spectrum/full_fusion.cu
++++ b/Converse2D/torch_converse2d/training/full_spectrum/full_fusion.cu
+@@ -100,10 +100,11 @@ __global__ void adj_div(const Z<T> *t, const Z<T> *q, const T *d, Z<T> *gy,
+         return;
+     I bc = i / HW, di = ((KB == 1 ? 0 : bc / C) * C + bc % C) * HW + i % HW;
+     Z<T> den(d[di], 0);
++    const Z<T> gyi = t[i] / den;
+     if (gy)
+-        gy[i] = t[i] / den;
++        gy[i] = gyi;
+     if (gd)
+-        gd[i] = product(-t[i], cj(q[i] / den));
++        gd[i] = product(-gyi, cj(q[i]));
+ }
+ template <class T>
+ __global__ void adj_prediction(const Z<T> *g, const Z<T> *p, const Z<T> *k,
+diff --git a/Converse2D/torch_converse2d/training/full_spectrum/scale1.cuh b/Converse2D/torch_converse2d/training/full_spectrum/scale1.cuh
+index 3443736..88b6a26 100644
+--- a/Converse2D/torch_converse2d/training/full_spectrum/scale1.cuh
++++ b/Converse2D/torch_converse2d/training/full_spectrum/scale1.cuh
+@@ -38,7 +38,7 @@ scale1_adjoint(const Z<T> *g, const Z<T> *p, const Z<T> *k, const Z<T> *y,
+     const Z<T> gi = g[i], ki_value = k[ki], den(d[di], 0);
+     const Z<T> t = product(gi, ki_value);
+     Z<T> gyi, gm;
+-    if (gy || gp || direct || FuseKernel) {
++    if (gy || gp || direct || gd || FuseKernel) {
+         gyi = t / den;
+         gm = -gyi;
+     }
+@@ -51,7 +51,7 @@ scale1_adjoint(const Z<T> *g, const Z<T> *p, const Z<T> *k, const Z<T> *y,
+     Z<T> qi,gd_value;
+     if(gd||direct||FuseKernel)qi=scale1_recompute_q(y[i],p[i],ki_value,d[di]);
+     if (gd || FuseKernel) {
+-        gd_value = product(-t, cj(qi / den));
++        gd_value = product(-gyi, cj(qi));
+         if (gd)
+             gd[i] = gd_value;
+     }
+diff --git a/Converse2D/torch_converse2d/training/full_spectrum/scale2.cuh b/Converse2D/torch_converse2d/training/full_spectrum/scale2.cuh
+index b1d5e22..d8caf47 100644
+--- a/Converse2D/torch_converse2d/training/full_spectrum/scale2.cuh
++++ b/Converse2D/torch_converse2d/training/full_spectrum/scale2.cuh
+@@ -89,14 +89,14 @@ __global__ void scale2_adjoint(const Z<T> *g, const Z<T> *p, const Z<T> *k,
+         scale2_sum4(products[0], products[1], products[2], products[3]);
+     const Z<T> den(d[di], 0);
+     Z<T> gyi;
+-    if (gy || gp || prediction || FuseKernel)
++    if (gy || gp || prediction || gd || FuseKernel)
+         gyi = t / den;
+     if (gy)
+         gy[i] = gyi;
+     // Complex storage retains the real-view stride seen by sum_to(gd).
+     Z<T> gd_value;
+     if (gd || FuseKernel) {
+-        gd_value = product(-t, cj(q[i] / den));
++        gd_value = product(-gyi, cj(q[i]));
+         if (gd)
+             gd[i] = gd_value;
+     }
+diff --git a/Converse2D/torch_converse2d/training/full_spectrum/scale3.cuh b/Converse2D/torch_converse2d/training/full_spectrum/scale3.cuh
+index 95cc235..a386e04 100644
+--- a/Converse2D/torch_converse2d/training/full_spectrum/scale3.cuh
++++ b/Converse2D/torch_converse2d/training/full_spectrum/scale3.cuh
+@@ -65,11 +65,11 @@ template<class T>__global__ void scale3_adjoint(
+     }
+     const Z<T>t=scale3_combine(adjoint_sums),den(d[di],0);
+     Z<T>gyi;
+-    if(gy||gp||prediction)gyi=t/den;
++    if(gy||gp||prediction||gd)gyi=t/den;
+     if(gy)gy[i]=gyi;
+     // Keep complex storage so real(gd) has the original stride-2 layout at
+     // every subsequent batch/channel and regularizer reduction boundary.
+-    if(gd)gd[i]=product(-t,cj(q[i]/den));
++    if(gd)gd[i]=product(-gyi,cj(q[i]));
+     if(gp||direct||prediction) {
+         // This is ATen's complex CPU-scalar division by nine. Do not replace
+         // it with componentwise real scaling or the forward mean's factor.

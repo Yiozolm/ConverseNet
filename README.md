@@ -1,7 +1,7 @@
 # ConverseNet — FP32 release
 
 This branch contains the FP32 implementation: full-spectrum training and
-half-spectrum inference, selected by autograd requirements. Build and API:
+general half-spectrum inference, selected by autograd requirements. Build and API:
 [Converse2D](Converse2D/README.md).
 
 The v4 development branch also provides a guarded FP32 GEMM weight gradient
@@ -12,6 +12,13 @@ input/bias gradients and higher derivatives use native ATen; checkpoint keys
 are unchanged. This path requires AMP and both TF32 flags to be disabled.
 See the [numerical policy](test/README.md#v4-numerical-acceptance) and
 [isolated experiments](tools/v4_experiments/README_c128_to64.md).
+
+The explicit nearest-prior `Converse2D` module also has a CUDA inference path
+for kernel size 2 and scale 2. It solves each 2x2 phase block in FP32 with
+compensated arithmetic, fuses regularization, and removes valid padding that
+would be cropped away. Eligible outputs are contiguous. Differentiable calls,
+the `pytorch` backend and the public arbitrary-prior operator keep their
+existing paths. See the [experiment record](tools/v4_campaign/README.md).
 
 The project description and published results below are from the original work;
 they are not new performance or convergence measurements for this branch.

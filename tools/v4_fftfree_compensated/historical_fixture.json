@@ -1,0 +1,177 @@
+{
+  "source_commit": "cc244e3e49dcd896962e14c98095243b41ee578a",
+  "original_source_sha256": {
+    "bindings.cpp": "f52a49972d16e3f6e37c7aa3edc00874a132b1b3741b1039559881f052fc76f2",
+    "kernel.cu": "e00f329d53bcc6416e3e7ee65f48e090a36ca1f1aa83a78139169487e38c688e",
+    "loader.py": "6e9db02df0e196b56b12f3cf8b60b642aaa6b135232df944538f482dedf32740",
+    "inference.py": "fde53d91dce2a0e7ec03f324b2860eaf2e6d83dadf3bcd5911c596133b6d8c22"
+  },
+  "historical_report_sha256": "13d10d3a963a0b0c32d8c55f309cd27646b77d3e8576ec9bbc4bc37f2ad5aea9",
+  "historical_record": {
+    "name": "synthetic/seed17/h7w5/kb1kc3/signed/transpose",
+    "seed": 17,
+    "kind": "signed",
+    "layout": "transpose",
+    "padding": 0,
+    "eps": 1e-05,
+    "mode": "inference_mode",
+    "input_tensors": [
+      {
+        "shape": [
+          2,
+          3,
+          7,
+          5
+        ],
+        "stride": [
+          105,
+          35,
+          1,
+          7
+        ],
+        "dtype": "torch.float32",
+        "sha256": "bff605a4211ded5878e13766cbcd18b709aaecd94eb8bdc5936f262e3ec47a62"
+      },
+      {
+        "shape": [
+          1,
+          3,
+          2,
+          2
+        ],
+        "stride": [
+          12,
+          4,
+          1,
+          2
+        ],
+        "dtype": "torch.float32",
+        "sha256": "8ab2259751512e24f0d75fc45a2fe82588257c986b34ded221c2ad27c09ed86b"
+      },
+      {
+        "shape": [
+          1,
+          3,
+          1,
+          1
+        ],
+        "stride": [
+          3,
+          1,
+          1,
+          1
+        ],
+        "dtype": "torch.float32",
+        "sha256": "e9259234966c6a086cd664d7fb580bba61e2b5f349fd32e32ff0d4f0453b446e"
+      }
+    ],
+    "padded_lr_shape": [
+      2,
+      3,
+      7,
+      5
+    ],
+    "hr_shape": [
+      2,
+      3,
+      14,
+      10
+    ],
+    "check": {
+      "passed": false,
+      "candidate": {
+        "finite": true,
+        "max_abs": 3.366465303855648e-06,
+        "relative_l2": 1.1428034644635396e-07
+      },
+      "python_fp32": {
+        "finite": true,
+        "max_abs": 1.7043266251626221e-06,
+        "relative_l2": 1.414118146262583e-07
+      },
+      "reference_finite": true,
+      "candidate_tensor": {
+        "shape": [
+          2,
+          3,
+          14,
+          10
+        ],
+        "stride": [
+          420,
+          140,
+          10,
+          1
+        ],
+        "dtype": "torch.float32",
+        "sha256": "48587a9d2b7e3d019192132963bacc871fda638d666151af39b932e3a27325bf"
+      },
+      "python_tensor": {
+        "shape": [
+          2,
+          3,
+          14,
+          10
+        ],
+        "stride": [
+          840,
+          280,
+          20,
+          2
+        ],
+        "dtype": "torch.float32",
+        "sha256": "d88406b70c963a5e2f04679fb9033e9ee063453ca55960e72d1e27e8c618b8e3"
+      },
+      "reference_tensor": {
+        "shape": [
+          2,
+          3,
+          14,
+          10
+        ],
+        "stride": [
+          840,
+          280,
+          20,
+          2
+        ],
+        "dtype": "torch.float64",
+        "sha256": "4c02a57f10dfd9bb3f4a21cb8bd1bf29d7927ddedcd9172aaf59abc4d5a54fbc"
+      },
+      "prototype_bytes_equal": true,
+      "repeatable": true,
+      "inputs_unchanged": true
+    }
+  },
+  "offline_screening": {
+    "group": "fftfree_numeric",
+    "case": "synthetic/seed17/h7w5/kb1kc3/signed/transpose",
+    "tensor": "/check",
+    "regime": "normal",
+    "candidate_active": true,
+    "candidate": {
+      "finite": true,
+      "max_abs": 3.366465303855648e-06,
+      "relative_l2": 1.1428034644635396e-07
+    },
+    "baseline": {
+      "finite": true,
+      "max_abs": 1.7043266251626221e-06,
+      "relative_l2": 1.414118146262583e-07
+    },
+    "limits": {
+      "max_abs": 2.556489937743933e-06,
+      "relative_l2": 1.7676476828282286e-07
+    },
+    "exceeds_budget": true,
+    "ratio": {
+      "max_abs": 1.9752465602269338,
+      "relative_l2": 0.8081386038952195
+    },
+    "budget_utilization": {
+      "max_abs": 1.3168310401512893,
+      "relative_l2": 0.6465108831161757
+    }
+  },
+  "note": "Historical failure remains a failure under its original protocol. New runs use the frozen half-spectrum baseline, never relabel this record."
+}

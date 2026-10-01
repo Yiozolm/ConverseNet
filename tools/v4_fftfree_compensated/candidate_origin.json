@@ -1,0 +1,14 @@
+{
+  "kind": "new_floatfloat_residual_candidate",
+  "derived_from": "tools/v4_fftfree output-FMA candidate",
+  "source_sha256": {
+    "bindings.cpp": "f75549d75b4a85986001fc9107e3e74d71dd509b89e3d9568c08ae18f7b2a665",
+    "kernel.cu": "98b7e2e81158d6b3ce98fab96bb0947494b09d83ffc1240411ee83768647541d",
+    "loader.py": "b3f67fb2c0c9a28a46f7da7ba29b33ba861300e3ae6850631fa12cdb24deea0d",
+    "inference.py": "bc93c6ef9ad159851be1b2dcedb3d4d299a5c3c4543f463dc28cd4fa34f08185",
+    "study.py": "472884944dc9089517c5efaa6c1e588511084c95defb3a517348790b8c696e31",
+    "historical_fixture.json": "1497e16fd5faa3ad48188d576d93c11bc9bf04bbb43b7b7dba2b1386e7380dba",
+    "README.md": "b6f68fd0caae0cfa4528fcc7c3c85b1d02497d76fc31f421e58c4e0cdc2075d4"
+  },
+  "note": "New arithmetic candidate. Historical residual and output-FMA failures remain unchanged; this candidate is not byte-identical to either old kernel."
+}

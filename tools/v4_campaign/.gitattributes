@@ -1,0 +1,3 @@
+# Preserve original archived source/manifest bytes, including line endings.
+rejected/** -text
+pinned_cc244e3/** -text

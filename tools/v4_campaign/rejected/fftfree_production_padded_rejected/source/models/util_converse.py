@@ -210,27 +210,6 @@ class Converse2D(nn.Module):
             raise ValueError("Converse2D requires FP32 tensors")
 
         backend = (os.environ.get("CONVERSE2D_BACKEND", "") or self.backend).lower()
-        if (type(self.scale) is int and self.scale == 2 and self.variant == "v7"
-                and type(self.padding) is int and self.padding >= 0
-                and isinstance(self.eps, (int, float))
-                and 1.1754943508222875e-38 <= self.eps <= 3.4028234663852886e38
-                and x.ndim == 4 and x.is_cuda and backend in ("auto", "cuda")
-                and self.weight.ndim == 4 and self.weight.shape[-2:] == (2, 2)
-                and not (torch.is_grad_enabled() and any(t.requires_grad for t in (x, self.weight, self.bias)))
-                and (self.padding == 0 or (
-                    self.padding_mode in ("replicate", "reflect", "circular", "constant")
-                    and self.padding <= min(x.shape[-2:])
-                    and (self.padding_mode != "reflect" or self.padding < min(x.shape[-2:]))))):
-            _try_import_converse2d_ext()
-            # The training schema is registered only in CUDA builds. A CPU-only
-            # extension's nearest fallback still uses FFTs and cannot skip pad.
-            if (_HAS_CONVERSE2D_EXT and hasattr(torch.ops.converse2d, "_training_full_spectral")
-                    and hasattr(torch.ops.converse2d, "_nearest_k2_s2")):
-                # Each LR pixel independently produces its own 2x2 block.
-                # Padding followed by cropping whole blocks cancels exactly.
-                # The inference result is now contiguous instead of a crop view.
-                return torch.ops.converse2d._nearest_k2_s2(
-                    x, self.weight, self.bias, float(self.eps), self.variant)
         if (type(self.scale) is int and self.scale == 1 and self.variant == "v7"
                 and type(self.padding) is int and self.padding_mode == "circular" and x.ndim == 4
                 and 0 < self.padding <= min(x.shape[-2:]) and x.is_cuda

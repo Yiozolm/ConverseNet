@@ -1,0 +1,20 @@
+{
+  "status": "rejected_numeric",
+  "committed": false,
+  "baseline_commit": "09f0f12",
+  "failed_test_subcases": 81,
+  "fp64_matrix_total": 1760,
+  "fp64_matrix_failed": 26,
+  "performance": "not run: numeric gate failed",
+  "sources_and_binary_sha256": {
+    "batch_reduce.cuh": "33074eafa79f9eb07de753127b252d73d65d05d9e8b6f8e6ae9d421584b31967",
+    "candidate.patch": "ad2f07b127047ef9cd500ae75e38c772e2e1900b178c636b58c0807c2cc02efd",
+    "converse2d_checked_ext.pyd": "d83cbbfcdb767c2427feca5872c76c5ed36a589a2548d8d98f06dd230e63ff32",
+    "full_fusion.cu": "6d6c7123622b6c5262557e83a699ccb69e2850509530aed6bf1f62b2aff54a77",
+    "scale1.cuh": "ed31d3d2ceefca3dcce5a5275835ec27b6435d85f075a9529385869b75e1e153",
+    "scale2.cuh": "c93ed3680b59ea60a80303e7a71f083426af9ef551d5542253949ad0c04e6f21",
+    "scale3.cuh": "b0fc6a647775fb61f7d6eefcf2493e6a30399cdf7980a70ceae9655b56f423f7",
+    "source_manifest.json": "cf13a35419ba1dcd7cacf7eff1a55007b8e692fc9270e9982a5bea30450b06b0"
+  },
+  "log": ".build/div-vjp-release.log"
+}
