@@ -1,19 +1,20 @@
-#include <ATen/core/grad_mode.h>
-#include "inference.h"
-#include "cache_state.h"
 #include "../common/spectrum_ops.h"
+#include "cache_state.h"
+#include "inference.h"
+#include <ATen/core/grad_mode.h>
 #include <c10/core/InferenceMode.h>
 #ifdef CONVERSE2D_WITH_CUDA
-#include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAGraphsC10Utils.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
 #endif
 #include <ATen/ATen.h>
 using at::Tensor;
 using namespace converse2d::detail;
 using namespace converse2d::inference_state;
-std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& weight,
-                                         int64_t h, int64_t w, int64_t s, bool real_fft) {
+std::pair<Tensor, Tensor> spectrum(const Tensor &source, const Tensor &weight,
+                                   int64_t h, int64_t w, int64_t s,
+                                   bool real_fft) {
     // The dispatcher selects real_fft only for inference, including frozen
     // inputs under GradMode. Keep that case's existing ATen arithmetic while
     // reusing its immutable preparation; full-spectrum training never caches.
@@ -24,31 +25,39 @@ std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& weight,
         stream = c10::cuda::getCurrentCUDAStream(weight.get_device()).id();
         // Captured nodes must own their spectra through the graph memory pool.
         // Never read an evictable eager-cache tensor or publish a graph-private
-        // allocation into the global cache, including when warmup hit the cache.
-        if (cacheable && !graph_cache_active && c10::cuda::currentStreamCaptureStatusMayInitCtx() !=
-                c10::cuda::CaptureStatus::None) cacheable = false;
+        // allocation into the global cache, including when warmup hit the
+        // cache.
+        if (cacheable && !graph_cache_active &&
+            c10::cuda::currentStreamCaptureStatusMayInitCtx() !=
+                c10::cuda::CaptureStatus::None)
+            cacheable = false;
     }
 #else
-    if (weight.is_cuda()) cacheable = false;
+    if (weight.is_cuda())
+        cacheable = false;
 #endif
     const bool inference = c10::InferenceMode::is_enabled();
     const uint32_t version = cacheable ? source._version() : 0;
-    auto& entries = graph_cache_active ? graph_cache : cache;
+    auto &entries = graph_cache_active ? graph_cache : cache;
     if (cacheable) {
         std::lock_guard<std::mutex> lock(cache_mutex);
         for (auto it = entries.begin(); it != entries.end();) {
             if (it->source.is_same(source)) {
-                if (it->version != version || it->data != source.const_data_ptr() ||
+                if (it->version != version ||
+                    it->data != source.const_data_ptr() ||
                     source.sizes() != at::IntArrayRef(it->sizes) ||
                     source.strides() != at::IntArrayRef(it->strides) ||
                     it->storage_offset != source.storage_offset() ||
-                    it->negative != source.is_neg() || it->conjugate != source.is_conj()) {
-                    if (!graph_cache_active) cache_bytes -= it->bytes;
+                    it->negative != source.is_neg() ||
+                    it->conjugate != source.is_conj()) {
+                    if (!graph_cache_active)
+                        cache_bytes -= it->bytes;
                     it = entries.erase(it);
                     continue;
                 }
-                if (it->h == h && it->w == w && it->scale == s && it->stream == stream &&
-                    it->real_fft == real_fft && it->inference == inference &&
+                if (it->h == h && it->w == w && it->scale == s &&
+                    it->stream == stream && it->real_fft == real_fft &&
+                    it->inference == inference &&
                     it->fb.device() == weight.device()) {
                     auto result = std::make_pair(it->fb, it->invw);
                     entries.splice(entries.begin(), entries, it);
@@ -61,8 +70,10 @@ std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& weight,
     const auto kh = weight.size(2), kw = weight.size(3);
     Tensor otf;
 #ifdef CONVERSE2D_WITH_CUDA
-    const bool fused_prepare = weight.is_cuda() && !at::GradMode::is_enabled() && real_fft;
-    if (fused_prepare) otf = converse_psf_cuda(weight, h, w);
+    const bool fused_prepare =
+        weight.is_cuda() && !at::GradMode::is_enabled() && real_fft;
+    if (fused_prepare)
+        otf = converse_psf_cuda(weight, h, w);
     else
 #endif
     {
@@ -79,20 +90,24 @@ std::pair<Tensor, Tensor> spectrum(const Tensor& source, const Tensor& weight,
     {
         // ATen keeps both derivative paths during training.
         auto power = at::real(fb).square() + at::imag(fb).square();
-        invw = alias_mean(real_fft && s > 1 ? full_spectrum(power, w) : power, s);
-        if (real_fft && s > 1) invw = invw.slice(-1, 0, w / s / 2 + 1).contiguous();
+        invw =
+            alias_mean(real_fft && s > 1 ? full_spectrum(power, w) : power, s);
+        if (real_fft && s > 1)
+            invw = invw.slice(-1, 0, w / s / 2 + 1).contiguous();
     }
     if (cacheable) {
         const size_t bytes = fb.nbytes() + invw.nbytes() + source.nbytes();
         if (graph_cache_active || bytes <= CACHE_BYTES_LIMIT) {
             std::lock_guard<std::mutex> lock(cache_mutex);
-            entries.push_front({source, fb, invw, source.const_data_ptr(), version,
-                h, w, s, stream, real_fft, inference, bytes,
-                source.sizes().vec(), source.strides().vec(), source.storage_offset(),
-                source.is_neg(), source.is_conj()});
+            entries.push_front({source, fb, invw, source.const_data_ptr(),
+                                version, h, w, s, stream, real_fft, inference,
+                                bytes, source.sizes().vec(),
+                                source.strides().vec(), source.storage_offset(),
+                                source.is_neg(), source.is_conj()});
             if (!graph_cache_active) {
                 cache_bytes += bytes;
-                while (cache.size() > CACHE_ENTRIES_LIMIT || cache_bytes > CACHE_BYTES_LIMIT) {
+                while (cache.size() > CACHE_ENTRIES_LIMIT ||
+                       cache_bytes > CACHE_BYTES_LIMIT) {
                     cache_bytes -= cache.back().bytes;
                     cache.pop_back();
                 }

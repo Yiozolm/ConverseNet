@@ -7,28 +7,33 @@
 #include <climits>
 
 template <typename T, typename I>
-__global__ void prepare_psf(const T* weight, T* otf, I total, I H, I W, I kh, I kw) {
+__global__ void prepare_psf(const T *weight, T *otf, I total, I H, I W, I kh,
+                            I kw) {
     const I i = I(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i >= total) return;
+    if (i >= total)
+        return;
     const I w = (i % W + kw / 2) % W;
     const I h = ((i / W) % H + kh / 2) % H;
-    otf[i] = h < kh && w < kw ? weight[(i / (H*W) * kh + h) * kw + w] : T(0);
+    otf[i] = h < kh && w < kw ? weight[(i / (H * W) * kh + h) * kw + w] : T(0);
 }
 
-at::Tensor converse_psf_cuda(const at::Tensor& weight, int64_t h, int64_t w) {
+at::Tensor converse_psf_cuda(const at::Tensor &weight, int64_t h, int64_t w) {
     // Contiguous views can still carry lazy value metadata. Raw device loads
     // must see the same values as ATen pad/roll, including negative views.
     auto source = weight.resolve_conj().resolve_neg().contiguous();
-    auto out = at::empty({weight.size(0), weight.size(1), h, w}, weight.options());
+    auto out =
+        at::empty({weight.size(0), weight.size(1), h, w}, weight.options());
     const auto n = out.numel(), kh = weight.size(2), kw = weight.size(3);
     auto stream = c10::cuda::getCurrentCUDAStream(weight.get_device());
     CONVERSE_DISPATCH_FP32(weight.scalar_type(), "converse_psf", [&] {
         if (n <= INT_MAX - 256 && h <= INT_MAX / 2 && w <= INT_MAX / 2) {
-            prepare_psf<scalar_t,int><<<(n+255)/256,256,0,stream>>>(
-                source.data_ptr<scalar_t>(),out.data_ptr<scalar_t>(),int(n),int(h),int(w),int(kh),int(kw));
+            prepare_psf<scalar_t, int><<<(n + 255) / 256, 256, 0, stream>>>(
+                source.data_ptr<scalar_t>(), out.data_ptr<scalar_t>(), int(n),
+                int(h), int(w), int(kh), int(kw));
         } else {
-            prepare_psf<scalar_t,int64_t><<<(n+255)/256,256,0,stream>>>(
-                source.data_ptr<scalar_t>(),out.data_ptr<scalar_t>(),n,h,w,kh,kw);
+            prepare_psf<scalar_t, int64_t><<<(n + 255) / 256, 256, 0, stream>>>(
+                source.data_ptr<scalar_t>(), out.data_ptr<scalar_t>(), n, h, w,
+                kh, kw);
         }
     });
     C10_CUDA_KERNEL_LAUNCH_CHECK();

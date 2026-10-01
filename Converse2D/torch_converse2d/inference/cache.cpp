@@ -10,7 +10,7 @@ size_t cache_bytes = 0;
 thread_local bool graph_cache_active = false;
 thread_local std::list<CacheEntry> graph_cache;
 
-}
+} // namespace converse2d::inference_state
 using at::Tensor;
 using namespace converse2d::inference_state;
 void clear_fb_cache() {
@@ -30,7 +30,7 @@ void begin_graph_cache() {
 std::vector<Tensor> end_graph_cache() {
     TORCH_CHECK(graph_cache_active, "no graph cache scope is active");
     std::vector<Tensor> owned;
-    for (const auto& entry : graph_cache) {
+    for (const auto &entry : graph_cache) {
         owned.push_back(entry.source);
         owned.push_back(entry.fb);
         owned.push_back(entry.invw);
