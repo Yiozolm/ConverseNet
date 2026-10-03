@@ -46,3 +46,28 @@ These are operator-level timings, not a whole-model or training-convergence resu
 
 Not yet covered: the Linux/Colab build (`-lcufft -lnvrtc`), multi-GPU plan use, and
 plan-cache growth. Plans and their callerInfo live for the process, one per distinct shape.
+
+## Other GPUs (Colab)
+
+Open `a100_colab.ipynb` from branch `claude/v4-dev`. It runs `run_colab.py`, which does the
+following:
+
+1. checked Linux build;
+2. release suite;
+3. callbacks-off vs callbacks-on byte captures in one binary;
+4. `admission.py`;
+5. paired timing.
+
+Byte baselines do not carry across GPUs.
+
+Admission counts per training call on the RTX 5060 Ti (`admission.py`). `lto_fft` is the
+number of callback-linked FFT kernels; ATen 1/N and real_crop kernels mark sites that
+stayed on ATen.
+
+| Shape | lto_fft | ATen 1/N | ATen real_crop |
+|---|---|---|---|
+| circular s1 96 pad 2 (100x100), 48 pad 1 (50x50) | 4 | 0 | 0 |
+| s1 100, 64, 33x17 | 4 | 0 | 0 |
+| s1 96 | 1 | 2 | 1 |
+| s2 48 (96x96), s2 64 (128x128), s3 32 (96x96) | 2 | 2 | 1 |
+| s3 48 (144x144) | 5 | 0 | 0 |
