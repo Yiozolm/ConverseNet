@@ -39,3 +39,32 @@ __device__ void store_scaled(void *data, unsigned long long offset,
         c10::complex<float>(scale, 0.0f) * c10::complex<float>(element.x, element.y);
     static_cast<cufftComplex *>(data)[offset] = make_cuComplex(r.real(), r.imag());
 }
+
+// Backward of ifft2 -> real -> crop: the real_crop_backward_kernel embedding,
+// (g, +0) inside the crop and (+0, +0) outside, read from a strided gradient.
+struct CropInfo {
+    long long h, w, pad, c, s0, s1, s2, s3;
+};
+__device__ cufftComplex load_crop_embed(void *data, unsigned long long offset,
+                                        void *info, void *) {
+    const CropInfo p = *static_cast<const CropInfo *>(info);
+    const long long hp = p.h + 2 * p.pad, wp = p.w + 2 * p.pad;
+    const long long i = static_cast<long long>(offset);
+    const long long bc = i / (hp * wp), row = (i / wp) % hp, col = i % wp;
+    float real = 0.0f;
+    if (row >= p.pad && row < hp - p.pad && col >= p.pad && col < wp - p.pad)
+        real = static_cast<const float *>(data)[(bc / p.c) * p.s0 + (bc % p.c) * p.s1 +
+                                                (row - p.pad) * p.s2 + (col - p.pad) * p.s3];
+    return make_cuComplex(real, 0.0f);
+}
+
+// Backward of the real->complex promote: keep only the real component. The
+// destination is passed in callerInfo so cuFFT's own output buffer, which it
+// may use between passes, stays complex-sized.
+struct RealOut {
+    float *out;
+};
+__device__ void store_real(void *, unsigned long long offset, cufftComplex element,
+                           void *info, void *) {
+    static_cast<const RealOut *>(info)->out[offset] = element.x;
+}

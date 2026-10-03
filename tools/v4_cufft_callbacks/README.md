@@ -50,6 +50,53 @@ Paired CUDA-event timing, 6 alternating rounds x 30 iterations, B4/C128:
 | circular pad (production kernel) + fft2, 96 -> 100 | 640 us | 410 us | 1.56x |
 | ifft2 with 1/N scaling, 100x100 | 694 us | 463 us | 1.50x |
 
-Not covered yet: the backward FFTs, the autograd/higher-order fallback, workspace from
-the PyTorch allocator, CUDA Graph capture, plan-cache lifetime, Linux build, and the
-first-plan JIT cost (cached by the driver afterwards).
+## P1: backward sites and formal gate (`gate.py`)
+
+Two more callbacks cover the backward FFTs:
+
+- `load_crop_embed` with `store_scaled` handles the VJP of `real_crop(ifft2(Z), pad)`, which
+  is `(1/N) * FFT(embed(g))`. It reads the real gradient through its strides into the
+  padded grid, zeros outside the crop as in `real_crop_backward_kernel`, and scales at the
+  store.
+- `store_real` handles the VJP of `fft2(real x)`. It writes only the real part of the
+  unnormalized inverse. Its FP32 destination is passed in callerInfo, so cuFFT's own
+  output buffer stays complex-sized.
+
+`gate.py` runs every site over 12 shape/pad combinations, 3 input kinds, and for B1 both
+contiguous and transposed gradients. Each case is compared on bytes and through
+`numerical_policy.comparison` (normal regime) against a NumPy FP64 FFT of the same FP32
+inputs. Results on the RTX 5060 Ti (`artifacts/v4_cufft_callbacks/p1_gate_004.json`):
+
+| Site | Passed | Byte-identical | Notes |
+|---|---|---|---|
+| F1 `load_real` | 21/21 | 21 | |
+| F2 `load_circular` | 15/15 | 12 | differs only at 14x12 |
+| F3 `store_scaled` | 36/36 | 30 | differs at 96x96 (more accurate) and 14x12 |
+| B1 crop-embed + scaled | **65/72** | 54 | 6 plan-creation errors (`CUFFT_INTERNAL_ERROR`) at the degenerate 1x5 transform; 1 budget failure at 14x12, max-abs 1.605x > 1.50x |
+| B2 `store_real` | 36/36 | 30 | differs at 96x96 (more accurate) and 14x12 |
+
+All callbacks are byte-identical at the 100x100 production size. At 96x96 the callback plans
+are more accurate than ATen (rel-L2 ratio about 0.94). The 14x12 failure moved between runs
+when the input stream changed (`p1_gate_003` failed a different 14x12 B1 case at 1.524x).
+At that small size the callback plan is a different algorithm and its max-abs error can
+exceed the budget. Plan-creation failures and budget failures are both counted as failed
+cases, never skipped.
+
+During debugging, single probes could not reproduce the 1x5 plan error. It appeared only
+when that shape ran inside the full gate, which is why the gate records per-case errors
+instead of aborting.
+
+Backward-site timing, 6 alternating rounds x 30 iterations, B4/C128:
+
+| Pair | ATen median | Callback median | Speedup |
+|---|---|---|---|
+| B1: VJP of `real_crop(ifft2(Z), 2)`, 96 -> 100 | 912 us | 432 us | 2.13x |
+| B2: VJP of `fft2(real x)`, 100x100 | 516 us | 400 us | 1.27x |
+
+ATen's B2 VJP returns a strided real view without a copy. The callback writes a
+contiguous FP32 tensor, so its gain is the halved store traffic only.
+
+Not covered yet: autograd integration with the higher-order ATen fallback, fallback on
+plan-creation failure, workspace from the PyTorch allocator, CUDA Graph capture (the
+prototype updates per-call callerInfo with a host-to-device copy), plan-cache lifetime,
+the padded B2 fold, Linux build, and the first-plan JIT cost.
