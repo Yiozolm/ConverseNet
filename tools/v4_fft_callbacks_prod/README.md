@@ -108,3 +108,35 @@ stayed on ATen.
 - Per-site timing with per-kernel-name times. `CONVERSE2D_FFT_CALLBACKS` accepts a comma
   list of `real,circular,inverse,crop_embed` to enable only those sites; `0` disables all
   and unset or `1` enables all.
+
+### A100 follow-up result (git b7d2124, binary d0369897)
+
+- Release suite, same 54 FP64-budget failures (identical names) at HEAD, at 5a5f0ba and
+  at 347b040. They predate every claude/v4-dev commit and come from codex/v4.0.0 on sm_80.
+  - v3.0.0's byte-equality suite also fails on the A100: 794 subtests in 136 tests.
+  - With `CONVERSE2D_FFT_CALLBACKS=0`, the selection test also fails (no callback by
+    design); it now skips unless every site is enabled.
+- Per-kernel times at 100x100, B4/C128, first FFT pass:
+  - plain FFT: about 68 us;
+  - with the `fwd_load_real` callback: 67 us;
+  - with `fwd_load_circular`: 236 us;
+  - with `vjp_crop_embed`: 238 us.
+  - The `inv_store_scaled` pass costs 72 us and removes a 65 us ATen 1/N pass, a net gain.
+  - The circular and crop-embed load callbacks therefore lose on the A100 because of their
+    64-bit div/mod index math, which is per element on the FFT's critical path.
+  - The RTX 5060 Ti is bandwidth bound and hides that cost.
+- Per-site call speedups vs ATen (circular s1 B4/C128 96 pad 2):
+
+  | all | real | circular | inverse | crop_embed |
+  |---|---|---|---|---|
+  | 0.91x | 1.00x | 0.93x | 1.04x | 0.95x |
+
+  | forward s1 B4/C128 100 | all 1.06x | real 1.04x | inverse 1.02x | crop_embed 0.95x |
+  |---|---|---|---|---|
+
+- The load callbacks now use 32-bit quotients, with remainders computed from the
+  quotients. Plans whose `batch*h*w` reaches 2^32 keep ATen.
+  - RTX 5060 Ti, binary 453f754b vs f6585c51: 213/213 module and 814/814 spectral
+    captures identical; release suite 212/212.
+  - Two-round timing there: circular s1 B4/C128 96 pad 2 1.30x, s1 B4/C128 100 1.38x.
+  - The A100 effect is not measured yet.

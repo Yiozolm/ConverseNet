@@ -28,18 +28,23 @@ __device__ float2 fwd_load_real(void* data, unsigned long long offset, void*, vo
     return r;
 }
 
+// Load callbacks run once per element inside the first FFT pass, so their index
+// math is on the critical path: 32-bit quotients (plans require batch*h*w < 2^32)
+// and each remainder from its quotient, instead of 64-bit div/mod.
+
 // circular_pad_complex_forward_kernel's index map; info = {h, w, pad}.
 __device__ float2 fwd_load_circular(void* data, unsigned long long offset, void* info, void*) {
     const long long* p = static_cast<const long long*>(info);
-    const long long h = p[0], w = p[1], pad = p[2], hp = h + 2 * pad, wp = w + 2 * pad;
-    const long long i = static_cast<long long>(offset), bc = i / (hp * wp);
-    long long row = (i / wp) % hp - pad, col = i % wp - pad;
+    const unsigned int h = p[0], w = p[1], pad = p[2], hp = h + 2 * pad, wp = w + 2 * pad;
+    const unsigned int i = static_cast<unsigned int>(offset), q = i / wp, bc = q / hp;
+    int row = static_cast<int>(q - bc * hp) - static_cast<int>(pad);
+    int col = static_cast<int>(i - q * wp) - static_cast<int>(pad);
     if (row < 0) row += h;
-    else if (row >= h) row -= h;
+    else if (row >= static_cast<int>(h)) row -= h;
     if (col < 0) col += w;
-    else if (col >= w) col -= w;
+    else if (col >= static_cast<int>(w)) col -= w;
     float2 r;
-    r.x = static_cast<const float*>(data)[(bc * h + row) * w + col];
+    r.x = static_cast<const float*>(data)[(static_cast<unsigned long long>(bc) * h + row) * w + col];
     r.y = 0.0f;
     return r;
 }
@@ -48,13 +53,15 @@ __device__ float2 fwd_load_circular(void* data, unsigned long long offset, void*
 // with (h, w) the full transform size and s* the gradient strides.
 __device__ float2 vjp_crop_embed(void* data, unsigned long long offset, void* info, void*) {
     const long long* p = static_cast<const long long*>(info);
-    const long long h = p[0], w = p[1], pad = p[2], c = p[3];
-    const long long i = static_cast<long long>(offset);
-    const long long bc = i / (h * w), row = (i / w) % h, col = i % w;
+    const unsigned int h = p[0], w = p[1], pad = p[2], c = p[3];
+    const unsigned int i = static_cast<unsigned int>(offset), q = i / w, bc = q / h;
+    const unsigned int row = q - bc * h, col = i - q * w;
     float real = 0.0f;
-    if (row >= pad && row < h - pad && col >= pad && col < w - pad)
-        real = static_cast<const float*>(data)[(bc / c) * p[4] + (bc % c) * p[5] +
+    if (row >= pad && row < h - pad && col >= pad && col < w - pad) {
+        const unsigned int b = bc / c;
+        real = static_cast<const float*>(data)[b * p[4] + (bc - b * c) * p[5] +
                                                (row - pad) * p[6] + (col - pad) * p[7]];
+    }
     float2 r;
     r.x = real;
     r.y = 0.0f;
@@ -216,6 +223,8 @@ Plan& plan_for(Kind kind, int device, int64_t batch, int64_t h, int64_t w,
     if (c10::cuda::currentStreamCaptureStatusMayInitCtx() != c10::cuda::CaptureStatus::None)
         return unavailable;
     Plan plan;
+    if (batch * h * w > 0xffffffffLL)  // callback offsets are decomposed in 32 bits
+        return plans.emplace(key, plan).first->second;
     const auto& ir = compiled(device);
     if (!ir.empty() && cufftCreate(&plan.handle) == CUFFT_SUCCESS) {
         // ATen: double scale = 1.0 / n, applied by mul_ as complex<float>(float(scale), 0).

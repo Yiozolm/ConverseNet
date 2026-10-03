@@ -7,6 +7,8 @@ whose callback plan uses another FFT algorithm (96x96 on the RTX 5060 Ti) keep
 ATen. Every comparison here uses the frozen FP32 baseline and the independent
 FP64 reference through numerical_policy.
 """
+import os
+
 import torch
 import torch.nn.functional as F
 
@@ -55,8 +57,10 @@ def run(fn, raw, upstream, dtype, *args):
 
 class FFTCallbacksCUDA(CUDATestCase):
     def test_callback_transforms_are_selected_only_at_and_above_side_16(self):
-        # Admission is per GPU: on the A100 the 64x64 inverse and crop-embed plans fail the
-        # bit-identity probe and keep ATen, so only "some callback at >= 16" is device independent.
+        # Admission is per GPU: on the A100 only one of the three 64x64 sites passes the
+        # bit-identity probe, so only "some callback at >= 16" is device independent.
+        if os.environ.get("CONVERSE2D_FFT_CALLBACKS", "1") != "1":
+            self.skipTest("CONVERSE2D_FFT_CALLBACKS restricts the callback sites")
         for height, width, eligible in ((64, 64, True), (33, 17, True), (15, 40, False), (40, 15, False)):
             raw, upstream = public_raw(1, 2, 3, height, width, 7300 + height)
             data = [value.cuda().requires_grad_() for value in raw]
