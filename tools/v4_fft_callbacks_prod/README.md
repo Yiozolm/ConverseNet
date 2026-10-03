@@ -139,4 +139,24 @@ stayed on ATen.
   - RTX 5060 Ti, binary 453f754b vs f6585c51: 213/213 module and 814/814 spectral
     captures identical; release suite 212/212.
   - Two-round timing there: circular s1 B4/C128 96 pad 2 1.30x, s1 B4/C128 100 1.38x.
-  - The A100 effect is not measured yet.
+
+### A100 after the 32-bit load callbacks (git 87b7ac0, binary e46ca5df)
+
+- Release suite: 54 failures with callbacks on and off, the same names as at 347b040.
+- First FFT pass at 100x100, B4/C128:
+  - circular load: 236 -> 94.5 us;
+  - crop-embed load: 238 -> 126 us;
+  - plain real load for reference: 67 us.
+- Call speedups vs ATen, all sites on, 4 alternating rounds:
+
+  | Config | Call | Kernel time |
+  |---|---|---|
+  | circular s1 B4/C64 96 pad 2 | 1.09x | 1.01x |
+  | circular s1 B4/C128 96 pad 2 | 1.11x | 1.12x |
+  | s1 B4/C128 100 | 1.11x | 1.13x |
+  | s2 B4/C64 64 | 1.08x | 1.11x |
+  | s3 B2/C32 48 | 1.08x | 0.98x |
+
+- Every site alone is now neutral or a gain on the A100. The crop-embed load still costs
+  about 60 us more than the plain load at this size (strided gather plus the batch/channel
+  quotient).
