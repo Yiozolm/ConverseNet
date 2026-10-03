@@ -45,6 +45,7 @@ def load_extension(cpu_only=False, verbose=False):
               "torch": str(torch.__version__), "cuda": torch.version.cuda if cuda else None,
               "toolchain": build_config.toolchain_identity(cuda),
               "cxx_flags": flags.copy(), "cuda_flags": cuda_flags.copy(),
+              "link_libraries": build_config.link_libraries(cuda),
               "loader_sha256": _sha256(pathlib.Path(__file__))}
     # TORCH_LIBRARY cannot be registered twice in one process. A new source
     # revision must be tested in a fresh process instead of silently staying old.
@@ -74,8 +75,10 @@ def load_extension(cpu_only=False, verbose=False):
     cuda_flags.append(revision)
     if cuda:
         flags.append("-DCONVERSE2D_WITH_CUDA=1")
+    libraries = build_config.link_libraries(cuda)
+    ldflags = [name + ".lib" for name in libraries] if os.name == "nt" else ["-l" + name for name in libraries]
     extension = load(name="converse2d_checked_ext", sources=sources,
-                     extra_cflags=flags, extra_cuda_cflags=cuda_flags,
+                     extra_cflags=flags, extra_cuda_cflags=cuda_flags, extra_ldflags=ldflags,
                      with_cuda=cuda, build_directory=str(build), verbose=verbose)
     library = pathlib.Path(extension.__file__)
     manifest_path.write_text(json.dumps({"inputs": inputs, "library": library.name,
