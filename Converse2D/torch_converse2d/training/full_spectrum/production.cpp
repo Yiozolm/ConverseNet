@@ -31,7 +31,9 @@ static at::Tensor spatial_complex(at::Tensor x, at::Tensor prior, at::Tensor wei
 }
 
 at::Tensor spatial(at::Tensor x,at::Tensor prior,at::Tensor weight,at::Tensor bias,int64_t scale,double eps) {
-    return at::real(spatial_complex(x,prior,weight,bias,scale,eps));
+    // Same native real view; its VJP embeds (g,+0) in one kernel instead of a
+    // zero fill plus strided copy. Falls back to at::real for ineligible z.
+    return real_crop(spatial_complex(x,prior,weight,bias,scale,eps),0);
 }
 
 at::Tensor circular_pad_complex(at::Tensor x,int64_t padding) {
