@@ -12,7 +12,11 @@ Example capacity pilot (choose a NEW output directory):
     --eval-every 5 --run-dir artifacts/roadmap_quality/pilot_current
 
 Sampling is deterministic. --deterministic-algorithms selects a separate,
-explicit CUDA algorithm lane; it never changes production defaults.
+explicit CUDA algorithm lane; it never changes production defaults. That lane
+no longer NaN-fills uninitialized memory (byte-identical, measured 1.11x B4
+training); --fill-uninitialized-memory restores the legacy fill. Configs and
+environments record the setting only when the fill is off, so legacy runs keep
+their recipe hashes and resume only into a matching lane.
 """
 import argparse
 from contextlib import contextmanager
@@ -367,12 +371,16 @@ def execute(args, protocol, report):
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
     torch.use_deterministic_algorithms(args.deterministic_algorithms)
+    if args.deterministic_algorithms:
+        torch.utils.deterministic.fill_uninitialized_memory = args.fill_uninitialized_memory
     report["environment"] = dict(torch=str(torch.__version__), numpy=np.__version__,
                                 cuda=torch.version.cuda, gpu=torch.cuda.get_device_name(),
                                 tf32=False, amp=False, cudnn_benchmark=False, cudnn_deterministic=True,
                                 deterministic_algorithms=args.deterministic_algorithms,
                                 python=platform.python_version(),
                                 cublas_workspace_config=os.environ.get("CUBLAS_WORKSPACE_CONFIG", ""))
+    if args.deterministic_algorithms and not args.fill_uninitialized_memory:
+        report["environment"]["fill_uninitialized_memory"] = False
     from importlib.metadata import version
     report["environment"].update(scipy=version("scipy"), pillow=version("pillow"))
     if resume is not None:
@@ -598,12 +606,16 @@ def main():
     parser.add_argument("--build", action="store_true", help="Allow a checked build; default verifies an existing binary")
     parser.add_argument("--deterministic-algorithms", action="store_true",
                         help="Separate opt-in algorithm lane, applied equally to both variants")
+    parser.add_argument("--fill-uninitialized-memory", action="store_true",
+                        help="Deterministic lane only: restore the legacy NaN fill of new allocations")
     parser.add_argument("--stop-when-stable", action="store_true",
                         help="After at least 1000 updates, stop on the declared five-evaluation stability window")
     parser.add_argument("--max-wall-seconds", type=float, help="Per-process wall budget including setup")
     parser.add_argument("--deadline-utc", help="Timezone-aware ISO deadline; stop at a safe optimizer/evaluation boundary")
     parser.add_argument("--resume", type=Path, help="Explicit roadmap checkpoint to resume into a new run directory")
     args = parser.parse_args()
+    if args.fill_uninitialized_memory and not args.deterministic_algorithms:
+        parser.error("--fill-uninitialized-memory only applies with --deterministic-algorithms")
     if args.deterministic_algorithms:
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     ROOT = args.root = args.root.resolve()
@@ -649,6 +661,9 @@ def main():
     if args.run_dir.is_relative_to(protocol.root):
         parser.error("Run output must be outside the read-only image directory")
     config = json_safe(vars(args))
+    # Absent means the legacy lane (fill on, or irrelevant without determinism).
+    if config.pop("fill_uninitialized_memory") is False and args.deterministic_algorithms:
+        config["fill_uninitialized_memory"] = False
     split = {name: sorted(row["relative_path"] for row in getattr(protocol, name))
              for name in ("train", "validation")}
     report = dict(status="initializing", created_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),

@@ -4,6 +4,7 @@ import copy
 import datetime
 import io
 import json
+import os
 from pathlib import Path
 import random
 import sys
@@ -115,6 +116,7 @@ class RunStateTests(unittest.TestCase):
                           torch.backends.cudnn.deterministic, torch.backends.cudnn.allow_tf32,
                           torch.backends.cuda.matmul.allow_tf32)
         previous_data_root = data_module.ROOT
+        previous_fill = torch.utils.deterministic.fill_uninitialized_memory
 
         def train_step(model, optimizer, batch, args):
             optimizer.zero_grad(set_to_none=True)
@@ -152,6 +154,7 @@ class RunStateTests(unittest.TestCase):
                         seen[current['name']].append(step)
                         events[current['name']].append(('data', step))
                         return (torch.full((1,3,8,8),float(step+1)), torch.ones(1,1,7,7), torch.ones(1,3,24,24))
+                patches.enter_context(patch.dict(os.environ))  # deterministic lane sets CUBLAS_WORKSPACE_CONFIG
                 patches.enter_context(patch.object(model_module, 'ConverseUSRNet', Model))
                 patches.enter_context(patch.object(metrics, 'checkpoint_layout', return_value={'strict':True}))
                 patches.enter_context(patch.object(data_module, 'DatasetProtocol', Protocol))
@@ -208,9 +211,30 @@ class RunStateTests(unittest.TestCase):
                 self.assertEqual(events['resumed_eval'][0],('evaluation',2))
                 self.assertEqual(resumed_eval_state['metric_history'],whole_eval_state['metric_history'])
                 self.assertTrue(torch.equal(whole_eval_state['state_dict']['weight'],resumed_eval_state['state_dict']['weight']))
+                # The default lane records no fill setting, keeping legacy recipe hashes.
+                for key in ('config','environment'):
+                    self.assertNotIn('fill_uninitialized_memory',whole[key])
+                deterministic = ('--deterministic-algorithms','--max-wall-seconds','100')
+                fill_off, _ = run('fill_off',deterministic)
+                self.assertFalse(torch.utils.deterministic.fill_uninitialized_memory)
+                for key in ('config','environment'):
+                    self.assertIs(fill_off[key]['fill_uninitialized_memory'],False)
+                fill_on, _ = run('fill_on',(*deterministic,'--fill-uninitialized-memory'))
+                self.assertTrue(torch.utils.deterministic.fill_uninitialized_memory)
+                for key in ('config','environment'):
+                    self.assertNotIn('fill_uninitialized_memory',fill_on[key])
+                # Checkpoints resume only into the same fill lane.
+                resumed_off, _ = run('resumed_off',('--deterministic-algorithms','--resume',str(folder/'fill_off/final.pth')))
+                self.assertEqual(resumed_off['status'],'complete')
+                with self.assertRaisesRegex(ValueError,'resume_recipe_sha256'):
+                    run('crossed',('--deterministic-algorithms','--fill-uninitialized-memory',
+                                   '--resume',str(folder/'fill_off/final.pth')))
+                with self.assertRaisesRegex(ValueError,'resume_recipe_sha256'):
+                    run('crossed_back',('--deterministic-algorithms','--resume',str(folder/'fill_on/final.pth')))
         finally:
             run_state.restore_rng(previous_rng,cuda=False)
             data_module.ROOT = previous_data_root
+            torch.utils.deterministic.fill_uninitialized_memory = previous_fill
             torch.use_deterministic_algorithms(previous_flags[0])
             torch.backends.cudnn.benchmark = previous_flags[1]
             torch.backends.cudnn.deterministic = previous_flags[2]
