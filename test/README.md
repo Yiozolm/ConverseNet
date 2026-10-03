@@ -24,6 +24,7 @@ while build checks, the CPU extension and the portable Python fallback still run
 | `test_psf_preparation.py` | PSF boundary/layout cases, shared-ancestor gradient order, second/third derivatives, streams and per-call kernel FFT |
 | `test_scale2_kernel_fusion.py` | Budgeted non-broadcast s2 kernel VJPs, weak regularization, gradient subsets, conjugated spectra and Graph replay |
 | `test_scale3_fusion.py` | Budgeted nine-alias cancellation, large mean counts, broadcast VJPs, strided/weak-regularization cases and guarded fallback |
+| `test_scale1_forward_planes.py` | s1 forward plane-kernel dispatch at the 65535-row grid limit and byte parity with the original fallback kernel |
 | `test_batch_reduce.py` | B2/B4 shared-kernel batch reductions, original accumulation order, gradient masks, fallback geometry, higher derivatives and Graph replay |
 | `test_peripheral_fusion.py` | Alpha residual FP32 multiply/add boundaries, gradient subsets, aliases, higher derivatives, layouts and streams |
 | `test_layernorm_affine.py` | Private affine values/gradients, full-inference dispatch precedence and unchanged training statistics |
