@@ -55,18 +55,20 @@ def run(fn, raw, upstream, dtype, *args):
 
 class FFTCallbacksCUDA(CUDATestCase):
     def test_callback_transforms_are_selected_only_at_and_above_side_16(self):
-        # 64x64 and 33x17 callback plans reproduced ATen bit for bit in tools/v4_cufft_callbacks.
-        for height, width, selected in ((64, 64, True), (33, 17, True), (15, 40, False), (40, 15, False)):
+        # Admission is per GPU: on the A100 the 64x64 inverse and crop-embed plans fail the
+        # bit-identity probe and keep ATen, so only "some callback at >= 16" is device independent.
+        for height, width, eligible in ((64, 64, True), (33, 17, True), (15, 40, False), (40, 15, False)):
             raw, upstream = public_raw(1, 2, 3, height, width, 7300 + height)
             data = [value.cuda().requires_grad_() for value in raw]
             names = kernel_names(lambda: torch.autograd.grad(
                 torch.ops.converse2d.forward(data[0], data[0], data[2], data[3], 1, 1e-5),
                 data[0], upstream.cuda()))
             with self.subTest(height=height, width=width):
-                # Forward x FFT, the scaled IFFT and the crop-embed VJP each link callbacks.
-                self.assertEqual(any("lto_fft" in name for name in names), selected)
-                # The separate scaling passes exist exactly when callbacks are not used.
-                self.assertEqual(any("AUnaryFunctor" in name for name in names), not selected)
+                # At least one site was admitted at 64x64 and 33x17 on the RTX 5060 Ti and A100.
+                self.assertEqual(any("lto_fft" in name for name in names), eligible)
+                if not eligible:
+                    # Below 16 the separate ATen scaling passes remain.
+                    self.assertTrue(any("AUnaryFunctor" in name for name in names))
 
     def test_public_forward_budgets_at_every_scale(self):
         cases = [(1, True, 2, 3, 20, 24), (1, False, 2, 3, 20, 24), (1, True, 1, 4, 96, 96),

@@ -25,7 +25,8 @@ ATen expression bit for bit. Shapes whose callback plan uses a different FFT
 algorithm keep ATen; on the RTX 5060 Ti this includes the unpadded 96x96 IFFT.
 The kernel FFT and every VJP expression stay ATen. Planes with a side below 16,
 plans cuFFT cannot create, and stream capture without a cached plan also use
-ATen. Set `CONVERSE2D_FFT_CALLBACKS=0` to force ATen everywhere.
+ATen. Set `CONVERSE2D_FFT_CALLBACKS=0` to force ATen everywhere, or a comma list
+of `real,circular,inverse,crop_embed` to enable only those sites.
 
 For the public arbitrary-prior `forward`, `torch.no_grad()`,
 `torch.inference_mode()`, or all-frozen inputs select the half-spectrum

@@ -86,12 +86,22 @@ std::mutex mutex;
 std::map<std::vector<int64_t>, Plan> plans;
 std::map<int, std::string> lto_ir;  // per device architecture; empty = unavailable
 
-bool enabled() {
-    static const bool value = [] {
+// CONVERSE2D_FFT_CALLBACKS: unset or "1" enables every site, "0" none, and a
+// comma list of real,circular,inverse,crop_embed enables only those sites.
+bool enabled(Kind kind) {
+    static const std::vector<bool> sites = [] {
         const char* flag = std::getenv("CONVERSE2D_FFT_CALLBACKS");
-        return !(flag && std::string(flag) == "0");
+        const std::string value = flag ? flag : "1";
+        std::vector<bool> on(5, value == "1");
+        if (value == "0" || value == "1")
+            return on;
+        const char* names[] = {nullptr, "real", "circular", "inverse", "crop_embed"};
+        std::string list = "," + value + ",";
+        for (int k = LoadReal; k <= CropEmbedScaled; ++k)
+            on[k] = list.find(std::string(",") + names[k] + ",") != std::string::npos;
+        return on;
     }();
-    return value;
+    return sites[kind];
 }
 
 const std::string& compiled(int device) {
@@ -247,14 +257,14 @@ void execute(Plan& plan, const void* in, void* out, int direction, const at::Ten
                 "cuFFT callback transform failed");
 }
 
-bool plain_cuda(const at::Tensor& t, at::ScalarType dtype) {
-    return t.defined() && enabled() && t.is_cuda() && t.dim() == 4 && t.scalar_type() == dtype &&
+bool plain_cuda(const at::Tensor& t, at::ScalarType dtype, Kind kind) {
+    return t.defined() && enabled(kind) && t.is_cuda() && t.dim() == 4 && t.scalar_type() == dtype &&
            !t.is_conj() && !t.is_neg() && t.numel() > 0;
 }
 } // namespace
 
 bool ready_real(const at::Tensor& x, int64_t pad) {
-    if (!plain_cuda(x, at::kFloat) || !x.is_contiguous() || pad < 0 || pad > x.size(2) ||
+    if (!plain_cuda(x, at::kFloat, pad ? LoadCircular : LoadReal) || !x.is_contiguous() || pad < 0 || pad > x.size(2) ||
         pad > x.size(3))
         return false;
     const auto h = x.size(2) + 2 * pad, w = x.size(3) + 2 * pad;
@@ -281,7 +291,7 @@ at::Tensor fft2_real(const at::Tensor& x, int64_t pad) {
 }
 
 bool ready_inverse(const at::Tensor& z) {
-    if (!plain_cuda(z, at::kComplexFloat) || !z.is_contiguous() || z.size(2) < kMinSide ||
+    if (!plain_cuda(z, at::kComplexFloat, StoreScaled) || !z.is_contiguous() || z.size(2) < kMinSide ||
         z.size(3) < kMinSide)
         return false;
     c10::cuda::CUDAGuard guard(z.device());
@@ -309,7 +319,7 @@ std::vector<int64_t> crop_info(const at::Tensor& g, int64_t c, int64_t h, int64_
 } // namespace
 
 bool ready_crop_embed(const at::Tensor& g, int64_t c, int64_t h, int64_t w, int64_t pad) {
-    if (!plain_cuda(g, at::kFloat) || h < kMinSide || w < kMinSide || g.size(1) != c ||
+    if (!plain_cuda(g, at::kFloat, CropEmbedScaled) || h < kMinSide || w < kMinSide || g.size(1) != c ||
         g.size(2) != h - 2 * pad || g.size(3) != w - 2 * pad)
         return false;
     for (int dim = 0; dim < 4; ++dim)
