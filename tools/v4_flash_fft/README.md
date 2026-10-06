@@ -234,7 +234,8 @@ Reading:
   launch floor of about 0.7 ms fwd+VJP on Colab. Their ratios compare launch counts, not
   GPU work.
 - Accuracy: output, grad_x and grad_x0 again 0.67-0.94x production's rel-L2. The seed sweep
-  failed 11 of 32 runs, on grad_bias (up to 4.17x) and grad_weight (up to 2.06x). Median
+  failed 10 of 32 runs (first reported as 11, a miscount), on grad_bias (up to 4.17x) and
+  grad_weight (up to 2.06x). Median
   errors are equal or lower than production's (geometric-mean ratios 0.73-0.98, except s3
   48 grad_bias 1.26 and s3 24 grad_bias 1.13); all are about 3e-7, a few ulps.
 
@@ -262,3 +263,25 @@ term. s2/s3 park the low-res Y in a per-plane scratch.
   at s1 C128 and 98 -> 124 MB at s2 48 (per-plane scratch).
 - Expected on A100: s1 C128 backward goes from 8 waves (4 launches x 2, the second 19% full)
   to 5 (512 blocks on 108 SMs); C64 no longer leaves 44 SMs idle. Not measured yet.
+
+### A100 with the single-launch backward (`flash-NVIDIA_A100-SXM4-40GB-20261006T150610`)
+
+The accuracy metrics (flash study and all 32 seed-sweep runs, candidate and baseline) are
+identical to the earlier A100 run, as expected for bitwise-identical arithmetic: same 10/32
+seed-sweep failures and the same s3 144x144 grad_bias failure in the study.
+
+| Case | Production | Fused before | Fused now | Peak MiB prod / now |
+|---|---|---|---|---|
+| circular s1 B4 C128 96 pad 2 | 1.17 ms | 1.20 ms (0.97x) | 0.90 ms (**1.30x**) | 230 / 96 |
+| s1 B4 C128 100 | 1.11 ms | 1.22 ms (0.91x) | 0.92 ms (**1.20x**) | 230 / 100 |
+| s2 B4 C64 64 (128x128) | 1.06 ms | 0.98 ms (1.07x) | 0.90 ms (**1.18x**) | 268 / 93 |
+| s3 B2 C32 48 (144x144) | 0.86 ms | 0.89 ms (0.93x) | 0.76 ms (**1.14x**) | 91 / 32 |
+| circular s1 B4 C64 96 pad 2 | 0.68 ms | 0.78 ms (0.87x) | 0.70 ms (0.97x) | 115 / 48 |
+
+- At s1 C128 the fused backward fell from 0.89 to 0.59 ms (production 0.71 ms), close to
+  the predicted 0.55 ms from 8 -> 5 waves. Fused FP32 use rose to 15.4% of peak at 19% of
+  DRAM bandwidth; production runs at 70% of DRAM bandwidth.
+- C64 and the small s2/s3 shapes sit on the ~0.7 ms Colab launch floor (both paths); their
+  1.0-1.24x ratios mostly reflect fewer launches.
+- Saved-for-backward memory is unchanged (3.4-7.7x less than production); peak is now
+  2.3-2.9x lower at the production-size cases, against 3.3-4.3x before.
