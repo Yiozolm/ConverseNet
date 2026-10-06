@@ -651,6 +651,31 @@ void scaled_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor
     reduce_partials(part, gl_part, gk, gl);
 }
 
+// Diagnostic: the raw 2-D FFT of real planes exactly as the fused kernels compute
+// it (fft2_plane after loading (x, 0)), for error attribution in Python.
+template <int H, int W>
+__global__ void __launch_bounds__(kThreads, 1) debug_fft2(const float* __restrict__ x, float2* __restrict__ out,
+                                                          const float2* __restrict__ tr, const float2* __restrict__ tc) {
+    extern __shared__ float2 s[];
+    constexpr int N = H * W;
+    const size_t base = size_t(blockIdx.x) * N;
+    for (int i = threadIdx.x; i < N; i += kThreads) s[i] = make_float2(x[base + i], 0.f);
+    __syncthreads();
+    fft2_plane<H, W>(s, tr, tc, threadIdx.x);
+    for (int i = threadIdx.x; i < N; i += kThreads) out[base + i] = s[i];
+}
+
+template <int H, int W>
+void launch_debug_fft2(const at::Tensor& x, at::Tensor& out) {
+    auto kernel = debug_fft2<H, W>;
+    TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, H * W * 8) == cudaSuccess);
+    kernel<<<x.numel() / (H * W), kThreads, H * W * 8, at::cuda::getCurrentCUDAStream()>>>(
+        x.data_ptr<float>(), reinterpret_cast<float2*>(out.data_ptr()), axis_for(W, x.get_device()).twiddle,
+        axis_for(H, x.get_device()).twiddle);
+}
+
+#define FLASH_DEBUG_SIZES(X) X(24) X(32) X(48) X(64) X(72) X(96) X(100) X(128) X(144)
+
 // Compiled shapes: s1 by padded plane side; s2/s3 by low-res side.
 #define FLASH_S1_SIZES(X) X(100) X(96) X(64)
 #define FLASH_S2_SIZES(X) X(64) X(48) X(32)
@@ -802,4 +827,21 @@ std::vector<at::Tensor> flash_scaled_backward(const at::Tensor& x, const at::Ten
 #undef FLASH_BWD3
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return {gx, gx0, gk, gl};
+}
+
+// Diagnostic entry: fused-kernel FFT2 of square real planes (..., n, n).
+at::Tensor flash_debug_fft2(const at::Tensor& x) {
+    TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kFloat && x.is_contiguous() && x.dim() >= 2 &&
+                x.size(-1) == x.size(-2));
+    const int n = x.size(-1);
+    TORCH_CHECK(int64_t(n) * n * 8 + kStaticSmem <= smem_capacity(x.get_device()), "plane does not fit");
+    c10::cuda::CUDAGuard guard(x.device());
+    auto out = at::empty(x.sizes(), x.options().dtype(at::kComplexFloat));
+    bool done = false;
+#define FLASH_DEBUG(m) if (n == m) { launch_debug_fft2<m, m>(x, out); done = true; }
+    FLASH_DEBUG_SIZES(FLASH_DEBUG)
+#undef FLASH_DEBUG
+    TORCH_CHECK(done, "no debug instantiation for ", n);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return out;
 }

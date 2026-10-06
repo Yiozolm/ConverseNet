@@ -285,3 +285,40 @@ seed-sweep failures and the same s3 144x144 grad_bias failure in the study.
   1.0-1.24x ratios mostly reflect fewer launches.
 - Saved-for-backward memory is unchanged (3.4-7.7x less than production); peak is now
   2.3-2.9x lower at the production-size cases, against 3.3-4.3x before.
+
+## Anatomy of the grad_bias / grad_weight budget failures (`error_anatomy.py`, `gd_rounding.py`)
+
+`error_anatomy.py` re-evaluates the kernel- and regularizer-gradient formulas in FP64 using
+FP32 spectra from four sources: exact, production's cuFFT (`fft2` of (x, 0), `fft2(g)/N`),
+cuFFT on transposed planes, and the fused kernels' own FFT (`ext.debug_fft2`). The transposed
+cuFFT is mathematically identical and equally accurate but rounds differently; it is the
+control "second FFT". Each path's error then splits into:
+- shared: FP32 k and l, common to both paths;
+- spectrum: the path's FP32 spectra;
+- arithmetic: FP32 pointwise math, reductions and the sigmoid-backward chain.
+
+RTX 5060 Ti, 5 shapes x 8 seeds (`error_anatomy_rtx5060ti_003.json`):
+
+| | fused / production, geometric mean | runs > 1.25x (bias) |
+|---|---|---|
+| spectrum-only error, fused FFT | 0.59-0.88 | 3 / 40 |
+| spectrum-only error, control (transposed cuFFT) | 0.94-1.17 | 13 / 40 |
+| actual gate ratio, fused | bias 0.75-1.00, weight 0.84-1.00 | 4 / 40 |
+| gate ratio if fused arithmetic were exact | 0.58-0.78 (s2/s3) | 1 / 32 (weight 0 / 32) |
+
+- The fused FFT is more accurate than cuFFT in these sums. Every failing run has a fused
+  spectrum ratio below 1.
+- Failures come from the arithmetic component, a few ulps from several roughly equal sources.
+  Rounding one step at a time in FP64 (`gd_rounding_001.json`), each pointwise step of gd
+  adds 1.7-2.8e-8 to grad_l, all of them together 4.5e-8, and the FP32 sum 0.8-1.6e-7. The
+  measured arithmetic component is 1-5e-7 in both paths.
+- Why a few ulps can fail a 1.25x budget: each channel's sum cancels 17-71x, and the error
+  concentrates in an effective 2-9 of 32-64 channels. The gate compares two independent
+  noise draws with about 4 degrees of freedom. For two equally accurate implementations,
+  P(ratio > 1.25) = P(F(4,4) > 1.5625) = 0.34. The control's spectrum-only rate is 13/40.
+- s1 never fails: the shared FP32 kernel-spectrum error (about 1e-5) dominates both paths and
+  pins the ratio at 1.00.
+- Making the fused arithmetic exact (compensated FP32 products, alias sums and grad_l sum)
+  would bound the bias failure rate near 1/32 here. It cannot reach zero: the budget is
+  relative to production's own noise realization, and the FP32 sigmoid-backward rounding
+  stays outside the kernel.
