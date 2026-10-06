@@ -29,7 +29,7 @@ import torch
 import torch.nn.functional as F
 import study
 from study import comparison, converse2d_reference, paired
-from flash_study import FlashScaled
+from flash_study import FlashScaled, FlashScaledReg
 
 Case = namedtuple('Case', 'b c h w scale pad mode kb k eps prior')
 MODES = {'circular': 0, 'replicate': 1, 'reflect': 2, 'constant': 3}
@@ -95,6 +95,15 @@ def flash(case, ext, x, weight, bias):
     x0 = prior(case, x)
     k, l = kernel_spectrum(weight, bias, x0.shape[-2], x0.shape[-1], case.eps)
     return FlashScaled.apply(x, x0, k, l, case.scale, ext)
+
+
+def flash_reg(case, ext, x, weight, bias):
+    """flash() with the device-side two-term regularizer (s2/s3); s1 unchanged."""
+    if case.scale == 1:
+        return flash(case, ext, x, weight, bias)
+    x0 = prior(case, x)
+    k, _ = kernel_spectrum(weight, bias, x0.shape[-2], x0.shape[-1], case.eps)
+    return FlashScaledReg.apply(x, x0, k, bias, case.eps, case.scale, ext)
 
 
 def production(case, x, weight, bias):

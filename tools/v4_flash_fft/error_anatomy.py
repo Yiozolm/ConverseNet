@@ -28,7 +28,9 @@ import torch
 import torch.nn.functional as F
 import study
 import flash_study as fs
+import ops_study as ops
 
+# ops_study cases (kernel batch B, nearest prior) are accepted too, e.g. data_s2_b4_c64_48_k7.
 CASES = ['circular_s1_b4_c64_96_pad2', 'circular_s1_b4_c128_96_pad2', 'forward_s1_b4_c128_100',
          'forward_s1_b4_c64_96', 'forward_s2_b4_c64_32', 'forward_s2_b4_c64_48', 'forward_s3_b2_c32_32',
          'forward_s3_b2_c32_24', 'forward_s2_b4_c64_64', 'forward_s3_b2_c32_48']
@@ -42,7 +44,8 @@ def aliases(t, s, op):
 
 
 def model(Y, P, G, k, l, s):
-    """FP64 kernel/regularizer gradients from given spectra (production's adjoint)."""
+    """FP64 kernel/regularizer gradients from given spectra (production's adjoint).
+    k has one plane per channel (summed over the batch) or one per (b, c) plane."""
     pm = aliases(k * P, s, 'mean')
     d = aliases(k.real ** 2 + k.imag ** 2, s, 'mean') + l
     q = (Y - pm) / d
@@ -51,7 +54,9 @@ def model(Y, P, G, k, l, s):
     gd = (-t * (q / d).conj()).real
     gm = -gy / (s * s)
     rep = (lambda z: z.repeat(1, 1, s, s)) if s > 1 else (lambda z: z)
-    gk = ((G * rep(q).conj()).conj() + rep(gm) * P.conj() + 2 * k * rep(gd) / (s * s)).sum(0, keepdim=True)
+    gk = (G * rep(q).conj()).conj() + rep(gm) * P.conj() + 2 * k * rep(gd) / (s * s)
+    if k.shape[0] == 1:
+        gk = gk.sum(0, keepdim=True)
     return gk, gd
 
 
@@ -106,31 +111,49 @@ def main():
     device = torch.cuda.current_device()
     rows = []
     for name in args.cases:
-        b, c, h, w, s, pad = fs.CASES[name]
+        if name in fs.CASES:
+            b, c, h, w, s, pad = fs.CASES[name]
+            eps, kh = fs.EPS, 3
+        else:
+            case = ops.CASES[name]
+            b, c, h, w, s, pad, eps, kh = case.b, case.c, case.h, case.w, case.scale, case.pad, case.eps, case.k
         if not ext.supported(h, w, s, pad, device):
             print(f'{name}: skipped (not eligible here)', flush=True)
             continue
         for seed in range(args.seeds):
             torch.manual_seed(75000 + seed)  # same inputs as seed_sweep.py
-            x = torch.randn(b, c, h, w, device='cuda', requires_grad=True)
-            x0 = torch.randn(b, c, h * s, w * s, device='cuda', requires_grad=s > 1)
-            weight = torch.rand(1, c, 3, 3, device='cuda', requires_grad=True)
-            bias = torch.randn(1, c, 1, 1, device='cuda', requires_grad=True)
-            g = torch.randn(b, c, h * s, w * s, device='cuda')
-            inputs = (x, weight, bias) if s == 1 else (x, x0, weight, bias)
+            if name in fs.CASES:
+                x = torch.randn(b, c, h, w, device='cuda', requires_grad=True)
+                x0 = torch.randn(b, c, h * s, w * s, device='cuda', requires_grad=s > 1)
+                weight = torch.rand(1, c, 3, 3, device='cuda', requires_grad=True)
+                bias = torch.randn(1, c, 1, 1, device='cuda', requires_grad=True)
+                g = torch.randn(b, c, h * s, w * s, device='cuda')
+                inputs = (x, weight, bias) if s == 1 else (x, x0, weight, bias)
+                paths = (('cufft', fs.production), ('fused', lambda *a: fs.flash(ext, *a)),
+                         ('fused_reg', lambda *a: fs.flash_reg(ext, *a)))
+                call = lambda fn: fn(x, x0, weight, bias, s, pad)
+                reference = lambda: fs.reference64(x, x0, weight, bias, s, pad, g)
+            else:
+                x, weight, bias, g = ops.make_inputs(case, 75000 + seed)
+                x0 = ops.prior(case, x.detach())
+                inputs = (x, weight, bias)
+                paths = (('cufft', ops.production), ('fused', lambda cs, *a: ops.flash(cs, ext, *a)),
+                         ('fused_reg', lambda cs, *a: ops.flash_reg(cs, ext, *a)))
+                call = lambda fn: fn(case, x, weight, bias)
+                reference = lambda: ops.reference64(case, x, weight, bias, g)
             actual = {}
-            for path, fn in (('cufft', fs.production), ('fused', lambda *a: fs.flash(ext, *a))):
-                grads = torch.autograd.grad(fn(x, x0, weight, bias, s, pad), inputs, g)
+            for path, fn in paths:
+                grads = torch.autograd.grad(call(fn), inputs, g)
                 actual[path] = dict(weight=grads[-2].double(), bias=grads[-1].double())
-            ref = fs.reference64(x, x0, weight, bias, s, pad, g)
+            ref = reference()
             ref = dict(weight=ref[-2], bias=ref[-1])
             H, W = h * s + 2 * pad, w * s + 2 * pad
-            kh, kw = 3, 3
+            kw = kh
             psf32 = torch.roll(F.pad(weight.detach(), (0, W - kw, 0, H - kh)), (-(kh // 2), -(kw // 2)), (-2, -1))
             k32 = torch.fft.fft2(psf32).to(torch.complex128)
             k64 = torch.fft.fft2(psf32.double())
-            l32 = (torch.sigmoid(bias.detach() - 9.0) + fs.EPS).double()
-            l64 = torch.sigmoid(bias.detach().double() - 9.0) + fs.EPS
+            l32 = (torch.sigmoid(bias.detach() - 9.0) + eps).double()
+            l64 = torch.sigmoid(bias.detach().double() - 9.0) + eps
             dsig = torch.sigmoid(bias.detach().double() - 9.0) * (1 - torch.sigmoid(bias.detach().double() - 9.0))
             # Circular s1: spectra of the circularly padded x and the zero-embedded gradient,
             # as the production callbacks and the fused kernels form them.
@@ -153,11 +176,13 @@ def main():
                 entry = dict(shared=rel(shared_base[q] - exact[q], r))
                 for src in ('cufft', 'cufftT', 'fused'):
                     entry[f'spectrum_{src}'] = rel(per_src[src][0][q] - shared_base[q], r)
-                for path in ('cufft', 'fused'):
-                    entry[f'arithmetic_{path}'] = rel(actual[path][q] - per_src[path][0][q], r)
+                for path in ('cufft', 'fused', 'fused_reg'):
+                    src = 'fused' if path == 'fused_reg' else path
+                    entry[f'arithmetic_{path}'] = rel(actual[path][q] - per_src[src][0][q], r)
                     entry[f'total_{path}'] = rel(actual[path][q] - r, r)
                     entry[f'n_eff_channels_{path}'] = n_eff(actual[path][q] - r)
                 entry['gate_ratio'] = entry['total_fused'] / entry['total_cufft']
+                entry['gate_ratio_reg'] = entry['total_fused_reg'] / entry['total_cufft']
                 # Upper bound on what better fused arithmetic could achieve: fused spectra,
                 # exact (FP64) pointwise math, sums and sigmoid chain.
                 entry['ideal_fused_gate_ratio'] = rel(per_src['fused'][0][q] - r, r) / entry['total_cufft']
@@ -176,7 +201,7 @@ def main():
                 cancellation=float((gd_exact.abs().sum((0, 2, 3)) / gd_exact.sum((0, 2, 3)).abs()).median()))
             rows.append(row)
             gb = row['grads']['bias']
-            print(f"{name:22s} seed {seed}: bias gate {gb['gate_ratio']:.2f} | spectrum fused/prod "
+            print(f"{name:22s} seed {seed}: bias gate {gb['gate_ratio']:.2f} reg {gb['gate_ratio_reg']:.2f} | spectrum fused/prod "
                   f"{gb['spectrum_ratio_fused']:.2f} control/prod {gb['spectrum_ratio_control']:.2f} | shares "
                   f"shared {gb['shared']:.1e} spec {gb['spectrum_cufft']:.1e}/{gb['spectrum_fused']:.1e} arith "
                   f"{gb['arithmetic_cufft']:.1e}/{gb['arithmetic_fused']:.1e} | n_eff ch "
@@ -202,7 +227,8 @@ def summarize(rows):
                   f"(>1.25: {sum(x['ideal_fused_gate_ratio'] > 1.25 for x in e)}) control "
                   f"{geo([x['ideal_control_gate_ratio'] for x in e]):.2f} (>1.25: {sum(x['ideal_control_gate_ratio'] > 1.25 for x in e)})")
             print(f"  {name:22s} {q:6s} gate {geo([x['gate_ratio'] for x in e]):.2f} "
-                  f"(fail {sum(x['gate_ratio'] > 1.25 for x in e)}/{len(e)}) | spectrum fused/prod "
+                  f"(fail {sum(x['gate_ratio'] > 1.25 for x in e)}/{len(e)}) reg {geo([x.get('gate_ratio_reg', 0) for x in e]):.2f} "
+                  f"(fail {sum(x.get('gate_ratio_reg', 0) > 1.25 for x in e)}/{len(e)}) | spectrum fused/prod "
                   f"{geo([x['spectrum_ratio_fused'] for x in e]):.2f} (>1.25: {sum(x['spectrum_ratio_fused'] > 1.25 for x in e)}) "
                   f"control/prod {geo([x['spectrum_ratio_control'] for x in e]):.2f} "
                   f"(>1.25: {sum(x['spectrum_ratio_control'] > 1.25 for x in e)})")

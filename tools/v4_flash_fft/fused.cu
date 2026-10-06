@@ -461,6 +461,34 @@ __device__ __forceinline__ DF neg_real_dot(CDF t, CDF r) {
     return df_neg(df_add(df_mul(t.re, r.re), df_mul(t.im, r.im)));
 }
 
+// ---- Two-term regularizer: l = sigmoid(bias - 9) + eps and its derivative ----
+// The FP32 sigmoid chain outside the kernels (sigmoid value, grad_l rounded to
+// FP32, ATen's sigmoid backward) adds about 2e-7 relative error to grad_bias on
+// both paths. Here exp(x) = 2^k exp(r), r = x - k ln2 with ln2 in three FP32
+// parts (the first has 16 significant bits, so k * ln2_hi is exact), exp(r) a
+// degree-13 Taylor series in two-term arithmetic: about 2^-40 relative, FP32
+// operations only. sigma = 1 / (1 + exp(9 - bias)), l = sigma + eps,
+// dl/dbias = sigma (1 - sigma); each is stored as (hi, lo).
+__device__ __forceinline__ DF df_exp(DF x) {
+    const float kf = rintf(__fmul_rn(x.hi, 1.4426950216293335f));
+    DF r = df_sub(x, df(__fmul_rn(kf, 0.693145751953125f)));
+    r = df_sub(r, two_prod(kf, 1.428606765330187e-06f));
+    r = df_sub(r, two_prod(kf, 5.497923148104107e-14f));
+    DF p = df(1.f);
+    for (int n = 13; n >= 1; --n) p = df_add(df(1.f), df_div(df_mul(r, p), df(float(n))));
+    const int k = int(kf);
+    return {ldexpf(p.hi, k), ldexpf(p.lo, k)};
+}
+__global__ void regularizer_prep(const float* __restrict__ bias, float2 eps, float4* __restrict__ out, int C) {
+    const int c = blockIdx.x * blockDim.x + threadIdx.x;
+    if (c >= C) return;
+    const DF z = two_sum(bias[c], -9.f);
+    const DF sigma = df_div(df(1.f), df_add(df(1.f), df_exp(df_neg(z))));
+    const DF l = df_add(sigma, DF{eps.x, eps.y});
+    const DF ds = df_mul(sigma, df_sub(df(1.f), sigma));
+    out[c] = make_float4(l.hi, l.lo, ds.hi, ds.lo);
+}
+
 // Block-wide two-term sum of every thread's `value` into out[0] (hi), out[1] (lo).
 __device__ void store_block_sum(DF value, DF* partial, float* out) {
     for (int o = 16; o; o >>= 1)
@@ -484,7 +512,7 @@ __device__ void store_block_sum(DF value, DF* partial, float* out) {
 // only grad_l is reduced.
 __global__ void reduce_batches(const float2* __restrict__ part, const float* __restrict__ gl_part,
                                float2* __restrict__ gk, float* __restrict__ gl, int B, int C, int64_t N,
-                               bool reduce_k) {
+                               bool reduce_k, const float4* __restrict__ reg, float* __restrict__ gb) {
     const int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x, total = C * N;
     if (reduce_k && i < total) {
         CDF v = cdf(part[i]);
@@ -498,6 +526,8 @@ __global__ void reduce_batches(const float2* __restrict__ part, const float* __r
             v = df_add(v, DF{gl_part[j], gl_part[j + 1]});
         }
         gl[i] = df_round(v);
+        // grad_bias = grad_l * sigma (1 - sigma), two-term, rounded once.
+        if (reg) gb[i] = df_round(df_mul(v, DF{reg[i].z, reg[i].w}));
     }
 }
 
@@ -507,13 +537,16 @@ float2 df_constant(double v) {
     return make_float2(hi, float(v - double(hi)));
 }
 
-void reduce_partials(const at::Tensor& part, const at::Tensor& gl_part, at::Tensor& gk, at::Tensor& gl) {
+void reduce_partials(const at::Tensor& part, const at::Tensor& gl_part, at::Tensor& gk, at::Tensor& gl,
+                     const at::Tensor& reg = at::Tensor(), at::Tensor gb = at::Tensor()) {
     const int64_t B = part.size(0), C = part.size(1), N = part.numel() / (B * C);
     const bool reduce_k = !part.is_same(gk);
     const int64_t threads = reduce_k ? C * N : C;
     reduce_batches<<<(threads + 255) / 256, 256, 0, at::cuda::getCurrentCUDAStream()>>>(
         reinterpret_cast<const float2*>(part.data_ptr()), gl_part.data_ptr<float>(),
-        reinterpret_cast<float2*>(gk.data_ptr()), gl.data_ptr<float>(), int(B), int(C), N, reduce_k);
+        reinterpret_cast<float2*>(gk.data_ptr()), gl.data_ptr<float>(), int(B), int(C), N, reduce_k,
+        reg.defined() ? reinterpret_cast<const float4*>(reg.data_ptr()) : nullptr,
+        gb.defined() ? gb.data_ptr<float>() : nullptr);
 }
 
 // Per-plane grad_k partials: grad_k itself when every plane has its own kernel.
@@ -700,7 +733,8 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
     const float* __restrict__ x, const float* __restrict__ x0, const float* __restrict__ g,
     const float2* __restrict__ k, const float* __restrict__ l, float* __restrict__ gx, float* __restrict__ gx0,
     float2* __restrict__ part, float* __restrict__ gl_part, float2* __restrict__ scratch_y,
-    int C, int KB, Twiddles tw, float2 inv_n, float2 mean_factor, float2 inverse_aliases) {
+    int C, int KB, Twiddles tw, float2 inv_n, float2 mean_factor, float2 inverse_aliases,
+    const float4* __restrict__ reg) {
     extern __shared__ float2 s[];
     __shared__ DF partial[kThreads / 32];
     constexpr int SH = S * H, SW = S * W, N = SH * SW, n = H * W;
@@ -722,7 +756,8 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
     __syncthreads();
     fft2_plane<SH, SW>(s, tw.high_rows, tw.high_cols, tid);
     const float2* kp = k + kernel_plane(KB, C, blockIdx.x / C, c) * N;
-    const float lc = l[c];
+    // The regularizer as two terms when prepared on the device, else production's FP32 value.
+    const DF lc = reg ? DF{reg[c].x, reg[c].y} : df(l[c]);
     const DF scale{inv_n.x, inv_n.y}, factor{mean_factor.x, mean_factor.y}, inverse{inverse_aliases.x, inverse_aliases.y};
     DF gl_sum = df(0.f);
     for (int i = tid; i < n; i += kThreads) {
@@ -739,7 +774,7 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
             t = cdf_add(t, cmul_df(cscale_f(s[off], scale), kk));
         }
         // One two-term reciprocal of d replaces the six divisions.
-        const DF rd = df_div(df(1.f), df_add(df_mul(pw, factor), df(lc)));
+        const DF rd = df_div(df(1.f), df_add(df_mul(pw, factor), lc));
         const CDF q = cscale(cdf_sub(cdf(yp[i]), cscale(pm, factor)), rd);
         const CDF gy = cscale(t, rd), gm = cscale(cdf_neg(gy), inverse);
         const DF v = neg_real_dot(t, cscale(q, rd)), two_power = df_mul_f(df_mul(v, inverse), 2.f);
@@ -795,7 +830,8 @@ void scaled_forward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor&
 
 template <int H, int W, int S>
 void scaled_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& g, const at::Tensor& k,
-                     const at::Tensor& l, at::Tensor& gx, at::Tensor& gx0, at::Tensor& gk, at::Tensor& gl) {
+                     const at::Tensor& l, at::Tensor& gx, at::Tensor& gx0, at::Tensor& gk, at::Tensor& gl,
+                     const at::Tensor& reg = at::Tensor(), at::Tensor gb = at::Tensor()) {
     constexpr int N = S * S * H * W;
     auto kernel = static_s_backward<H, W, S>;
     TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, N * 8) == cudaSuccess);
@@ -807,8 +843,9 @@ void scaled_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor
         x.data_ptr<float>(), x0.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()),
         l.data_ptr<float>(), gx.data_ptr<float>(), gx0.data_ptr<float>(), reinterpret_cast<float2*>(part.data_ptr()),
         gl_part.data_ptr<float>(), reinterpret_cast<float2*>(scratch_y.data_ptr()), x.size(1), int(k.size(0)),
-        twiddles(H, W, S * H, S * W, x.get_device()), df_constant(1.0 / N), inverse, inverse);
-    reduce_partials(part, gl_part, gk, gl);
+        twiddles(H, W, S * H, S * W, x.get_device()), df_constant(1.0 / N), inverse, inverse,
+        reg.defined() ? reinterpret_cast<const float4*>(reg.data_ptr()) : nullptr);
+    reduce_partials(part, gl_part, gk, gl, reg, gb);
 }
 
 // Diagnostic: the raw 2-D FFT of real planes exactly as the fused kernels compute
@@ -1237,26 +1274,57 @@ at::Tensor flash_scaled_forward(const at::Tensor& x, const at::Tensor& x0, const
     return out;
 }
 
-std::vector<at::Tensor> flash_scaled_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& g,
-                                              const at::Tensor& k, const at::Tensor& l, int64_t scale) {
+static std::vector<at::Tensor> scaled_backward_any(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& g,
+                                                   const at::Tensor& k, const at::Tensor& l, int64_t scale,
+                                                   const at::Tensor& reg) {
     TORCH_CHECK(g.sizes() == x0.sizes() && g.scalar_type() == at::kFloat && g.is_contiguous());
     check_kernel_batch(x, k);
     TORCH_CHECK(k.size(2) == x0.size(2) && k.size(3) == x0.size(3));
+    TORCH_CHECK(l.scalar_type() == at::kFloat && l.is_contiguous() && l.numel() == x.size(1));
     TORCH_CHECK(flash_supported(x.size(2), x.size(3), scale, 0, x.get_device()), "shape not supported on this device");
     c10::cuda::CUDAGuard guard(x.device());
     auto gx = at::empty_like(x);
     auto gx0 = at::empty_like(x0);
     auto gk = at::empty_like(k);
     auto gl = at::empty({x.size(1)}, l.options());
+    auto gb = reg.defined() ? at::empty({x.size(1)}, l.options()) : at::Tensor();
     const int side = x.size(2);
-#define FLASH_BWD2(n) if (scale == 2 && side == n) scaled_backward<n, n, 2>(x, x0, g, k, l, gx, gx0, gk, gl);
-#define FLASH_BWD3(n) if (scale == 3 && side == n) scaled_backward<n, n, 3>(x, x0, g, k, l, gx, gx0, gk, gl);
+#define FLASH_BWD2(n) if (scale == 2 && side == n) scaled_backward<n, n, 2>(x, x0, g, k, l, gx, gx0, gk, gl, reg, gb);
+#define FLASH_BWD3(n) if (scale == 3 && side == n) scaled_backward<n, n, 3>(x, x0, g, k, l, gx, gx0, gk, gl, reg, gb);
     FLASH_S2_SIZES(FLASH_BWD2)
     FLASH_S3_SIZES(FLASH_BWD3)
 #undef FLASH_BWD2
 #undef FLASH_BWD3
     C10_CUDA_KERNEL_LAUNCH_CHECK();
+    if (reg.defined()) return {gx, gx0, gk, gl, gb};
     return {gx, gx0, gk, gl};
+}
+
+std::vector<at::Tensor> flash_scaled_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& g,
+                                              const at::Tensor& k, const at::Tensor& l, int64_t scale) {
+    return scaled_backward_any(x, x0, g, k, l, scale, at::Tensor());
+}
+
+// (C, 4) float: l = sigmoid(bias - 9) + eps and dl/dbias as (hi, lo) pairs, two-term FP32 on the device.
+at::Tensor flash_regularizer(const at::Tensor& bias, double eps) {
+    TORCH_CHECK(bias.is_cuda() && bias.scalar_type() == at::kFloat && bias.dim() == 1 && bias.is_contiguous());
+    c10::cuda::CUDAGuard guard(bias.device());
+    auto out = at::empty({bias.size(0), 4}, bias.options());
+    const int C = bias.size(0);
+    regularizer_prep<<<(C + 127) / 128, 128, 0, at::cuda::getCurrentCUDAStream()>>>(
+        bias.data_ptr<float>(), df_constant(eps), reinterpret_cast<float4*>(out.data_ptr()), C);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return out;
+}
+
+// As flash_scaled_backward with reg from flash_regularizer: the denominator uses the two-term l
+// and a fifth output, grad_bias = grad_l * dl/dbias, replaces the FP32 sigmoid backward.
+std::vector<at::Tensor> flash_scaled_backward_reg(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& g,
+                                                  const at::Tensor& k, const at::Tensor& reg, int64_t scale) {
+    TORCH_CHECK(reg.is_cuda() && reg.scalar_type() == at::kFloat && reg.dim() == 2 && reg.size(1) == 4 &&
+                reg.is_contiguous() && reg.size(0) == x.size(1), "reg must be (C, 4) from regularizer()");
+    auto l = reg.select(1, 0).contiguous();
+    return scaled_backward_any(x, x0, g, k, l, scale, reg);
 }
 
 // Diagnostic entry: fused-kernel FFT2 of square real planes (..., n, n).

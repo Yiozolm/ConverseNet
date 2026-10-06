@@ -19,6 +19,9 @@ at::Tensor flash_half_scaled_forward(const at::Tensor& x, const at::Tensor& x0, 
                                      const at::Tensor& l, int64_t scale);
 int64_t flash_half_occupancy(int64_t side, int64_t device);
 at::Tensor flash_debug_rfft2(const at::Tensor& x);
+at::Tensor flash_regularizer(const at::Tensor& bias, double eps);
+std::vector<at::Tensor> flash_scaled_backward_reg(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& g,
+                                                  const at::Tensor& k, const at::Tensor& reg, int64_t scale);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     // mode: 0 circular, 1 replicate, 2 reflect, 3 zeros (s1 padding of the plane).
@@ -38,4 +41,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("half_scaled_forward", &flash_half_scaled_forward);
     m.def("half_occupancy", &flash_half_occupancy);
     m.def("debug_rfft2", &flash_debug_rfft2);
+    // Two-term regularizer on the device: (C, 4) = (l_hi, l_lo, dl_hi, dl_lo); the backward then
+    // returns grad_bias itself as a fifth output.
+    m.def("regularizer", &flash_regularizer);
+    m.def("scaled_backward_reg", &flash_scaled_backward_reg);
 }

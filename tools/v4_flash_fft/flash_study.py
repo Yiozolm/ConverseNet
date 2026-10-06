@@ -54,6 +54,23 @@ class FlashScaled(torch.autograd.Function):
         return gx, gx0, gk, gl.reshape(l.shape), None, None
 
 
+class FlashScaledReg(torch.autograd.Function):
+    """s2/s3 solve taking bias directly: the regularizer sigmoid and its derivative are
+    two-term FP32 on the device (ext.regularizer), so grad_bias skips the FP32 sigmoid backward."""
+    @staticmethod
+    def forward(ctx, x, x0, k, bias, eps, scale, ext):
+        reg = ext.regularizer(bias.reshape(-1).contiguous(), eps)
+        ctx.scale, ctx.ext, ctx.bias_shape = scale, ext, bias.shape
+        ctx.save_for_backward(x, x0, k, reg)
+        return ext.scaled_forward(x, x0, k, reg[:, 0].contiguous(), scale)
+
+    @staticmethod
+    def backward(ctx, g):
+        x, x0, k, reg = ctx.saved_tensors
+        gx, gx0, gk, _, gb = ctx.ext.scaled_backward_reg(x, x0, g.contiguous(), k, reg, ctx.scale)
+        return gx, gx0, gk, gb.reshape(ctx.bias_shape), None, None, None
+
+
 def kernel_spectrum(weight, bias, H, W):
     kh, kw = weight.shape[-2:]
     psf = torch.roll(F.pad(weight, (0, W - kw, 0, H - kh)), (-(kh // 2), -(kw // 2)), (-2, -1))
@@ -66,6 +83,14 @@ def flash(ext, x, x0, weight, bias, scale, pad):
         return FlashS1.apply(x, k, l, pad, ext)
     k, l = kernel_spectrum(weight, bias, x0.shape[-2], x0.shape[-1])
     return FlashScaled.apply(x, x0, k, l, scale, ext)
+
+
+def flash_reg(ext, x, x0, weight, bias, scale, pad):
+    """flash() with the device-side two-term regularizer (s2/s3); s1 unchanged."""
+    if scale == 1:
+        return flash(ext, x, x0, weight, bias, scale, pad)
+    k, _ = kernel_spectrum(weight, bias, x0.shape[-2], x0.shape[-1])
+    return FlashScaledReg.apply(x, x0, k, bias, EPS, scale, ext)
 
 
 def production(x, x0, weight, bias, scale, pad):

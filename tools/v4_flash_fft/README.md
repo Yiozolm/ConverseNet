@@ -514,3 +514,63 @@ Reading:
 Not covered: the kernel preparation (rfft2 of the PSF) stays an ATen call, which production
 caches for parameter kernels and both sides would pay for data-term kernels; model-level
 inference, CUDA-graph capture, the A100.
+
+## s2/s3 kernel and regularizer gradients: is the fused error a systematic excess? (`s23_error_check.py`)
+
+The fused grad_bias failed the single-run budget on some s2/s3 seeds (1/32 locally after the
+compensated adjoint, 3/8 on the s2 data term, 4/8 on the A100 s3 144x144 plane). Two questions:
+is any of it an excess of the fused kernels, and what sets the floor.
+
+Method: 64 seeds x 6 cases (the four local s2/s3 `flash_study` cases and the two data terms),
+three FP32 paths against the FP64 reference: the fused kernels, production, and a control that
+runs production on the transposed problem (x, x0, weight and the upstream gradient transposed,
+the result transposed back). The control is mathematically identical to production and equally
+accurate, but cuFFT and the reductions round differently: it is a second draw of production's own
+noise. Per case and output, with bootstrap 95% intervals over seeds: the single-run failure rate
+(rel-L2 ratio > 1.25), the geometric-mean ratio (the seeded gate's statistic) and the pooled
+ratio. RTX 5060 Ti, `s23_check_rtx5060ti_002_reg`:
+
+| Case, grad_bias | fused: failures, geomean [CI] | control: failures, geomean [CI] | fused + device regularizer |
+|---|---|---|---|
+| s2 B4 C64 32 | 22%, 0.90 [0.81, 0.99] | 22%, 1.03 [0.94, 1.14] | 8%, 0.61 [0.54, 0.70] |
+| s2 B4 C64 48 | 6%, 0.85 [0.78, 0.91] | 27%, 0.94 [0.83, 1.04] | 3%, 0.66 [0.60, 0.72] |
+| s3 B2 C32 32 | 8%, 0.79 [0.73, 0.86] | 27%, 1.03 [0.96, 1.11] | 3%, 0.59 [0.53, 0.65] |
+| s3 B2 C32 24 | 14%, 0.86 [0.80, 0.94] | 27%, 1.01 [0.93, 1.10] | 16%, 0.75 [0.68, 0.84] |
+| data term s2 48, k7, KB 4 | 14%, 0.98 [0.92, 1.03] | 25%, 1.03 [0.94, 1.12] | 5%, 0.87 [0.82, 0.93] |
+| data term s3 32, k7, KB 4 | 6%, 0.89 [0.84, 0.96] | 16%, 1.02 [0.95, 1.09] | 3%, 0.72 [0.67, 0.77] |
+
+grad_weight: fused 0.79-0.94 with intervals of +-0.02 and no single-run failure in 384 runs; the
+control 1.00-1.01.
+
+Findings:
+- No systematic excess. Every fused geomean has an upper bound at or below 1.03, and grad_weight
+  is better in every case. The control sets the floor: production against a differently rounded
+  copy of itself fails the single-run grad_bias budget in 16-27% of seeds (the README's F(4, 4)
+  estimate of 34% was for equal implementations; the fused path fails 6-22%, less than the control
+  in every case). An 8-seed geomean has a standard deviation of about 0.4 in log, so the earlier
+  8-seed readings of 1.14 (s2 data term) and 1.26 (A100 s3 144, uncompensated) are inside that
+  noise; the A100 case still needs a run with the compensated kernels.
+- Where the error comes from (`error_anatomy_rtx5060ti_006_reg.json`, geomeans over 8 seeds,
+  rel-L2 of grad_bias): the shared FP32 kernel spectrum and regularizer, 1.4-2.0e-7 for the 3x3
+  kernels and 3.2-4.4e-7 for the 7x7 data-term kernels; the spectra, cuFFT 1.7-2.8e-7 against the
+  fused FFT 1.0-1.9e-7; and the arithmetic, production 2.0-2.6e-7 against fused 1.8-2.2e-7. The
+  fused arithmetic figure is not the kernel: it is the FP32 sigmoid chain outside it (the FP32
+  `sigmoid` value, off by up to 1e-6 relative near bias -10; grad_l rounded to FP32; ATen's
+  sigmoid backward), which a CPU estimate puts at 2e-7 on its own and which both paths share.
+- Device regularizer (`regularizer_prep`, `scaled_backward_reg`, `FlashScaledReg`): the kernel
+  takes bias and eps, forms l = sigmoid(bias - 9) + eps and dl/dbias as two-term FP32 on the
+  device (exp by range reduction with a three-part ln2 and a degree-13 series in two-term
+  arithmetic; 7e-15 relative against FP64), uses the two-term l in the backward's denominator and
+  returns grad_bias itself. The arithmetic component drops to 2-3.5e-8, the geomean to 0.59-0.87
+  and the single-run failures to 3-16%. Output, grad_x, grad_x0 and grad_weight are unchanged
+  within their budgets and repeated calls are bitwise identical. On the study seed two grad_bias
+  single runs still exceed 1.25 (s2 32 at 1.37, data term s2 at 1.48): single seeds remain draws.
+- What remains is common to both paths: the FP32 kernel spectrum from ATen's `fft2` of the PSF,
+  which dominates the 7x7 data terms (fused total 4.4e-7 against production's 4.7e-7). Production's
+  own cuFFT-derived terms partly cancel against it (its total is below the quadrature sum of its
+  components), which the fused FFT's independent rounding cannot do; that is why the fused path
+  with the FP32 sigmoid chain read 1.14 on the s2 data term despite smaller components. Removing
+  it would take a two-term kernel FFT on chip; not done.
+- For the gate: a single-run grad_bias comparison on s2/s3 cannot distinguish the two paths;
+  the seeded gate with enough seeds can, and the device regularizer moves the fused path from
+  "equal within noise" to about 0.6-0.85x of production's error.
