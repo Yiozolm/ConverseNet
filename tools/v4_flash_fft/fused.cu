@@ -326,33 +326,123 @@ __device__ __forceinline__ float2 div_real(float2 a, float d) {
     return make_float2(r.real(), r.imag());
 }
 
-// Block-wide sum of every thread's `value` into *out.
-__device__ void store_block_sum(float value, float* partial, float* out) {
-    for (int o = 16; o; o >>= 1) value = __fadd_rn(value, __shfl_down_sync(0xffffffffu, value, o));
+// ---- Two-term FP32 ("double-float") arithmetic for the backward pointwise phase ----
+// A value is hi + lo with |lo| <= ulp(hi)/2. Error-free transforms (TwoSum,
+// TwoProduct via FMA) keep each product, sum and quotient to about 2^-44 relative
+// before one final rounding to FP32. Device arithmetic stays FP32, as in
+// inference/nearest_k2_s2.cu. The transforms assume finite, non-overflowing
+// intermediates; this research path does not handle non-finite inputs.
+struct DF {
+    float hi, lo;
+};
+struct CDF {
+    DF re, im;
+};
+__device__ __forceinline__ DF two_sum(float a, float b) {
+    const float s = __fadd_rn(a, b), bb = __fsub_rn(s, a);
+    return {s, __fadd_rn(__fsub_rn(a, __fsub_rn(s, bb)), __fsub_rn(b, bb))};
+}
+__device__ __forceinline__ DF fast_two_sum(float a, float b) {  // |a| >= |b|
+    const float s = __fadd_rn(a, b);
+    return {s, __fsub_rn(b, __fsub_rn(s, a))};
+}
+__device__ __forceinline__ DF two_prod(float a, float b) {
+    const float p = __fmul_rn(a, b);
+    return {p, __fmaf_rn(a, b, -p)};
+}
+__device__ __forceinline__ DF df(float a) { return {a, 0.f}; }
+__device__ __forceinline__ DF df_neg(DF a) { return {-a.hi, -a.lo}; }
+__device__ __forceinline__ float df_round(DF a) { return __fadd_rn(a.hi, a.lo); }
+// Accurate addition: exact under cancellation of the high parts.
+__device__ __forceinline__ DF df_add(DF a, DF b) {
+    DF s = two_sum(a.hi, b.hi);
+    const DF t = two_sum(a.lo, b.lo);
+    s = fast_two_sum(s.hi, __fadd_rn(s.lo, t.hi));
+    return fast_two_sum(s.hi, __fadd_rn(s.lo, t.lo));
+}
+__device__ __forceinline__ DF df_sub(DF a, DF b) { return df_add(a, df_neg(b)); }
+__device__ __forceinline__ DF df_mul(DF a, DF b) {
+    const DF p = two_prod(a.hi, b.hi);
+    return fast_two_sum(p.hi, __fmaf_rn(a.hi, b.lo, __fmaf_rn(a.lo, b.hi, p.lo)));
+}
+__device__ __forceinline__ DF df_mul_f(DF a, float b) {
+    const DF p = two_prod(a.hi, b);
+    return fast_two_sum(p.hi, __fmaf_rn(a.lo, b, p.lo));
+}
+__device__ __forceinline__ DF df_div(DF a, DF b) {
+    const float q1 = __fdiv_rn(a.hi, b.hi);
+    DF r = df_sub(a, df_mul_f(b, q1));
+    const float q2 = __fdiv_rn(r.hi, b.hi);
+    r = df_sub(r, df_mul_f(b, q2));
+    const float q3 = __fdiv_rn(r.hi, b.hi);
+    return df_add(fast_two_sum(q1, q2), df(q3));
+}
+__device__ __forceinline__ CDF cdf(float2 a) { return {df(a.x), df(a.y)}; }
+__device__ __forceinline__ float2 cdf_round(CDF a) { return make_float2(df_round(a.re), df_round(a.im)); }
+__device__ __forceinline__ CDF cdf_add(CDF a, CDF b) { return {df_add(a.re, b.re), df_add(a.im, b.im)}; }
+__device__ __forceinline__ CDF cdf_sub(CDF a, CDF b) { return {df_sub(a.re, b.re), df_sub(a.im, b.im)}; }
+__device__ __forceinline__ CDF cdf_neg(CDF a) { return {df_neg(a.re), df_neg(a.im)}; }
+__device__ __forceinline__ CDF cdf_conj(CDF a) { return {a.re, df_neg(a.im)}; }
+// a * b for FP32 complex a, b: exact products, two-term sums.
+__device__ __forceinline__ CDF cmul_ff(float2 a, float2 b) {
+    return {df_sub(two_prod(a.x, b.x), two_prod(a.y, b.y)), df_add(two_prod(a.x, b.y), two_prod(a.y, b.x))};
+}
+__device__ __forceinline__ CDF cmul_df(CDF a, float2 b) {
+    return {df_sub(df_mul_f(a.re, b.x), df_mul_f(a.im, b.y)), df_add(df_mul_f(a.re, b.y), df_mul_f(a.im, b.x))};
+}
+__device__ __forceinline__ CDF cmul_dd(CDF a, CDF b) {
+    return {df_sub(df_mul(a.re, b.re), df_mul(a.im, b.im)), df_add(df_mul(a.re, b.im), df_mul(a.im, b.re))};
+}
+__device__ __forceinline__ CDF cscale(CDF a, DF f) { return {df_mul(a.re, f), df_mul(a.im, f)}; }
+__device__ __forceinline__ CDF cscale_f(float2 a, DF f) { return {df_mul_f(f, a.x), df_mul_f(f, a.y)}; }
+// |k|^2 with exact squares.
+__device__ __forceinline__ DF df_norm(float2 k) { return df_add(two_prod(k.x, k.x), two_prod(k.y, k.y)); }
+// -Re(t * conj(r)) = -(t.re r.re + t.im r.im): the cancelling gd dot product.
+__device__ __forceinline__ DF neg_real_dot(CDF t, CDF r) {
+    return df_neg(df_add(df_mul(t.re, r.re), df_mul(t.im, r.im)));
+}
+
+// Block-wide two-term sum of every thread's `value` into out[0] (hi), out[1] (lo).
+__device__ void store_block_sum(DF value, DF* partial, float* out) {
+    for (int o = 16; o; o >>= 1)
+        value = df_add(value, DF{__shfl_down_sync(0xffffffffu, value.hi, o), __shfl_down_sync(0xffffffffu, value.lo, o)});
     if (threadIdx.x % 32 == 0) partial[threadIdx.x / 32] = value;
     __syncthreads();
     if (threadIdx.x < 32) {
-        float v = threadIdx.x < kThreads / 32 ? partial[threadIdx.x] : 0.f;
-        for (int o = 16; o; o >>= 1) v = __fadd_rn(v, __shfl_down_sync(0xffffffffu, v, o));
-        if (threadIdx.x == 0) *out = v;
+        DF v = threadIdx.x < kThreads / 32 ? partial[threadIdx.x] : df(0.f);
+        for (int o = 16; o; o >>= 1)
+            v = df_add(v, DF{__shfl_down_sync(0xffffffffu, v.hi, o), __shfl_down_sync(0xffffffffu, v.lo, o)});
+        if (threadIdx.x == 0) {
+            out[0] = v.hi;
+            out[1] = v.lo;
+        }
     }
 }
 
-// gk[c] = ((part[0, c] + part[1, c]) + part[2, c]) + ..., gl likewise: the same
-// batch order and roundings as accumulating one batch per launch.
+// Batch sums in order b = 0, 1, ...: grad_k from the per-plane FP32 terms and
+// grad_l from the per-plane (hi, lo) block sums, both two-term, rounded once.
 __global__ void reduce_batches(const float2* __restrict__ part, const float* __restrict__ gl_part,
                                float2* __restrict__ gk, float* __restrict__ gl, int B, int C, int64_t N) {
     const int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x, total = C * N;
     if (i < total) {
-        float2 v = part[i];
-        for (int b = 1; b < B; ++b) v = add2(v, part[b * total + i]);
-        gk[i] = v;
+        CDF v = cdf(part[i]);
+        for (int b = 1; b < B; ++b) v = cdf_add(v, cdf(part[b * total + i]));
+        gk[i] = cdf_round(v);
     }
     if (i < C) {
-        float v = gl_part[i];
-        for (int b = 1; b < B; ++b) v = __fadd_rn(v, gl_part[int64_t(b) * C + i]);
-        gl[i] = v;
+        DF v{gl_part[2 * i], gl_part[2 * i + 1]};
+        for (int b = 1; b < B; ++b) {
+            const int64_t j = 2 * (int64_t(b) * C + i);
+            v = df_add(v, DF{gl_part[j], gl_part[j + 1]});
+        }
+        gl[i] = df_round(v);
     }
+}
+
+// (hi, lo) of a host constant: the two-term FP32 representation of a double.
+float2 df_constant(double v) {
+    const float hi = float(v);
+    return make_float2(hi, float(v - double(hi)));
 }
 
 void reduce_partials(const at::Tensor& part, const at::Tensor& gl_part, at::Tensor& gk, at::Tensor& gl) {
@@ -370,16 +460,17 @@ template <int H, int W>
 __global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
     const float* __restrict__ x, const float* __restrict__ g, const float2* __restrict__ k, const float* __restrict__ l,
     float* __restrict__ gx, float2* __restrict__ part, float* __restrict__ gl_part, int C,
-    int h0, int w0, int pad, const float2* __restrict__ tw_rows, const float2* __restrict__ tw_cols) {
+    int h0, int w0, int pad, const float2* __restrict__ tw_rows, const float2* __restrict__ tw_cols, float2 inv_n) {
     extern __shared__ float2 s[];
-    __shared__ float partial[kThreads / 32];
+    __shared__ DF partial[kThreads / 32];
     constexpr int N = H * W;
     const int b = blockIdx.x / C, c = blockIdx.x % C;
     const size_t plane = size_t(h0) * w0;
     const float2* kp = k + size_t(c) * N;
     float2* yp = part + size_t(blockIdx.x) * N;
-    const float lc = l[c], scale = float(1.0 / double(N));
-    float gl_sum = 0.f;
+    const float lc = l[c];
+    const DF scale{inv_n.x, inv_n.y};
+    DF gl_sum = df(0.f);
     const float2* tw_r = tw_rows;
     const float2* tw_c = tw_cols;
     const int tid = threadIdx.x;
@@ -404,18 +495,20 @@ __global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
         static_fft<H, 0, 1, false, true, W, 1, W>(s, tw_c, tid);
         for (int i = threadIdx.x; i < N; i += kThreads) {
             {
-                const float2 z = s[i], G = make_float2(z.x * scale, z.y * scale), ki = __ldg(kp + i), Y = yp[i];
-                const float den = __fadd_rn(__fadd_rn(__fmul_rn(ki.x, ki.x), __fmul_rn(ki.y, ki.y)), lc);
-                const float2 t = prod(G, ki), gy = div_real(t, den), gm = make_float2(-gy.x, -gy.y);
-                const float2 pm = prod(ki, Y);
-                const float2 q = div_real(make_float2(__fadd_rn(Y.x, -pm.x), __fadd_rn(Y.y, -pm.y)), den);
-                const float v = prod(make_float2(-t.x, -t.y), conj2(div_real(q, den))).x;
-                s[i] = add2(add2(G, gy), prod(gm, conj2(ki)));
-                const float2 direct = prod(G, conj2(q)), prediction = prod(gm, conj2(Y));
-                const float2 power = make_float2(__fmul_rn(v, __fmul_rn(2.f, ki.x)), __fmul_rn(v, __fmul_rn(2.f, ki.y)));
-                float2 term = add2(add2(add2(conj2(direct), prediction), make_float2(0.f, power.y)), make_float2(power.x, 0.f));
-                yp[i] = term;
-                gl_sum = __fadd_rn(gl_sum, v);
+                // Production's adjoint, every step two-term (see the DF helpers):
+                // grad_Y = (G + gy) + gm conj(k); grad_k term = conj(G) q + gm conj(Y) + 2 k gd.
+                const float2 ki = __ldg(kp + i), Y = yp[i];
+                const CDF G = cscale_f(s[i], scale);
+                // One two-term reciprocal of d replaces the six divisions.
+                const DF rd = df_div(df(1.f), df_add(df_norm(ki), df(lc)));
+                const CDF q = cscale(cdf_sub(cdf(Y), cmul_ff(ki, Y)), rd);
+                const CDF t = cmul_df(G, ki), gy = cscale(t, rd), gm = cdf_neg(gy);
+                const DF v = neg_real_dot(t, cscale(q, rd));
+                s[i] = cdf_round(cdf_add(cdf_add(G, gy), cmul_df(gm, conj2(ki))));
+                const DF two_v = df_mul_f(v, 2.f);
+                const CDF power{df_mul_f(two_v, ki.x), df_mul_f(two_v, ki.y)};
+                yp[i] = cdf_round(cdf_add(cdf_add(cmul_dd(cdf_conj(G), q), cmul_df(gm, conj2(Y))), power));
+                gl_sum = df_add(gl_sum, v);
             }
         }
         __syncthreads();
@@ -437,7 +530,7 @@ __global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
         }
         __syncthreads();
     }
-    store_block_sum(gl_sum, partial, gl_part + blockIdx.x);
+    store_block_sum(gl_sum, partial, gl_part + 2 * size_t(blockIdx.x));
 }
 
 template <int H, int W>
@@ -447,11 +540,11 @@ void launch_backward(const at::Tensor& x, const at::Tensor& g, const at::Tensor&
     const int bytes = H * W * sizeof(float2);
     TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes) == cudaSuccess);
     auto part = at::empty({x.size(0), x.size(1), H, W}, k.options());
-    auto gl_part = at::empty({x.size(0), x.size(1)}, l.options());
+    auto gl_part = at::empty({x.size(0), x.size(1), 2}, l.options());
     kernel<<<x.size(0) * x.size(1), kThreads, bytes, at::cuda::getCurrentCUDAStream()>>>(
         x.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()), l.data_ptr<float>(),
         gx.data_ptr<float>(), reinterpret_cast<float2*>(part.data_ptr()), gl_part.data_ptr<float>(), x.size(1),
-        x.size(2), x.size(3), pad, tr, tc);
+        x.size(2), x.size(3), pad, tr, tc, df_constant(1.0 / (H * W)));
     reduce_partials(part, gl_part, gk, gl);
 }
 
@@ -537,9 +630,9 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
     const float* __restrict__ x, const float* __restrict__ x0, const float* __restrict__ g,
     const float2* __restrict__ k, const float* __restrict__ l, float* __restrict__ gx, float* __restrict__ gx0,
     float2* __restrict__ part, float* __restrict__ gl_part, float2* __restrict__ scratch_y,
-    int C, Twiddles tw, float prediction_factor, float power_factor, float inverse_aliases) {
+    int C, Twiddles tw, float2 inv_n, float2 mean_factor, float2 inverse_aliases) {
     extern __shared__ float2 s[];
-    __shared__ float partial[kThreads / 32];
+    __shared__ DF partial[kThreads / 32];
     constexpr int SH = S * H, SW = S * W, N = SH * SW, n = H * W;
     const int c = blockIdx.x % C, tid = threadIdx.x;
     const size_t lo = size_t(blockIdx.x) * n, hi = size_t(blockIdx.x) * N;
@@ -559,41 +652,38 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
     __syncthreads();
     fft2_plane<SH, SW>(s, tw.high_rows, tw.high_cols, tid);
     const float2* kp = k + size_t(c) * N;
-    const float lc = l[c], scale = float(1.0 / double(N));
-    float gl_sum = 0.f;
+    const float lc = l[c];
+    const DF scale{inv_n.x, inv_n.y}, factor{mean_factor.x, mean_factor.y}, inverse{inverse_aliases.x, inverse_aliases.y};
+    DF gl_sum = df(0.f);
     for (int i = tid; i < n; i += kThreads) {
+        // Production's adjoint (scale2/scale3 kernels), every step two-term.
         const int h = i / W, w = i % W;
-        float2 pm = make_float2(0.f, 0.f), t = make_float2(0.f, 0.f);
-        float pw = 0.f;
+        CDF pm = cdf(make_float2(0.f, 0.f)), t = pm;
+        DF pw = df(0.f);
 #pragma unroll
         for (int j = 0; j < S * S; ++j) {
             const int off = (h + (j / S) * H) * SW + w + (j % S) * W;
-            const float2 kk = __ldg(kp + off), z = s[off], G = make_float2(z.x * scale, z.y * scale);
-            pm = add2(pm, prod(kk, pp[off]));
-            pw = __fadd_rn(pw, __fadd_rn(__fmul_rn(kk.x, kk.x), __fmul_rn(kk.y, kk.y)));
-            t = add2(t, prod(G, kk));
+            const float2 kk = __ldg(kp + off);
+            pm = cdf_add(pm, cmul_ff(kk, pp[off]));
+            pw = df_add(pw, df_norm(kk));
+            t = cdf_add(t, cmul_df(cscale_f(s[off], scale), kk));
         }
-        pm = make_float2(__fmul_rn(pm.x, prediction_factor), __fmul_rn(pm.y, prediction_factor));
-        const float den = __fadd_rn(__fmul_rn(pw, power_factor), lc);
-        const float2 y = yp[i];
-        const float2 q = div_real(make_float2(__fadd_rn(y.x, -pm.x), __fadd_rn(y.y, -pm.y)), den);
-        const float2 gy = div_real(t, den);
-        const float v = prod(make_float2(-t.x, -t.y), conj2(div_real(q, den))).x;
-        const float2 gm = prod(make_float2(-gy.x, -gy.y), make_float2(inverse_aliases, 0.f));
-        const float power_scale = __fmul_rn(v, inverse_aliases);
+        // One two-term reciprocal of d replaces the six divisions.
+        const DF rd = df_div(df(1.f), df_add(df_mul(pw, factor), df(lc)));
+        const CDF q = cscale(cdf_sub(cdf(yp[i]), cscale(pm, factor)), rd);
+        const CDF gy = cscale(t, rd), gm = cscale(cdf_neg(gy), inverse);
+        const DF v = neg_real_dot(t, cscale(q, rd)), two_power = df_mul_f(df_mul(v, inverse), 2.f);
 #pragma unroll
         for (int j = 0; j < S * S; ++j) {
             const int off = (h + (j / S) * H) * SW + w + (j % S) * W;
-            const float2 kk = __ldg(kp + off), z = s[off], G = make_float2(z.x * scale, z.y * scale);
-            s[off] = add2(G, prod(gm, conj2(kk)));
-            const float2 direct = prod(G, conj2(q)), prediction = prod(gm, conj2(pp[off]));
-            const float2 power = make_float2(__fmul_rn(power_scale, __fmul_rn(2.f, kk.x)),
-                                             __fmul_rn(power_scale, __fmul_rn(2.f, kk.y)));
-            float2 term = add2(add2(add2(conj2(direct), prediction), make_float2(0.f, power.y)), make_float2(power.x, 0.f));
-            pp[off] = term;
+            const float2 kk = __ldg(kp + off), P = pp[off];
+            const CDF G = cscale_f(s[off], scale);
+            s[off] = cdf_round(cdf_add(G, cmul_df(gm, conj2(kk))));
+            const CDF power{df_mul_f(two_power, kk.x), df_mul_f(two_power, kk.y)};
+            pp[off] = cdf_round(cdf_add(cdf_add(cmul_dd(cdf_conj(G), q), cmul_df(gm, conj2(P))), power));
         }
-        yp[i] = gy;
-        gl_sum = __fadd_rn(gl_sum, v);
+        yp[i] = cdf_round(gy);
+        gl_sum = df_add(gl_sum, v);
     }
     __syncthreads();
     ifft2_plane<SH, SW>(s, tw.high_rows, tw.high_cols, tid);
@@ -603,17 +693,17 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
     __syncthreads();
     ifft2_plane<H, W>(s, tw.low_rows, tw.low_cols, tid);
     for (int i = tid; i < n; i += kThreads) gx[lo + i] = s[i].x;
-    store_block_sum(gl_sum, partial, gl_part + blockIdx.x);
+    store_block_sum(gl_sum, partial, gl_part + 2 * size_t(blockIdx.x));
 }
 
 // Opt-in dynamic shared memory per block on this device; static shared
-// memory (the 64-byte reduction buffer) comes out of the same budget.
+// memory (the 128-byte reduction buffer) comes out of the same budget.
 int smem_capacity(int device) {
     int value = 0;
     TORCH_CHECK(cudaDeviceGetAttribute(&value, cudaDevAttrMaxSharedMemoryPerBlockOptin, device) == cudaSuccess);
     return value;
 }
-constexpr int kStaticSmem = kThreads / 32 * sizeof(float);
+constexpr int kStaticSmem = kThreads / 32 * sizeof(DF);
 
 Twiddles twiddles(int h, int w, int sh, int sw, int device) {
     return {axis_for(w, device).twiddle, axis_for(h, device).twiddle, axis_for(sw, device).twiddle,
@@ -641,13 +731,13 @@ void scaled_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor
     TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, N * 8) == cudaSuccess);
     auto scratch_y = at::empty({x.size(0), x.size(1), H, W}, k.options());
     auto part = at::empty({x.size(0), x.size(1), S * H, S * W}, k.options());
-    auto gl_part = at::empty({x.size(0), x.size(1)}, l.options());
-    const float factor = float(H * W) / float(N), inverse = 1.0f / float(S * S);
+    auto gl_part = at::empty({x.size(0), x.size(1), 2}, l.options());
+    const float2 inverse = df_constant(1.0 / (S * S));  // alias mean and 1/S^2 coincide
     kernel<<<x.size(0) * x.size(1), kThreads, N * 8, at::cuda::getCurrentCUDAStream()>>>(
         x.data_ptr<float>(), x0.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()),
         l.data_ptr<float>(), gx.data_ptr<float>(), gx0.data_ptr<float>(), reinterpret_cast<float2*>(part.data_ptr()),
         gl_part.data_ptr<float>(), reinterpret_cast<float2*>(scratch_y.data_ptr()), x.size(1),
-        twiddles(H, W, S * H, S * W, x.get_device()), factor, factor, inverse);
+        twiddles(H, W, S * H, S * W, x.get_device()), df_constant(1.0 / N), inverse, inverse);
     reduce_partials(part, gl_part, gk, gl);
 }
 

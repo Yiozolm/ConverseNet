@@ -322,3 +322,45 @@ RTX 5060 Ti, 5 shapes x 8 seeds (`error_anatomy_rtx5060ti_003.json`):
   would bound the bias failure rate near 1/32 here. It cannot reach zero: the budget is
   relative to production's own noise realization, and the FP32 sigmoid-backward rounding
   stays outside the kernel.
+
+## Compensated backward arithmetic and the seeded gate
+
+**Kernels.** Both backward kernels now evaluate the pointwise adjoint in two-term FP32
+("double-float": TwoSum/TwoProduct via FMA, as in `inference/nearest_k2_s2.cu`). No FP64
+runs on the device. Two-term values carry the 1/N scale and |k|^2; one reciprocal of d
+replaces six divisions. The alias sums and products, the cancelling real part of gd,
+grad_Y, the grad_k term, the per-channel grad_l sum and its batch reduction are two-term
+too, each rounded to FP32 once. The transforms assume finite, non-overflowing
+intermediates.
+
+**Gate.** `test/numerical_policy.seeded_comparison` is additive: `comparison`, `BUDGETS` and
+the release tests are unchanged. It is meant for outputs whose FP64 error is reduction-order
+noise. Each seed contributes `u = candidate / max(baseline, floor / factor)`, so one seed
+passes `comparison` exactly when u <= factor. The output passes when the geometric mean of u
+over at least 8 seeds is within the same factor, for rel-L2 and max-abs separately, with
+every seed finite. There is no per-seed cap: two equally accurate implementations exceed
+2x on about 10% of single seeds, so some seed in 8 exceeds it with probability ~57%.
+Tests are in `test/test_numerical_policy.py` (14/14 pass). `seed_sweep.py` prints the
+verdict, and `--summarize` re-evaluates old sweeps offline.
+
+RTX 5060 Ti, s2/s3 shapes x 8 seeds:
+
+| | Before (`seed_sweep_001`) | Compensated (`seed_sweep_004_compensated_rcp`) |
+|---|---|---|
+| grad_bias single-run failures | 4 / 32 | 1 / 32 |
+| grad_bias seeded geomean | 0.75-0.96, all pass | 0.73-0.88, all pass |
+| grad_weight seeded geomean | 0.84-0.96 | 0.82-0.94 |
+| grad_x seeded geomean | 0.65-0.90 | 0.60-0.85 |
+| output, grad_x0 | unchanged | unchanged |
+
+- Remaining arithmetic error (about 2e-7) is mostly the FP32 sigmoid-backward of the bias,
+  outside the kernel and the same in both paths.
+- The earlier A100 sweep under the seeded gate: 7/8 case/gradient pairs pass. s3 144x144
+  grad_bias fails at a geomean of 1.26 (4/8 single-run failures), a mild systematic excess
+  beyond noise on that plane. The compensated kernels need an A100 rerun to show whether
+  they fix it.
+- Cost (`flash_rtx5060ti_005_compensated_rcp`): s1 C128 fwd+VJP 1.92x (circular) and 1.81x
+  vs production, from 2.12x and 1.99x uncompensated; C64 1.28x from 1.43x. With six
+  two-term divisions it was 1.82x and 1.71x.
+- The flash study's single fixed seed still fails s2 32 grad_bias (1.46x); its 8-seed
+  geomean is 0.73.

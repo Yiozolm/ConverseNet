@@ -1,4 +1,9 @@
-"""Accuracy-only sweep over seeds: is a budget failure systematic or seed-specific?"""
+"""Accuracy-only sweep over seeds: is a budget failure systematic or seed-specific?
+
+Per seed, every output and gradient is gated by numerical_policy.comparison; per
+case and output, numerical_policy.seeded_comparison then gates the geometric mean
+over the seeds. --summarize FILE re-evaluates an existing sweep without a GPU.
+"""
 import argparse
 import json
 from pathlib import Path
@@ -9,12 +14,38 @@ import torch
 import study
 import flash_study as fs
 
+
+
+def summarize(rows):
+    from numerical_policy import seeded_comparison
+    verdicts = {}
+    for row in rows:
+        for label, result in row['results'].items():
+            verdicts.setdefault((row['case'], label), []).append(result)
+    print('seeded budget (geometric mean over seeds):')
+    summary = []
+    for (case, label), results in verdicts.items():
+        v = seeded_comparison(results)
+        summary.append(dict(case=case, output=label, **v))
+        print(f"  {case:24s} {label:11s} {'pass' if v['passed'] else 'FAIL'} rel-L2 geomean "
+              f"{v['rel_l2']['geomean_ratio']:.2f} (max seed {v['rel_l2']['max_seed_ratio']:.2f}) max-abs "
+              f"{v['max_abs']['geomean_ratio']:.2f} | single-run failures {v['single_run_failures']}/{v['seeds']}")
+    return summary
+
+
 parser = argparse.ArgumentParser()
-parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--summarize', type=Path, help='re-evaluate an existing sweep JSON')
+parser.add_argument('--output', type=Path)
 parser.add_argument('--seeds', type=int, default=8)
 parser.add_argument('--cases', nargs='*', default=['forward_s2_b4_c64_32', 'forward_s2_b4_c64_48',
                                                    'forward_s3_b2_c32_32', 'forward_s3_b2_c32_24'])
 args = parser.parse_args()
+if args.summarize:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'test'))
+    summarize(json.loads(args.summarize.read_text()))
+    raise SystemExit
+if args.output is None:
+    raise SystemExit('--output is required')
 study.load_extension()
 ext = study.build()
 device = torch.cuda.current_device()
@@ -51,3 +82,4 @@ args.output.parent.mkdir(parents=True, exist_ok=True)
 if args.output.exists():
     raise SystemExit(f'{args.output} exists')
 args.output.write_text(json.dumps(rows, indent=1))
+summarize(rows)

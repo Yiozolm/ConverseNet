@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import torch
-from numerical_policy import (comparison, error_metrics,
+from numerical_policy import (comparison, error_metrics, seeded_comparison,
                               denominator_statistics, write_report)
 from numerical_cases import numerical_cases, NumericalCase
 
@@ -58,6 +58,44 @@ class NumericalPolicy(unittest.TestCase):
         with self.assertRaises(ValueError):
             comparison(torch.ones(2, dtype=torch.complex64) * 1j,
                        torch.ones(2, dtype=torch.complex64), torch.ones(2).double())
+
+    def _seeded_rows(self, scales, baseline_error=1e-4):
+        ref = torch.ones(16, dtype=torch.float64)
+        baseline = torch.ones(16) + baseline_error
+        return [comparison(torch.ones(16) + baseline_error * scale, baseline, ref) for scale in scales]
+
+    def test_seeded_budget_accepts_equal_quality_noise(self):
+        rows = self._seeded_rows([0.5, 2.0, 0.8, 1.25, 1.6, 0.7, 1.0, 0.9])
+        self.assertGreater(sum(not r['passed'] for r in rows), 0)
+        result = seeded_comparison(rows)
+        self.assertTrue(result['passed'])
+        self.assertLessEqual(result['rel_l2']['geomean_ratio'], 1.25)
+        json.dumps(result, allow_nan=False)
+
+    def test_seeded_budget_rejects_systematic_regression(self):
+        result = seeded_comparison(self._seeded_rows([1.4] * 8))
+        self.assertFalse(result['passed'])
+        self.assertFalse(result['rel_l2']['passed'])
+
+    def test_seeded_budget_requires_seeds_finiteness_and_one_regime(self):
+        with self.assertRaises(ValueError):
+            seeded_comparison(self._seeded_rows([1.0] * 7))
+        rows = self._seeded_rows([1.0] * 8)
+        ref = torch.ones(16, dtype=torch.float64)
+        bad = torch.ones(16)
+        bad[0] = float('nan')
+        rows[3] = comparison(bad, torch.ones(16), ref)
+        self.assertFalse(seeded_comparison(rows)['passed'])
+        with self.assertRaises(ValueError):
+            seeded_comparison(self._seeded_rows([1.0] * 8), regime='weak')
+
+    def test_seeded_budget_keeps_floors(self):
+        ref = torch.ones(8, dtype=torch.float64)
+        baseline = ref.float()
+        candidate = baseline.clone()
+        candidate[0] = torch.nextafter(candidate[0], torch.tensor(2.))
+        result = seeded_comparison([comparison(candidate, baseline, ref) for _ in range(8)])
+        self.assertTrue(result['passed'])
 
     def test_distribution_and_complex_components(self):
         ref = torch.zeros(4, dtype=torch.complex128)
