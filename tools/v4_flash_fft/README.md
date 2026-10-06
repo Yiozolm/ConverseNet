@@ -198,7 +198,7 @@ Reading:
   bandwidth, 97% of the measured copy rate. Its FP32 use is 2-5% of peak, so it cannot go
   faster without moving fewer bytes.
 - Fused moves 2.7-11x fewer DRAM bytes per call (1172 -> 292 MB at s1 C128) and keeps
-  3.4-7.7x less memory for backward (all ten cases). Peak memory is 3.3-4.2x lower.
+  3.4-7.7x less memory for backward (all eight cases with a fused path). Peak memory is 3.3-4.2x lower.
 - Fused is neither DRAM-bound (9-39% of peak) nor FLOP-bound (2-7% of FP32 peak). Its limit is
   on-chip: one 80 KB block per SM, a barrier per Stockham stage, shared-memory bank
   conflicts, and global loads that do not overlap compute.
