@@ -29,7 +29,8 @@ import torch.nn.functional as F
 import study
 import flash_study as fs
 
-CASES = ['forward_s1_b4_c64_96', 'forward_s2_b4_c64_32', 'forward_s2_b4_c64_48', 'forward_s3_b2_c32_32',
+CASES = ['circular_s1_b4_c64_96_pad2', 'circular_s1_b4_c128_96_pad2', 'forward_s1_b4_c128_100',
+         'forward_s1_b4_c64_96', 'forward_s2_b4_c64_32', 'forward_s2_b4_c64_48', 'forward_s3_b2_c32_32',
          'forward_s3_b2_c32_24', 'forward_s2_b4_c64_64', 'forward_s3_b2_c32_48']
 
 
@@ -106,8 +107,8 @@ def main():
     rows = []
     for name in args.cases:
         b, c, h, w, s, pad = fs.CASES[name]
-        if pad or not ext.supported(h, w, s, 0, device):
-            print(f'{name}: skipped (padding or not eligible here)', flush=True)
+        if not ext.supported(h, w, s, pad, device):
+            print(f'{name}: skipped (not eligible here)', flush=True)
             continue
         for seed in range(args.seeds):
             torch.manual_seed(75000 + seed)  # same inputs as seed_sweep.py
@@ -119,11 +120,11 @@ def main():
             inputs = (x, weight, bias) if s == 1 else (x, x0, weight, bias)
             actual = {}
             for path, fn in (('cufft', fs.production), ('fused', lambda *a: fs.flash(ext, *a))):
-                grads = torch.autograd.grad(fn(x, x0, weight, bias, s, 0), inputs, g)
+                grads = torch.autograd.grad(fn(x, x0, weight, bias, s, pad), inputs, g)
                 actual[path] = dict(weight=grads[-2].double(), bias=grads[-1].double())
-            ref = fs.reference64(x, x0, weight, bias, s, 0, g)
+            ref = fs.reference64(x, x0, weight, bias, s, pad, g)
             ref = dict(weight=ref[-2], bias=ref[-1])
-            H, W = h * s, w * s
+            H, W = h * s + 2 * pad, w * s + 2 * pad
             kh, kw = 3, 3
             psf32 = torch.roll(F.pad(weight.detach(), (0, W - kw, 0, H - kh)), (-(kh // 2), -(kw // 2)), (-2, -1))
             k32 = torch.fft.fft2(psf32).to(torch.complex128)
@@ -131,14 +132,17 @@ def main():
             l32 = (torch.sigmoid(bias.detach() - 9.0) + fs.EPS).double()
             l64 = torch.sigmoid(bias.detach().double() - 9.0) + fs.EPS
             dsig = torch.sigmoid(bias.detach().double() - 9.0) * (1 - torch.sigmoid(bias.detach().double() - 9.0))
-            xs, x0s = x.detach(), x0.detach()
+            # Circular s1: spectra of the circularly padded x and the zero-embedded gradient,
+            # as the production callbacks and the fused kernels form them.
+            xs = F.pad(x.detach(), (pad,) * 4, mode='circular') if pad else x.detach()
+            x0s, gs = x0.detach(), F.pad(g, (pad,) * 4) if pad else g
 
             def evaluate(Y, P, G, k, l):
                 gk, gd = model(Y, P, G, k, l, s)
                 return dict(weight=to_weight_grad(gk, weight, H, W),
                             bias=(gd.sum((0, 2, 3)).reshape(1, c, 1, 1) * dsig)), gd
 
-            spec = {src: spectra(src, ext, xs, x0s, g, s) for src in ('exact', 'cufft', 'cufftT', 'fused')}
+            spec = {src: spectra(src, ext, xs, x0s, gs, s) for src in ('exact', 'cufft', 'cufftT', 'fused')}
             exact, gd_exact = evaluate(*spec['exact'], k64, l64)
             shared_base, _ = evaluate(*spec['exact'], k32, l32)
             row = dict(case=name, seed=seed, model_vs_reference={

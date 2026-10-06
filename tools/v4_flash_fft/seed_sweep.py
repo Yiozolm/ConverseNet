@@ -37,7 +37,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--summarize', type=Path, help='re-evaluate an existing sweep JSON')
 parser.add_argument('--output', type=Path)
 parser.add_argument('--seeds', type=int, default=8)
-parser.add_argument('--cases', nargs='*', default=['forward_s2_b4_c64_32', 'forward_s2_b4_c64_48',
+parser.add_argument('--cases', nargs='*', default=['circular_s1_b4_c64_96_pad2', 'circular_s1_b4_c128_96_pad2',
+                                                   'forward_s1_b4_c128_100', 'forward_s1_b4_c64_96',
+                                                   'forward_s2_b4_c64_32', 'forward_s2_b4_c64_48',
                                                    'forward_s3_b2_c32_32', 'forward_s3_b2_c32_24'])
 args = parser.parse_args()
 if args.summarize:

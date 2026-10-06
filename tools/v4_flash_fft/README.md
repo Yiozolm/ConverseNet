@@ -364,3 +364,15 @@ RTX 5060 Ti, s2/s3 shapes x 8 seeds:
   two-term divisions it was 1.82x and 1.71x.
 - The flash study's single fixed seed still fails s2 32 grad_bias (1.46x); its 8-seed
   geomean is 0.73.
+
+### s1 under the same scrutiny (`seed_sweep_005_s1.json`, `error_anatomy_rtx5060ti_005_s1.json`)
+
+Four s1 cases (circular C64/C128 96 pad 2, unpadded C128 100 and C64 96) x 8 seeds, with
+the compensated kernels:
+- 0 of 128 single-run budget failures (4 outputs x 32 runs). Every seeded geomean is
+  1.00 (rel-L2 and max-abs, max seed 1.01).
+- Why: the shared FP32 kernel spectrum and regularizer error is 6e-6 to 2e-5 relative and
+  dominates both paths. The spectrum (1-3e-7) and arithmetic (2-4e-7) parts are 30-100x
+  smaller. The fused spectrum part is again 0.70-0.90x cuFFT's; the transposed-cuFFT control
+  is 0.95-1.03x.
+- Each channel's grad_l sum cancels only 6-10x in s1, against 17-71x in s2/s3.
