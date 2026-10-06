@@ -241,3 +241,24 @@ Reading:
 Next, for the A100: one B*C-block backward launch with per-batch grad_k partials reduced in
 fixed batch order (waves 8 -> 5 at s1 C128); larger radix codelets (100 = 10x10,
 144 = 12x12) to cut shared-memory passes and barriers; 2 blocks per SM for 80 KB planes.
+
+## Single-launch backward (one block per plane)
+
+Both backward kernels now run all B*C planes in one launch. Each block writes its grad_k
+term and grad_l block sum to per-plane partials (B, C, ...). `reduce_batches` then sums them
+as `((p0 + p1) + p2) + ...`, the same batch order and roundings as the earlier one-launch-
+per-batch accumulation. The recomputed spectrum (Y for s1, P for s2/s3) is parked in the
+plane's own partial slot: each thread reads it before overwriting that slot with its grad_k
+term. s2/s3 park the low-res Y in a per-plane scratch.
+
+- `capture.py`: all 8 locally eligible cases are bitwise identical to the per-batch-launch
+  version (`capture_per_batch_launch.pt` vs `capture_plane_launch.pt`). Only scheduling
+  changed, so accuracy results carry over unchanged.
+- ptxas: no spills in any backward instantiation; the s2/s3 ones previously spilled 12-40 B.
+- RTX 5060 Ti (`flash_rtx5060ti_003`): s1 C128 2.12x (circular) and 1.99x, up from 1.94x
+  and 1.83x; C64 1.43x; s2/s3 small shapes 1.28-1.56x.
+- Cost (`efficiency_rtx5060ti_004`): peak memory at s1 C128 rises from 70 to 100 MiB (the
+  40 MB partial buffer), still 2.3x below production's 230 MiB. DRAM per call 292 -> 276 MB
+  at s1 C128 and 98 -> 124 MB at s2 48 (per-plane scratch).
+- Expected on A100: s1 C128 backward goes from 8 waves (4 launches x 2, the second 19% full)
+  to 5 (512 blocks on 108 SMs); C64 no longer leaves 44 SMs idle. Not measured yet.

@@ -326,34 +326,58 @@ __device__ __forceinline__ float2 div_real(float2 a, float d) {
     return make_float2(r.real(), r.imag());
 }
 
-// Block-wide sum of every thread's `value`, added in launch (batch) order into
-// *out: the first batch writes, later batches accumulate.
-__device__ void store_block_sum(float value, float* partial, float* out, int b) {
+// Block-wide sum of every thread's `value` into *out.
+__device__ void store_block_sum(float value, float* partial, float* out) {
     for (int o = 16; o; o >>= 1) value = __fadd_rn(value, __shfl_down_sync(0xffffffffu, value, o));
     if (threadIdx.x % 32 == 0) partial[threadIdx.x / 32] = value;
     __syncthreads();
     if (threadIdx.x < 32) {
         float v = threadIdx.x < kThreads / 32 ? partial[threadIdx.x] : 0.f;
         for (int o = 16; o; o >>= 1) v = __fadd_rn(v, __shfl_down_sync(0xffffffffu, v, o));
-        if (threadIdx.x == 0) *out = b ? __fadd_rn(*out, v) : v;
+        if (threadIdx.x == 0) *out = v;
     }
 }
 
+// gk[c] = ((part[0, c] + part[1, c]) + part[2, c]) + ..., gl likewise: the same
+// batch order and roundings as accumulating one batch per launch.
+__global__ void reduce_batches(const float2* __restrict__ part, const float* __restrict__ gl_part,
+                               float2* __restrict__ gk, float* __restrict__ gl, int B, int C, int64_t N) {
+    const int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x, total = C * N;
+    if (i < total) {
+        float2 v = part[i];
+        for (int b = 1; b < B; ++b) v = add2(v, part[b * total + i]);
+        gk[i] = v;
+    }
+    if (i < C) {
+        float v = gl_part[i];
+        for (int b = 1; b < B; ++b) v = __fadd_rn(v, gl_part[int64_t(b) * C + i]);
+        gl[i] = v;
+    }
+}
+
+void reduce_partials(const at::Tensor& part, const at::Tensor& gl_part, at::Tensor& gk, at::Tensor& gl) {
+    const int64_t B = part.size(0), C = part.size(1), N = part.numel() / (B * C);
+    reduce_batches<<<(C * N + 255) / 256, 256, 0, at::cuda::getCurrentCUDAStream()>>>(
+        reinterpret_cast<const float2*>(part.data_ptr()), gl_part.data_ptr<float>(),
+        reinterpret_cast<float2*>(gk.data_ptr()), gl.data_ptr<float>(), int(B), int(C), N);
+}
+
+// One block per (b, c) plane, all planes in one launch. Each block writes its
+// grad_k term and grad_l sum to per-plane partials; reduce_batches sums them in
+// batch order. Y is parked in this plane's partial slot: every thread reads Y[i]
+// before it overwrites slot i with the grad_k term.
 template <int H, int W>
 __global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
     const float* __restrict__ x, const float* __restrict__ g, const float2* __restrict__ k, const float* __restrict__ l,
-    float* __restrict__ gx, float2* __restrict__ gk, float* __restrict__ gl, float2* __restrict__ scratch, int b, int C,
+    float* __restrict__ gx, float2* __restrict__ part, float* __restrict__ gl_part, int C,
     int h0, int w0, int pad, const float2* __restrict__ tw_rows, const float2* __restrict__ tw_cols) {
     extern __shared__ float2 s[];
     __shared__ float partial[kThreads / 32];
     constexpr int N = H * W;
-    const int c = blockIdx.x;
+    const int b = blockIdx.x / C, c = blockIdx.x % C;
     const size_t plane = size_t(h0) * w0;
     const float2* kp = k + size_t(c) * N;
-    float2* gkp = gk + size_t(c) * N;
-    // Y is parked per channel in global scratch (L2-resident), not registers:
-    // holding it across the gradient FFT spilled.
-    float2* yp = scratch + size_t(c) * N;
+    float2* yp = part + size_t(blockIdx.x) * N;
     const float lc = l[c], scale = float(1.0 / double(N));
     float gl_sum = 0.f;
     const float2* tw_r = tw_rows;
@@ -390,8 +414,7 @@ __global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
                 const float2 direct = prod(G, conj2(q)), prediction = prod(gm, conj2(Y));
                 const float2 power = make_float2(__fmul_rn(v, __fmul_rn(2.f, ki.x)), __fmul_rn(v, __fmul_rn(2.f, ki.y)));
                 float2 term = add2(add2(add2(conj2(direct), prediction), make_float2(0.f, power.y)), make_float2(power.x, 0.f));
-                if (b) term = add2(gkp[i], term);
-                gkp[i] = term;
+                yp[i] = term;
                 gl_sum = __fadd_rn(gl_sum, v);
             }
         }
@@ -414,7 +437,7 @@ __global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
         }
         __syncthreads();
     }
-    store_block_sum(gl_sum, partial, gl + c, b);
+    store_block_sum(gl_sum, partial, gl_part + blockIdx.x);
 }
 
 template <int H, int W>
@@ -423,14 +446,13 @@ void launch_backward(const at::Tensor& x, const at::Tensor& g, const at::Tensor&
     auto kernel = static_s1_backward<H, W>;
     const int bytes = H * W * sizeof(float2);
     TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes) == cudaSuccess);
-    auto scratch = at::empty_like(k);
-    // One launch per batch index, in order: gk accumulates deterministically.
-    for (int b = 0; b < x.size(0); ++b)
-        kernel<<<x.size(1), kThreads, bytes, at::cuda::getCurrentCUDAStream()>>>(
-            x.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()),
-            l.data_ptr<float>(), gx.data_ptr<float>(), reinterpret_cast<float2*>(gk.data_ptr()),
-            gl.data_ptr<float>(), reinterpret_cast<float2*>(scratch.data_ptr()), b, x.size(1), x.size(2), x.size(3),
-            pad, tr, tc);
+    auto part = at::empty({x.size(0), x.size(1), H, W}, k.options());
+    auto gl_part = at::empty({x.size(0), x.size(1)}, l.options());
+    kernel<<<x.size(0) * x.size(1), kThreads, bytes, at::cuda::getCurrentCUDAStream()>>>(
+        x.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()), l.data_ptr<float>(),
+        gx.data_ptr<float>(), reinterpret_cast<float2*>(part.data_ptr()), gl_part.data_ptr<float>(), x.size(1),
+        x.size(2), x.size(3), pad, tr, tc);
+    reduce_partials(part, gl_part, gk, gl);
 }
 
 Axis axis_for(int n, int device);
@@ -505,22 +527,24 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_forward(
     for (int i = tid; i < N; i += kThreads) op[i] = s[i].x * scale;
 }
 
-// Backward, one block per channel, one launch per batch index (as for s1).
+// Backward, one block per (b, c) plane in one launch (as for s1). P is parked in
+// the plane's grad_k partial slot; each alias index is read and then
+// overwritten by the one thread that owns its alias group.
 //   t = sum k*G, gy = t/d, gd = Re((-t)*conj(q/d)), gm = (-gy)*(1/S^2, 0)
 //   grad_p = G + gm*conj(k);  grad_k += conj(G*conj(q)) + gm*conj(p) + 2*k*gd/S^2
 template <int H, int W, int S>
 __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
     const float* __restrict__ x, const float* __restrict__ x0, const float* __restrict__ g,
     const float2* __restrict__ k, const float* __restrict__ l, float* __restrict__ gx, float* __restrict__ gx0,
-    float2* __restrict__ gk, float* __restrict__ gl, float2* __restrict__ scratch_y, float2* __restrict__ scratch_p,
-    int b, int C, Twiddles tw, float prediction_factor, float power_factor, float inverse_aliases) {
+    float2* __restrict__ part, float* __restrict__ gl_part, float2* __restrict__ scratch_y,
+    int C, Twiddles tw, float prediction_factor, float power_factor, float inverse_aliases) {
     extern __shared__ float2 s[];
     __shared__ float partial[kThreads / 32];
     constexpr int SH = S * H, SW = S * W, N = SH * SW, n = H * W;
-    const int c = blockIdx.x, tid = threadIdx.x;
-    const size_t lo = (size_t(b) * C + c) * n, hi = (size_t(b) * C + c) * N;
-    float2* yp = scratch_y + size_t(c) * n;
-    float2* pp = scratch_p + size_t(c) * N;
+    const int c = blockIdx.x % C, tid = threadIdx.x;
+    const size_t lo = size_t(blockIdx.x) * n, hi = size_t(blockIdx.x) * N;
+    float2* yp = scratch_y + lo;
+    float2* pp = part + hi;
     for (int i = tid; i < n; i += kThreads) s[i] = make_float2(x[lo + i], 0.f);
     __syncthreads();
     fft2_plane<H, W>(s, tw.low_rows, tw.low_cols, tid);
@@ -535,7 +559,6 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
     __syncthreads();
     fft2_plane<SH, SW>(s, tw.high_rows, tw.high_cols, tid);
     const float2* kp = k + size_t(c) * N;
-    float2* gkp = gk + size_t(c) * N;
     const float lc = l[c], scale = float(1.0 / double(N));
     float gl_sum = 0.f;
     for (int i = tid; i < n; i += kThreads) {
@@ -567,8 +590,7 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
             const float2 power = make_float2(__fmul_rn(power_scale, __fmul_rn(2.f, kk.x)),
                                              __fmul_rn(power_scale, __fmul_rn(2.f, kk.y)));
             float2 term = add2(add2(add2(conj2(direct), prediction), make_float2(0.f, power.y)), make_float2(power.x, 0.f));
-            if (b) term = add2(gkp[off], term);
-            gkp[off] = term;
+            pp[off] = term;
         }
         yp[i] = gy;
         gl_sum = __fadd_rn(gl_sum, v);
@@ -581,7 +603,7 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
     __syncthreads();
     ifft2_plane<H, W>(s, tw.low_rows, tw.low_cols, tid);
     for (int i = tid; i < n; i += kThreads) gx[lo + i] = s[i].x;
-    store_block_sum(gl_sum, partial, gl + c, b);
+    store_block_sum(gl_sum, partial, gl_part + blockIdx.x);
 }
 
 // Opt-in dynamic shared memory per block on this device; static shared
@@ -617,16 +639,16 @@ void scaled_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor
     constexpr int N = S * S * H * W;
     auto kernel = static_s_backward<H, W, S>;
     TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, N * 8) == cudaSuccess);
-    auto scratch_y = at::empty({x.size(1), H, W}, k.options());
-    auto scratch_p = at::empty({x.size(1), S * H, S * W}, k.options());
+    auto scratch_y = at::empty({x.size(0), x.size(1), H, W}, k.options());
+    auto part = at::empty({x.size(0), x.size(1), S * H, S * W}, k.options());
+    auto gl_part = at::empty({x.size(0), x.size(1)}, l.options());
     const float factor = float(H * W) / float(N), inverse = 1.0f / float(S * S);
-    const auto tw = twiddles(H, W, S * H, S * W, x.get_device());
-    for (int b = 0; b < x.size(0); ++b)
-        kernel<<<x.size(1), kThreads, N * 8, at::cuda::getCurrentCUDAStream()>>>(
-            x.data_ptr<float>(), x0.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()),
-            l.data_ptr<float>(), gx.data_ptr<float>(), gx0.data_ptr<float>(), reinterpret_cast<float2*>(gk.data_ptr()),
-            gl.data_ptr<float>(), reinterpret_cast<float2*>(scratch_y.data_ptr()),
-            reinterpret_cast<float2*>(scratch_p.data_ptr()), b, x.size(1), tw, factor, factor, inverse);
+    kernel<<<x.size(0) * x.size(1), kThreads, N * 8, at::cuda::getCurrentCUDAStream()>>>(
+        x.data_ptr<float>(), x0.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()),
+        l.data_ptr<float>(), gx.data_ptr<float>(), gx0.data_ptr<float>(), reinterpret_cast<float2*>(part.data_ptr()),
+        gl_part.data_ptr<float>(), reinterpret_cast<float2*>(scratch_y.data_ptr()), x.size(1),
+        twiddles(H, W, S * H, S * W, x.get_device()), factor, factor, inverse);
+    reduce_partials(part, gl_part, gk, gl);
 }
 
 // Compiled shapes: s1 by padded plane side; s2/s3 by low-res side.
