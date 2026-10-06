@@ -1,4 +1,4 @@
-# SRAM-resident fused s1 training forward and backward (research only)
+# SRAM-resident fused training: s1, s2, s3 (research only)
 
 FlashAttention-style tiling for the Converse2D solve. In production, every stage writes
 its result to DRAM, as the attention score matrix does in standard attention: the input FFT
@@ -109,4 +109,59 @@ Implementation notes:
   `psf_pad_roll` kernel would remove most of that.
 
 Not done: integration into the operator (routing, broadcast kernels KB > 1, independent
-prior, higher-order fallback), s2/s3, A100, release tests, convergence.
+prior for s1, higher-order fallback), release tests, convergence.
+
+## s2/s3 and the capacity switch (`flash_study.py`, `seed_sweep.py`, `a100_colab.ipynb`)
+
+`static_s_forward` / `static_s_backward` (S = 2, 3) keep the high-res (S*H) x (S*W) plane in
+shared memory. The low-res spectrum of x is parked in an L2-resident scratch, so the plane is
+the only large shared allocation. Alias groups {(h + a*H, w + b*W)} are solved in place:
+production's means (factor H*W/N), `gm = (-t/d)*(1/S^2, 0)`, and the power term
+`2k*gd/S^2`. The backward recomputes Y = FFT(x) and P = FFT(x0) on chip and returns grad_x,
+grad_x0, grad_k and grad_l. Large planes run each FFT stage in line chunks: at most about 20
+complex values are staged per thread, so 128x128 takes 2 chunks and 144x144 takes 3; s1 sizes
+still run in one.
+
+Capacity switch: `ext.supported(h, w, scale, pad, device)` is true only when the shape is
+compiled and plane + 64 B static shared memory <= `cudaDevAttrMaxSharedMemoryPerBlockOptin`.
+`flash_study.py` sends every other case to the production operator and records its path.
+
+| Plane | Size | RTX 5060 Ti (101376 B) | A100 (166912 B) |
+|---|---|---|---|
+| s1 100x100 / 96x96 | 80 / 72 KB | fused | fused |
+| s2 64 -> 128x128 | 128 KB | production | fused |
+| s3 48 -> 144x144 | 162 KB | production | fused (about 1 KB spare) |
+
+Compiled shapes: s1 planes 100/96/64; s2 low-res 64/48/32; s3 low-res 48/32/24. The smaller
+s2/s3 shapes validate the same kernels on GPUs that cannot hold the production planes.
+
+RTX 5060 Ti (`artifacts/v4_flash_fft/flash_rtx5060ti_002/summary.md`), forward+VJP:
+
+| Case | Path | Production | Fused | Worst rel-L2 ratio | Budgets |
+|---|---|---|---|---|---|
+| circular s1 B4 C128 96 pad 2 | fused | 3219 us | 1660 us (1.94x) | 1.00 | pass |
+| s1 B4 C128 100 | fused | 3093 us | 1692 us (1.83x) | 1.00 | pass |
+| s2 B4 C64 64 (128x128) | production | 2958 us | - | - | - |
+| s2 B4 C64 48 (96x96) | fused | 1242 us | 797 us (1.56x) | 0.88 | pass |
+| s2 B4 C64 32 (64x64) | fused | 542 us | 403 us (1.34x) | 2.00 (grad_bias) | FAIL |
+| s3 B2 C32 48 (144x144) | production | 602 us | - | - | - |
+| s3 B2 C32 32 (96x96) | fused | 637 us | 466 us (1.36x) | 0.81 | pass |
+| s3 B2 C32 24 (72x72) | fused | 497 us | 405 us (1.23x) | 1.17 | pass |
+
+s2/s3 accuracy over 8 seeds x 4 shapes (`seed_sweep_001.json`):
+- output, grad_x and grad_x0 are 0.64-0.93x production's rel-L2 in every run;
+- grad_weight always passes;
+- grad_bias ranges from 0.31x to 2.75x and fails the 1.25x normal budget in 4 of 32 runs.
+
+grad_bias is one sum per channel of B*H*W cancelling `gd` terms, each built from FFT spectra.
+Its error is a few ulps and moves with any change in FFT rounding; the geometric mean ratio is
+about 0.95. A two-component FP32 (TwoSum) reduction did not change this (3 of 32 failures,
+`seed_sweep_002.json`), so the noise is in the terms, not the summation; the reduction was
+reverted. This is an open accuracy item for any integration under the current policy.
+
+### Running on an A100
+
+Push `claude/v4-dev`, open `tools/v4_flash_fft/a100_colab.ipynb` in Colab with an A100
+runtime, run all cells and send back the zip. It runs `flash_study.py` (all cases, now
+including the 128x128 and 144x144 planes) and `seed_sweep.py` on the production and small
+s2/s3 shapes.
