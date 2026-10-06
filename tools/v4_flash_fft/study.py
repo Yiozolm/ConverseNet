@@ -31,14 +31,14 @@ CASES = {'circular_s1_b4_c64_96_pad2': (4, 64, 96, 96, 2), 'circular_s1_b4_c128_
          'forward_s1_b4_c64_64': (4, 64, 64, 64, 0)}
 
 
-def build():
+def build(verbose=False):
     if os.name == 'nt':
         cpp_extension.SUBPROCESS_DECODE_ARGS = ('utf-8', 'replace')
     (ROOT / '.build' / 'flash_fft').mkdir(parents=True, exist_ok=True)
     return cpp_extension.load(name='flash_fft_research', sources=[str(HERE / 'fused.cu'), str(HERE / 'bind.cpp')],
                               extra_cflags=['/O2', '/std:c++17'] if os.name == 'nt' else ['-O3', '-std=c++17'],
-                              extra_cuda_cflags=['-O3', '-lineinfo', '-std=c++17'],
-                              build_directory=str(ROOT / '.build' / 'flash_fft'), verbose=False)
+                              extra_cuda_cflags=['-O3', '-lineinfo', '-std=c++17'] + (['-Xptxas=-v'] if verbose else []),
+                              build_directory=str(ROOT / '.build' / 'flash_fft'), verbose=verbose)
 
 
 def kernel_prep(weight, bias, H, W):

@@ -1,4 +1,4 @@
-# SRAM-resident fused s1 training forward (research only)
+# SRAM-resident fused s1 training forward and backward (research only)
 
 FlashAttention-style tiling for the Converse2D solve. In production, every stage writes
 its result to DRAM, as the attention score matrix does in standard attention: the input FFT
@@ -59,8 +59,54 @@ Limits and open work:
   (128x128) and s3 (144x144) planes do not fit. Options: split a plane across a thread
   block cluster with distributed shared memory, or a two-kernel split. A half spectrum would
   fit, but conflicts with the full-spectrum training policy.
-- Backward is not implemented. Production forward is about a third of forward+VJP (1285 of
-  3713 us), so the backward decides the training gain.
 - One block per SM at 80 KB; global loads and FFT stages do not overlap; Stockham writes
   have bank conflicts.
 - No A100 run, no release tests: this is not wired into the operator.
+
+## Backward (`static_s1_backward`, `train_study.py`)
+
+FlashAttention-style recomputation: forward saves only `x`, `k` and `l`. Backward runs
+one block per channel, with one launch per batch index; stream order keeps the
+kernel-gradient accumulation deterministic. Per plane:
+
+```
+load x (circular pad) -> FFT2 -> Y, parked in a per-channel L2-resident scratch
+load g embedded in the padded grid -> FFT2 -> G = (.)/N
+pointwise, production's scale1_adjoint boundaries (shared prior):
+  t = G*k, gy = t/d, gm = -gy, q = (Y - k*Y)/d, gd = Re(-t * conj(q/d))
+  grad_Y = (G + gy) + gm*conj(k)                 -> stays in shared memory
+  grad_k += conj(G*conj(q)) + gm*conj(Y) + 2*k*gd -> channel slice of grad_k (L2)
+  grad_l += gd                                    -> block reduction
+unnormalized IFFT2(grad_Y) -> real part -> fold circular margins -> grad_x
+```
+
+`FlashS1` (Python autograd Function) wraps both kernels. PSF pad/roll, the per-call kernel
+`fft2` and `sigmoid(bias - 9) + eps` remain differentiable ATen operations, so grad_k and
+grad_l reach weight and bias through autograd.
+
+RTX 5060 Ti, forward+VJP for (x, weight, bias) (`artifacts/v4_flash_fft/train_003.json`):
+
+| Case | Production | FlashS1 | Output, grad_x, grad_weight, grad_bias rel-L2 vs prod |
+|---|---|---|---|
+| circular s1 B4 C128 96 pad 2 | 3217 us | 1652 us (**1.95x**) | 1.00, 1.00, 0.99, 1.00 |
+| s1 B4 C128 100 | 3091 us | 1685 us (**1.83x**) | 1.00, 1.00, 1.00, 1.00 |
+| circular s1 B4 C64 96 pad 2 | 1169 us | 837 us (1.40x) | 1.00, 1.00, 1.00, 1.01 |
+| s1 B4 C64 96 | 1138 us | 823 us (1.38x) | 1.00, 1.00, 1.00, 0.99 |
+| s1 B4 C64 64 | 462 us | 464 us (0.99x) | 1.00, 1.00, 1.00, 1.00 |
+
+Every output and gradient passes its normal budget; max-abs ratios are 0.99-1.04x.
+Repeated calls are bitwise identical (`determinism.py`).
+
+Implementation notes:
+- The first backward looped over the batch inside the kernel. ptxas then spilled 1.2-2.6 KB
+  per thread at 96x96 and 100x100, even with Y out of registers and with the twiddle
+  pointers and thread index laundered. One launch per batch index removes the spills: the
+  backward kernel at C128 went from 2012 us to 1010 us.
+- At C128 the backward kernel is 1010 us against 380 us for the forward, though it does
+  only 1.5x the FFT work. Launching C blocks per batch index leaves partial waves
+  (128 blocks on 36 SMs), and the Y scratch and grad_k accumulation add L2 traffic.
+- `torch.roll` in the PSF preparation costs about 65 us per call; production's fused
+  `psf_pad_roll` kernel would remove most of that.
+
+Not done: integration into the operator (routing, broadcast kernels KB > 1, independent
+prior, higher-order fallback), s2/s3, A100, release tests, convergence.

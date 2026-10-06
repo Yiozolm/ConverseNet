@@ -186,13 +186,13 @@ __host__ __device__ constexpr int radix_at(int n, int i) {
 }
 
 template <int R, bool Inverse, bool LineFastest, int N, int NS, int Lines, int LineStride, int ElemStride>
-__device__ __forceinline__ void static_stage(float2* s, const float2* __restrict__ tw) {
+__device__ __forceinline__ void static_stage(float2* s, const float2* __restrict__ tw, int tid) {
     constexpr int per_line = N / R, total = Lines * per_line, span = N / (NS * R);
     constexpr int cap = (total + kThreads - 1) / kThreads;
     float2 v[cap][R];
 #pragma unroll
     for (int q = 0; q < cap; ++q) {
-        const int u = threadIdx.x + q * kThreads;
+        const int u = tid + q * kThreads;
         if (total % kThreads == 0 || u < total) {
             const int line = LineFastest ? u % Lines : u / per_line, j = LineFastest ? u / Lines : u % per_line;
             const float2* base = s + line * LineStride;
@@ -213,7 +213,7 @@ __device__ __forceinline__ void static_stage(float2* s, const float2* __restrict
     __syncthreads();
 #pragma unroll
     for (int q = 0; q < cap; ++q) {
-        const int u = threadIdx.x + q * kThreads;
+        const int u = tid + q * kThreads;
         if (total % kThreads == 0 || u < total) {
             const int line = LineFastest ? u % Lines : u / per_line, j = LineFastest ? u / Lines : u % per_line;
             float2* base = s + line * LineStride;
@@ -227,11 +227,11 @@ __device__ __forceinline__ void static_stage(float2* s, const float2* __restrict
 }
 
 template <int N, int I, int NS, bool Inverse, bool LineFastest, int Lines, int LineStride, int ElemStride>
-__device__ __forceinline__ void static_fft(float2* s, const float2* __restrict__ tw) {
+__device__ __forceinline__ void static_fft(float2* s, const float2* __restrict__ tw, int tid) {
     constexpr int R = radix_at(N, I);
     if constexpr (R != 0) {
-        static_stage<R, Inverse, LineFastest, N, NS, Lines, LineStride, ElemStride>(s, tw);
-        static_fft<N, I + 1, NS * R, Inverse, LineFastest, Lines, LineStride, ElemStride>(s, tw);
+        static_stage<R, Inverse, LineFastest, N, NS, Lines, LineStride, ElemStride>(s, tw, tid);
+        static_fft<N, I + 1, NS * R, Inverse, LineFastest, Lines, LineStride, ElemStride>(s, tw, tid);
     } else {
         static_assert(NS == N, "length must be 2/3/5-smooth");
     }
@@ -256,15 +256,15 @@ __global__ void __launch_bounds__(kThreads) static_s1_forward(const float* __res
         s[i] = make_float2(x0[src], Pair ? x1[src] : 0.f);
     }
     __syncthreads();
-    static_fft<W, 0, 1, false, false, H, W, 1>(s, tw_rows);
-    static_fft<H, 0, 1, false, true, W, 1, W>(s, tw_cols);
+    static_fft<W, 0, 1, false, false, H, W, 1>(s, tw_rows, threadIdx.x);
+    static_fft<H, 0, 1, false, true, W, 1, W>(s, tw_cols, threadIdx.x);
     const float2* kp = k + size_t(c) * H * W;
     const float lc = l[c];
     for (int i = threadIdx.x; i < H * W; i += kThreads)
         s[i] = solve(s[i], __ldg(kp + i), lc);
     __syncthreads();
-    static_fft<H, 0, 1, true, true, W, 1, W>(s, tw_cols);
-    static_fft<W, 0, 1, true, false, H, W, 1>(s, tw_rows);
+    static_fft<H, 0, 1, true, true, W, 1, W>(s, tw_cols, threadIdx.x);
+    static_fft<W, 0, 1, true, false, H, W, 1>(s, tw_rows, threadIdx.x);
     const float scale = float(1.0 / double(H * W));
     float* o0 = out + (size_t(b) * C + c) * plane;
     float* o1 = o0 + size_t(C) * plane;
@@ -295,6 +295,124 @@ void dispatch_static(const at::Tensor& x, const at::Tensor& k, const at::Tensor&
     if (H == 96 && W == 96) return launch_static<96, 96, Pair>(x, k, l, out, pad, tr, tc);
     if (H == 64 && W == 64) return launch_static<64, 64, Pair>(x, k, l, out, pad, tr, tc);
     TORCH_CHECK(false, "no static instantiation for ", H, "x", W);
+}
+
+// ---- s1 backward: one block per channel, batches in order ------------------
+// Production adjoint (scale1_adjoint, shared prior), with G = FFT(embed(g))/N
+// and Y = FFT(circular_pad(x)) recomputed on chip instead of saved:
+//   t = G*k, gy = t/d, gm = -gy, q = (Y - k*Y)/d, gd = Re((-t)*conj(q/d))
+//   grad_Y = (G + gy) + gm*conj(k)
+//   grad_k += conj(G*conj(q)) + gm*conj(Y) + 2*k*gd,   grad_l += gd
+// grad_x folds Re(unnormalized IFFT(grad_Y)) back through the circular pad.
+__device__ __forceinline__ float2 prod(float2 a, float2 b) {
+    return make_float2(__fmaf_rn(a.x, b.x, -__fmul_rn(a.y, b.y)), __fmaf_rn(a.y, b.x, __fmul_rn(a.x, b.y)));
+}
+__device__ __forceinline__ float2 conj2(float2 a) { return make_float2(a.x, -a.y); }
+__device__ __forceinline__ float2 add2(float2 a, float2 b) { return make_float2(__fadd_rn(a.x, b.x), __fadd_rn(a.y, b.y)); }
+__device__ __forceinline__ float2 div_real(float2 a, float d) {
+    const auto r = c10::complex<float>(a.x, a.y) / c10::complex<float>(d, 0);
+    return make_float2(r.real(), r.imag());
+}
+
+template <int H, int W>
+__global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
+    const float* __restrict__ x, const float* __restrict__ g, const float2* __restrict__ k, const float* __restrict__ l,
+    float* __restrict__ gx, float2* __restrict__ gk, float* __restrict__ gl, float2* __restrict__ scratch, int b, int C,
+    int h0, int w0, int pad, const float2* __restrict__ tw_rows, const float2* __restrict__ tw_cols) {
+    extern __shared__ float2 s[];
+    __shared__ float partial[kThreads / 32];
+    constexpr int N = H * W;
+    const int c = blockIdx.x;
+    const size_t plane = size_t(h0) * w0;
+    const float2* kp = k + size_t(c) * N;
+    float2* gkp = gk + size_t(c) * N;
+    // Y is parked per channel in global scratch (L2-resident), not registers:
+    // holding it across the gradient FFT spilled.
+    float2* yp = scratch + size_t(c) * N;
+    const float lc = l[c], scale = float(1.0 / double(N));
+    float gl_sum = 0.f;
+    const float2* tw_r = tw_rows;
+    const float2* tw_c = tw_cols;
+    const int tid = threadIdx.x;
+    {
+        const size_t offset = (size_t(b) * C + c) * plane;
+        for (int i = threadIdx.x; i < N; i += kThreads) {
+            const int r = i / W, q = i % W;
+            s[i] = make_float2(x[offset + wrap(r - pad, h0) * w0 + wrap(q - pad, w0)], 0.f);
+        }
+        __syncthreads();
+        static_fft<W, 0, 1, false, false, H, W, 1>(s, tw_r, tid);
+        static_fft<H, 0, 1, false, true, W, 1, W>(s, tw_c, tid);
+        for (int i = threadIdx.x; i < N; i += kThreads) yp[i] = s[i];
+        __syncthreads();
+        for (int i = threadIdx.x; i < N; i += kThreads) {
+            const int r = i / W - pad, q = i % W - pad;
+            const bool inside = r >= 0 && r < h0 && q >= 0 && q < w0;
+            s[i] = make_float2(inside ? g[offset + r * w0 + q] : 0.f, 0.f);
+        }
+        __syncthreads();
+        static_fft<W, 0, 1, false, false, H, W, 1>(s, tw_r, tid);
+        static_fft<H, 0, 1, false, true, W, 1, W>(s, tw_c, tid);
+        for (int i = threadIdx.x; i < N; i += kThreads) {
+            {
+                const float2 z = s[i], G = make_float2(z.x * scale, z.y * scale), ki = __ldg(kp + i), Y = yp[i];
+                const float den = __fadd_rn(__fadd_rn(__fmul_rn(ki.x, ki.x), __fmul_rn(ki.y, ki.y)), lc);
+                const float2 t = prod(G, ki), gy = div_real(t, den), gm = make_float2(-gy.x, -gy.y);
+                const float2 pm = prod(ki, Y);
+                const float2 q = div_real(make_float2(__fadd_rn(Y.x, -pm.x), __fadd_rn(Y.y, -pm.y)), den);
+                const float v = prod(make_float2(-t.x, -t.y), conj2(div_real(q, den))).x;
+                s[i] = add2(add2(G, gy), prod(gm, conj2(ki)));
+                const float2 direct = prod(G, conj2(q)), prediction = prod(gm, conj2(Y));
+                const float2 power = make_float2(__fmul_rn(v, __fmul_rn(2.f, ki.x)), __fmul_rn(v, __fmul_rn(2.f, ki.y)));
+                float2 term = add2(add2(add2(conj2(direct), prediction), make_float2(0.f, power.y)), make_float2(power.x, 0.f));
+                if (b) term = add2(gkp[i], term);
+                gkp[i] = term;
+                gl_sum = __fadd_rn(gl_sum, v);
+            }
+        }
+        __syncthreads();
+        static_fft<H, 0, 1, true, true, W, 1, W>(s, tw_c, tid);
+        static_fft<W, 0, 1, true, false, H, W, 1>(s, tw_r, tid);
+        // Each interior pixel collects its own padded copy plus any wrapped margin copies.
+        for (int i = threadIdx.x; i < h0 * w0; i += kThreads) {
+            const int r = i / w0, q = i % w0;
+            float sum = 0.f;
+            for (int dr = -1; dr <= 1; ++dr) {
+                const int R = r + pad + dr * h0;
+                if (R < 0 || R >= H) continue;
+                for (int dq = -1; dq <= 1; ++dq) {
+                    const int Q = q + pad + dq * w0;
+                    if (Q >= 0 && Q < W) sum = __fadd_rn(sum, s[R * W + Q].x);
+                }
+            }
+            gx[offset + i] = sum;
+        }
+        __syncthreads();
+    }
+    for (int o = 16; o; o >>= 1) gl_sum = __fadd_rn(gl_sum, __shfl_down_sync(0xffffffffu, gl_sum, o));
+    if (threadIdx.x % 32 == 0) partial[threadIdx.x / 32] = gl_sum;
+    __syncthreads();
+    if (threadIdx.x < 32) {
+        float v = threadIdx.x < kThreads / 32 ? partial[threadIdx.x] : 0.f;
+        for (int o = 16; o; o >>= 1) v = __fadd_rn(v, __shfl_down_sync(0xffffffffu, v, o));
+        if (threadIdx.x == 0) gl[size_t(b) * C + c] = v;
+    }
+}
+
+template <int H, int W>
+void launch_backward(const at::Tensor& x, const at::Tensor& g, const at::Tensor& k, const at::Tensor& l, at::Tensor& gx,
+                     at::Tensor& gk, at::Tensor& gl, int pad, const float2* tr, const float2* tc) {
+    auto kernel = static_s1_backward<H, W>;
+    const int bytes = H * W * sizeof(float2);
+    TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes) == cudaSuccess);
+    auto scratch = at::empty_like(k);
+    // One launch per batch index, in order: gk accumulates deterministically.
+    for (int b = 0; b < x.size(0); ++b)
+        kernel<<<x.size(1), kThreads, bytes, at::cuda::getCurrentCUDAStream()>>>(
+            x.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()),
+            l.data_ptr<float>(), gx.data_ptr<float>(), reinterpret_cast<float2*>(gk.data_ptr()),
+            gl.data_ptr<float>(), reinterpret_cast<float2*>(scratch.data_ptr()), b, x.size(1), x.size(2), x.size(3),
+            pad, tr, tc);
 }
 
 struct Table {
@@ -356,4 +474,27 @@ at::Tensor flash_s1_forward(const at::Tensor& x, const at::Tensor& k, const at::
         h0, w0, int(pad), axis_for(W, x.get_device()), axis_for(H, x.get_device()));
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return out;
+}
+
+// Returns (grad_x, grad_k, grad_l) for the s1 shared-prior solve; x, g: (B, C, h0, w0).
+std::vector<at::Tensor> flash_s1_backward(const at::Tensor& x, const at::Tensor& g, const at::Tensor& k,
+                                          const at::Tensor& l, int64_t pad) {
+    TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kFloat && x.dim() == 4 && x.is_contiguous());
+    TORCH_CHECK(g.sizes() == x.sizes() && g.scalar_type() == at::kFloat && g.is_contiguous());
+    TORCH_CHECK(k.scalar_type() == at::kComplexFloat && k.is_contiguous() && k.size(0) == 1 && k.size(1) == x.size(1));
+    TORCH_CHECK(l.scalar_type() == at::kFloat && l.is_contiguous() && l.numel() == x.size(1));
+    const int h0 = x.size(2), w0 = x.size(3), H = h0 + 2 * pad, W = w0 + 2 * pad;
+    TORCH_CHECK(k.size(2) == H && k.size(3) == W && pad <= h0 && pad <= w0);
+    c10::cuda::CUDAGuard guard(x.device());
+    auto gx = at::empty_like(x);
+    auto gk = at::empty_like(k);
+    auto gl = at::empty({x.size(0), x.size(1)}, l.options());
+    const auto* tr = axis_for(W, x.get_device()).twiddle;
+    const auto* tc = axis_for(H, x.get_device()).twiddle;
+    if (H == 100 && W == 100) launch_backward<100, 100>(x, g, k, l, gx, gk, gl, pad, tr, tc);
+    else if (H == 96 && W == 96) launch_backward<96, 96>(x, g, k, l, gx, gk, gl, pad, tr, tc);
+    else if (H == 64 && W == 64) launch_backward<64, 64>(x, g, k, l, gx, gk, gl, pad, tr, tc);
+    else TORCH_CHECK(false, "no backward instantiation for ", H, "x", W);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return {gx, gk, gl.sum(0)};
 }
