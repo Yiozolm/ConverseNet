@@ -207,3 +207,37 @@ Reading:
   the parked Y spectrum and the grad_k read-modify-write get written back to DRAM.
 - Small s3 shapes fit in L2 for both paths, so the fused gain there (1.3x) comes from fewer
   kernels and passes, not from DRAM.
+
+## A100-SXM4-40GB (`artifacts/v4_flash_fft/flash-NVIDIA_A100-SXM4-40GB-20261006T143334`)
+
+Colab, torch 2.11+cu130, opt-in shared memory 166912 B: every case ran fused, including the
+128x128 s2 and 144x144 s3 planes. Peaks: 19.5 TFLOP/s FP32, 1555 GB/s DRAM (copy 1373 GB/s).
+
+| Case | Production fwd+VJP | Fused | DRAM MB/call prod -> fused | Prod DRAM BW | Saved MiB prod -> fused | Peak MiB |
+|---|---|---|---|---|---|---|
+| s1 B4 C128 100 | 1.11 ms | 1.22 ms (0.91x) | 1212 -> 295 | 71% | 55.6 -> 10.2 | 230 -> 70 |
+| circular s1 B4 C128 96 pad 2 | 1.17 ms | 1.20 ms (0.97x) | - | - | 55.6 -> 9.8 | 230 -> 66 |
+| s2 B4 C64 64 (128x128) | 1.05 ms | 0.98 ms (1.07x) | 1035 -> 464 | 63% | 57.0 -> 8.0 | 268 -> 63 |
+| s3 B2 C32 48 (144x144) | 0.83 ms | 0.89 ms (0.93x) | 196 -> 105 | 15% | 17.8 -> 5.1 | 91 -> 26 |
+| circular s1 B4 C64 96 pad 2 | 0.68 ms | 0.78 ms (0.87x) | 474 -> 60 | 46% | 27.8 -> 4.9 | 115 -> 33 |
+
+Reading:
+- Memory gains are architecture-independent: 3.4-7.7x less saved for backward, 3.3-4.3x
+  lower peak, 1.2-8x fewer DRAM bytes (4.1x at s1 C128).
+- Speed does not carry over. A100 DRAM is 3.5x faster than the 5060 Ti's, so production is
+  less DRAM-bound (71% of peak at s1 C128, 46-63% elsewhere). The fused kernels are on-chip
+  bound (4-12% of FP32 peak), so moving fewer bytes no longer pays.
+- The fused backward wastes most of the A100: one launch per batch index with C blocks
+  each. C=128 on 108 SMs takes 2 waves with the second 19% full; C=64 leaves 44 SMs idle.
+  At s1 C128 the fused forward wins (0.33 vs 0.40 ms) and the backward loses (0.89 vs 0.71 ms).
+- Small cases (s3 24/32, s2 32, and s1 C64 production at 0.67 ms) sit on a host-side
+  launch floor of about 0.7 ms fwd+VJP on Colab. Their ratios compare launch counts, not
+  GPU work.
+- Accuracy: output, grad_x and grad_x0 again 0.67-0.94x production's rel-L2. The seed sweep
+  failed 11 of 32 runs, on grad_bias (up to 4.17x) and grad_weight (up to 2.06x). Median
+  errors are equal or lower than production's (geometric-mean ratios 0.73-0.98, except s3
+  48 grad_bias 1.26 and s3 24 grad_bias 1.13); all are about 3e-7, a few ulps.
+
+Next, for the A100: one B*C-block backward launch with per-batch grad_k partials reduced in
+fixed batch order (waves 8 -> 5 at s1 C128); larger radix codelets (100 = 10x10,
+144 = 12x12) to cut shared-memory passes and barriers; 2 blocks per SM for 80 KB planes.
