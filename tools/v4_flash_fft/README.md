@@ -453,10 +453,64 @@ Reading:
   kernels are activations, which production never caches either, so there the fair comparison
   needs production's preparation on the clock too (not measured).
 - The fused forward does the full-spectrum transforms; inference needs half. A half-spectrum
-  fused forward (R2C rows, C2C columns on H x (W/2+1), C2R rows) would keep a 100x100 plane in
-  41 KB (two blocks per SM), fit the s2 128x128 and s3 144x144 inference planes in 67 and 84
-  KB under the 99 KB limit, and halve the column passes. Not built.
+  fused forward (R2C rows, C2C columns on H x (W/2+1), C2R rows) keeps a 100x100 plane in
+  41 KB (two blocks per SM), fits the s2 128x128 and s3 144x144 inference planes in 67 and 84
+  KB under the 99 KB limit, and halves the column passes: see the next section.
 
 Still not covered: s2/s3 with padding (ConverseMSRResNet's k2 s2 pad 2 upsamplers; their
 inference already has the FFT-free `_nearest_k2_s2` path), independent prior at s1, sizes
 that are not compiled or not 2/3/5-smooth, and the operator integration items listed above.
+
+## Half-spectrum fused inference forward (`half_study.py`)
+
+`static_s1_half_forward` and `static_s_half_forward` (S = 2, 3) keep an H x (W/2 + 1) plane in
+shared memory for the whole no_grad chain, with the kernel batch and s1 padding modes of the
+training kernels:
+- Rows transform as real data through a complex FFT of half length on the packed samples
+  z[n] = x[2n] + i x[2n+1], then the split X[k] = E + W^k O, X[M-k] = conj(E - W^k O) with
+  E = (Z[k] + conj Z[M-k]) / 2 and O = (Z[k] - conj Z[M-k]) / 2i; W^k comes from the existing
+  host table for length W. The inverse undoes the split (its factor 2 folds into the 1/N) before
+  the inverse half-length FFT; x[2n] and x[2n+1] are the real and imaginary outputs.
+- Columns are the existing C2C Stockham passes over the W/2 + 1 lines.
+- The solve follows production's inference kernels in c10::complex: `correction_scale_one` at
+  s1; `alias_correction` with the inline power sum and `apply_correction` at s2/s3, reading
+  mirrored frequencies as conj F[-h, -w] from the stored half planes (`read_frequency`).
+- Capacity: 100x100 takes 40.8 KB. With `__launch_bounds__(512, 2)` the s1 kernels use 62-64
+  registers with no spills at 64/96/100, and `cudaOccupancyMaxActiveBlocksPerMultiprocessor`
+  reports 2 blocks per SM. The s2 128x128 plane (66.5 KB, 128 registers, 32 B spill) and the s3
+  144x144 plane (84 KB, 128 registers, no spill) fit the 99 KB limit, so the inference planes
+  that the training kernels cannot hold here run fused (`half_supported`).
+- `debug_rfft2` against `torch.fft.rfft2` with an FP64 reference: 0.68-0.89x cuFFT's rel-L2 at
+  all nine sizes from 24 to 144.
+
+RTX 5060 Ti, idle GPU (`half_rtx5060ti_002`), forward under no_grad with k and l given to every
+candidate, as production's cache provides them for parameter kernels. Production is the
+half-spectrum inference path (rfft2, correction kernel, irfft2); its medians agree with
+`ops_rtx5060ti_003_inference` within 5%. "Full" is the training-plane fused forward.
+
+| Case | Half plane | Production fwd | Half | Full | Half rel-L2 ratio |
+|---|---|---|---|---|---|
+| p-block s1 B4 C128 96 pad 2 | 40 KB | 721 us | 201 us (**3.59x**) | 509 us (1.42x) | 1.00 |
+| p-block s1 B4 C64 96 pad 2 | 40 KB | 258 us | 99 us (2.60x) | 203 us (1.27x) | 1.01 |
+| data term s1 B4 C64 96, k7, KB 4 | 37 KB | 265 us | 81 us (3.26x) | 294 us (0.90x) | 1.00 |
+| replicate s1 B4 C64 92 pad 4, k5 | 40 KB | 245 us | 97 us (2.53x) | 191 us (1.28x) | 1.00 |
+| s1 B4 C64 64 | 17 KB | 133 us | 39 us (3.37x) | 54 us (2.45x) | 1.00 |
+| data term s3 B4 C64 32 -> 96, KB 4 | 37 KB | 312 us | 142 us (2.20x) | 239 us (1.30x) | 0.83 |
+| data term s2 B4 C64 48 -> 96, KB 4 | 37 KB | 343 us | 152 us (2.26x) | 270 us (1.27x) | 0.85 |
+| s2 B4 C64 64 -> 128, KB 4 | 65 KB | 590 us | 318 us (1.85x) | not eligible (128 KB) | 0.78 |
+| s3 B2 C32 48 -> 144, KB 2 | 82 KB | 200 us | 68 us (2.93x) | not eligible (162 KB) | 0.85 |
+
+Reading:
+- Every output passes its budget. At s1 the half kernel's error is 1.00x production's (the
+  shared FP32 kernel spectrum dominates both), at s2/s3 0.78-0.85x. Repeated calls are bitwise
+  identical.
+- 2.2-3.6x against production's inference forward on equal terms, where the full-spectrum
+  fused forward gave 0.9-1.4x: the half plane halves the column FFTs and the solve, and two
+  blocks per SM let one block's global loads overlap the other's FFT stages. The USRNet
+  inference call (p-block s1 C128 100x100, 35 per forward) goes from 721 to 201 us.
+- `half_rtx5060ti_001` ran while another process held the GPU at 98%: its production medians
+  were 1.4-10x inflated and are superseded by `_002`; the accuracy results are identical.
+
+Not covered: the kernel preparation (rfft2 of the PSF) stays an ATen call, which production
+caches for parameter kernels and both sides would pay for data-term kernels; model-level
+inference, CUDA-graph capture, the A100.

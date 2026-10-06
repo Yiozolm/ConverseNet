@@ -850,6 +850,256 @@ bool compiled(int side, int scale) {
     return false;
 }
 
+
+// ---- Half-spectrum inference forward ---------------------------------------
+// Inference keeps H x (W/2 + 1) spectra. Rows transform as real data through a
+// complex FFT of half length on the packed samples z[n] = x[2n] + i x[2n+1],
+// then the split X[k] = E[k] + W^k O[k], X[M-k] = conj(E[k] - W^k O[k]) with
+// E = (Z[k] + conj Z[M-k]) / 2, O = (Z[k] - conj Z[M-k]) / 2i and W = exp(-2 pi
+// i / W). The inverse undoes the split (its factor 2 folds into the final 1/N)
+// before the inverse half-length FFT. The half plane never leaves shared
+// memory: a 100x100 s1 plane takes 41 KB (two blocks per SM) and the s2
+// 128x128 / s3 144x144 planes fit 99 KB. Pointwise arithmetic follows
+// production's inference kernels (correction_scale_one, alias_correction and
+// apply_correction) in c10::complex.
+template <int H, int W>
+__device__ __forceinline__ void r2c_rows(float2* s, const float2* __restrict__ tw_half,
+                                         const float2* __restrict__ tw_full, int tid) {
+    constexpr int M = W / 2, Wh = M + 1, pairs = M / 2 + 1;
+    static_fft<M, 0, 1, false, false, H, Wh, 1>(s, tw_half, tid);
+    for (int i = tid; i < H * pairs; i += kThreads) {
+        const int line = i / pairs, k = i % pairs;
+        float2* row = s + line * Wh;
+        const float2 a = row[k], zb = row[k == 0 ? 0 : M - k];
+        const float2 b = make_float2(zb.x, -zb.y);
+        const float2 e = make_float2(0.5f * (a.x + b.x), 0.5f * (a.y + b.y));
+        const float2 d = make_float2(a.x - b.x, a.y - b.y);
+        const float2 o = make_float2(0.5f * d.y, -0.5f * d.x);  // d / 2i
+        const float2 wo = cmul(__ldg(tw_full + k), o);
+        row[k] = make_float2(e.x + wo.x, e.y + wo.y);
+        row[M - k] = make_float2(e.x - wo.x, -(e.y - wo.y));
+    }
+    __syncthreads();
+}
+
+template <int H, int W>
+__device__ __forceinline__ void c2r_rows(float2* s, const float2* __restrict__ tw_half,
+                                         const float2* __restrict__ tw_full, int tid) {
+    constexpr int M = W / 2, Wh = M + 1, pairs = M / 2 + 1;
+    for (int i = tid; i < H * pairs; i += kThreads) {
+        const int line = i / pairs, k = i % pairs;
+        float2* row = s + line * Wh;
+        const float2 a = row[k], xb = row[M - k];  // k = 0 pairs with the Nyquist slot M
+        const float2 b = make_float2(xb.x, -xb.y);
+        const float2 e2 = make_float2(a.x + b.x, a.y + b.y);  // 2 E
+        const float2 d = make_float2(a.x - b.x, a.y - b.y);   // 2 W^k O
+        const float2 w = __ldg(tw_full + k);
+        const float2 o2 = cmul(d, make_float2(w.x, -w.y));    // 2 O
+        row[k] = make_float2(e2.x - o2.y, e2.y + o2.x);       // 2 (E + i O)
+        if (k) row[M - k] = make_float2(e2.x + o2.y, -e2.y + o2.x);  // 2 (conj E + i conj O)
+    }
+    __syncthreads();
+    static_fft<M, 0, 1, true, false, H, Wh, 1>(s, tw_half, tid);
+}
+
+// Load real rows packed in pairs, (x[r][2n], x[r][2n + 1]) at s[r * Wh + n].
+template <int H, int W>
+__device__ __forceinline__ void load_packed(float2* s, const float* __restrict__ x, int h0, int w0, int pad, int mode,
+                                            int tid) {
+    constexpr int M = W / 2, Wh = M + 1;
+    for (int i = tid; i < H * M; i += kThreads) {
+        const int r = i / M, n = i % M;
+        const int sr = pad_source(mode, r, pad, h0);
+        const int s0 = pad_source(mode, 2 * n, pad, w0), s1 = pad_source(mode, 2 * n + 1, pad, w0);
+        const float v0 = (sr < 0 || s0 < 0) ? 0.f : x[sr * w0 + s0];
+        const float v1 = (sr < 0 || s1 < 0) ? 0.f : x[sr * w0 + s1];
+        s[r * Wh + n] = make_float2(v0, v1);
+    }
+    __syncthreads();
+}
+
+// out[r][q] = (q even ? re : im) of the packed inverse row, scaled by 1/N.
+template <int H, int W>
+__device__ __forceinline__ void store_packed(const float2* s, float* __restrict__ out, int h0, int w0, int pad,
+                                             float scale, int tid) {
+    constexpr int Wh = W / 2 + 1;
+    for (int i = tid; i < h0 * w0; i += kThreads) {
+        const int r = i / w0, q = i % w0, Q = q + pad;
+        const float2 z = s[(r + pad) * Wh + Q / 2];
+        out[i] = (Q & 1 ? z.y : z.x) * scale;
+    }
+}
+
+// F[-h, -w] = conj F[h, w]: read any frequency of a stored half plane.
+__device__ __forceinline__ float2 read_half(const float2* plane, int h, int w, int height, int width) {
+    const int stored = width / 2 + 1;
+    if (w > width / 2) {
+        h = (height - h) % height;
+        const float2 v = plane[h * stored + width - w];
+        return make_float2(v.x, -v.y);
+    }
+    return plane[h * stored + w];
+}
+
+using Zf = c10::complex<float>;
+__device__ __forceinline__ Zf zf(float2 a) { return Zf(a.x, a.y); }
+__device__ __forceinline__ float2 f2(Zf a) { return make_float2(a.real(), a.imag()); }
+__device__ __forceinline__ float squared_norm_rn(float2 k) {
+    return __fadd_rn(__fmul_rn(k.x, k.x), __fmul_rn(k.y, k.y));
+}
+
+// correction_scale_one with the shared prior: fy + conj(k) * ((fy - k fy) / (|k|^2 + l)).
+__device__ __forceinline__ float2 inference_solve(float2 y, float2 k, float l) {
+    const Zf fy = zf(y), filter = zf(k);
+    return f2(fy + Zf(filter.real(), -filter.imag()) * ((fy - filter * fy) / (squared_norm_rn(k) + l)));
+}
+
+template <int H, int W>
+__global__ void __launch_bounds__(kThreads, 2) static_s1_half_forward(
+    const float* __restrict__ x, const float2* __restrict__ k, const float* __restrict__ l, float* __restrict__ out,
+    int C, int h0, int w0, int pad, int KB, int mode, const float2* __restrict__ tw_half,
+    const float2* __restrict__ tw_rows, const float2* __restrict__ tw_cols) {
+    extern __shared__ float2 s[];
+    constexpr int Wh = W / 2 + 1, N = H * Wh;
+    const int c = blockIdx.x % C, b = blockIdx.x / C, tid = threadIdx.x;
+    const size_t plane = size_t(h0) * w0;
+    load_packed<H, W>(s, x + (size_t(b) * C + c) * plane, h0, w0, pad, mode, tid);
+    r2c_rows<H, W>(s, tw_half, tw_rows, tid);
+    static_fft<H, 0, 1, false, true, Wh, 1, Wh>(s, tw_cols, tid);
+    const float2* kp = k + kernel_plane(KB, C, b, c) * N;
+    const float lc = l[c];
+    for (int i = tid; i < N; i += kThreads) s[i] = inference_solve(s[i], __ldg(kp + i), lc);
+    __syncthreads();
+    static_fft<H, 0, 1, true, true, Wh, 1, Wh>(s, tw_cols, tid);
+    c2r_rows<H, W>(s, tw_half, tw_rows, tid);
+    store_packed<H, W>(s, out + (size_t(b) * C + c) * plane, h0, w0, pad, float(1.0 / double(H * W)), tid);
+}
+
+struct HalfTwiddles {
+    const float2 *low_half, *low_rows, *low_cols, *high_half, *high_rows, *high_cols;
+};
+
+// alias_correction (inline power) on the low-res half plane, then
+// apply_correction on the high-res half plane. Y is parked in L2 scratch and
+// overwritten by q; __syncthreads makes the block's global writes visible.
+template <int H, int W, int S>
+__global__ void __launch_bounds__(kThreads, 1) static_s_half_forward(
+    const float* __restrict__ x, const float* __restrict__ x0, const float2* __restrict__ k,
+    const float* __restrict__ l, float* __restrict__ out, float2* __restrict__ scratch, int C, int KB,
+    HalfTwiddles tw) {
+    extern __shared__ float2 s[];
+    constexpr int SH = S * H, SW = S * W, Wh = W / 2 + 1, SWh = SW / 2 + 1, n = H * Wh, N = SH * SWh;
+    const int bc = blockIdx.x, c = bc % C, tid = threadIdx.x;
+    load_packed<H, W>(s, x + size_t(bc) * (H * W), H, W, 0, kCircular, tid);
+    r2c_rows<H, W>(s, tw.low_half, tw.low_rows, tid);
+    static_fft<H, 0, 1, false, true, Wh, 1, Wh>(s, tw.low_cols, tid);
+    float2* yp = scratch + size_t(bc) * n;
+    for (int i = tid; i < n; i += kThreads) yp[i] = s[i];
+    __syncthreads();
+    load_packed<SH, SW>(s, x0 + size_t(bc) * (SH * SW), SH, SW, 0, kCircular, tid);
+    r2c_rows<SH, SW>(s, tw.high_half, tw.high_rows, tid);
+    static_fft<SH, 0, 1, false, true, SWh, 1, SWh>(s, tw.high_cols, tid);
+    const float2* kp = k + kernel_plane(KB, C, bc / C, c) * N;
+    const float lc = l[c];
+    const float aliases = float(S) * float(S);
+    for (int i = tid; i < n; i += kThreads) {
+        const int h = i / Wh, w = i % Wh;
+        Zf sum(0.f, 0.f);
+        float power_sum = 0.f;
+#pragma unroll
+        for (int a = 0; a < S; ++a)
+#pragma unroll
+            for (int d = 0; d < S; ++d) {
+                const float2 filter = read_half(kp, h + a * H, w + d * W, SH, SW);
+                sum += zf(filter) * zf(read_half(s, h + a * H, w + d * W, SH, SW));
+                power_sum += squared_norm_rn(filter);
+            }
+        const float power = power_sum / aliases;
+        yp[i] = f2((zf(yp[i]) - sum / aliases) / (power + lc));
+    }
+    __syncthreads();
+    for (int i = tid; i < N; i += kThreads) {
+        const int h = i / SWh, w = i % SWh;
+        const float2 kk = __ldg(kp + i);
+        s[i] = f2(zf(s[i]) + Zf(kk.x, -kk.y) * zf(read_half(yp, h % H, w % W, H, W)));
+    }
+    __syncthreads();
+    static_fft<SH, 0, 1, true, true, SWh, 1, SWh>(s, tw.high_cols, tid);
+    c2r_rows<SH, SW>(s, tw.high_half, tw.high_rows, tid);
+    store_packed<SH, SW>(s, out + size_t(bc) * (SH * SW), SH, SW, 0, float(1.0 / double(SH * SW)), tid);
+}
+
+// Diagnostic: rfft2 of square real planes as the half kernels compute it.
+template <int H, int W>
+__global__ void __launch_bounds__(kThreads, 1) debug_rfft2(const float* __restrict__ x, float2* __restrict__ out,
+                                                           const float2* __restrict__ tw_half,
+                                                           const float2* __restrict__ tw_rows,
+                                                           const float2* __restrict__ tw_cols) {
+    extern __shared__ float2 s[];
+    constexpr int Wh = W / 2 + 1, N = H * Wh;
+    load_packed<H, W>(s, x + size_t(blockIdx.x) * (H * W), H, W, 0, kCircular, threadIdx.x);
+    r2c_rows<H, W>(s, tw_half, tw_rows, threadIdx.x);
+    static_fft<H, 0, 1, false, true, Wh, 1, Wh>(s, tw_cols, threadIdx.x);
+    for (int i = threadIdx.x; i < N; i += kThreads) out[size_t(blockIdx.x) * N + i] = s[i];
+}
+
+HalfTwiddles half_twiddles(int h, int w, int sh, int sw, int device) {
+    return {axis_for(w / 2, device).twiddle, axis_for(w, device).twiddle, axis_for(h, device).twiddle,
+            axis_for(sw / 2, device).twiddle, axis_for(sw, device).twiddle, axis_for(sh, device).twiddle};
+}
+
+template <int H, int W>
+void launch_half_s1(const at::Tensor& x, const at::Tensor& k, const at::Tensor& l, at::Tensor& out, int pad, int mode) {
+    auto kernel = static_s1_half_forward<H, W>;
+    constexpr int bytes = H * (W / 2 + 1) * sizeof(float2);
+    TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes) == cudaSuccess);
+    const int device = x.get_device();
+    kernel<<<x.size(0) * x.size(1), kThreads, bytes, at::cuda::getCurrentCUDAStream()>>>(
+        x.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()), l.data_ptr<float>(), out.data_ptr<float>(),
+        x.size(1), x.size(2), x.size(3), pad, int(k.size(0)), mode, axis_for(W / 2, device).twiddle,
+        axis_for(W, device).twiddle, axis_for(H, device).twiddle);
+}
+
+template <int H, int W, int S>
+void launch_half_scaled(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& k, const at::Tensor& l,
+                        at::Tensor& out) {
+    auto kernel = static_s_half_forward<H, W, S>;
+    constexpr int bytes = S * H * (S * W / 2 + 1) * sizeof(float2);
+    TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes) == cudaSuccess);
+    auto scratch = at::empty({x.size(0), x.size(1), H, W / 2 + 1}, k.options());
+    kernel<<<x.size(0) * x.size(1), kThreads, bytes, at::cuda::getCurrentCUDAStream()>>>(
+        x.data_ptr<float>(), x0.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()), l.data_ptr<float>(),
+        out.data_ptr<float>(), reinterpret_cast<float2*>(scratch.data_ptr()), x.size(1), int(k.size(0)),
+        half_twiddles(H, W, S * H, S * W, x.get_device()));
+}
+
+template <int H, int W>
+void launch_debug_rfft2(const at::Tensor& x, at::Tensor& out) {
+    auto kernel = debug_rfft2<H, W>;
+    constexpr int bytes = H * (W / 2 + 1) * sizeof(float2);
+    TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes) == cudaSuccess);
+    const int device = x.get_device();
+    kernel<<<x.numel() / (H * W), kThreads, bytes, at::cuda::getCurrentCUDAStream()>>>(
+        x.data_ptr<float>(), reinterpret_cast<float2*>(out.data_ptr()), axis_for(W / 2, device).twiddle,
+        axis_for(W, device).twiddle, axis_for(H, device).twiddle);
+}
+
+// Occupancy of the s1 half kernel (blocks per SM), for the study's record.
+template <int H, int W>
+int half_s1_occupancy(int device) {
+    auto kernel = static_s1_half_forward<H, W>;
+    constexpr int bytes = H * (W / 2 + 1) * sizeof(float2);
+    TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes) == cudaSuccess);
+    int blocks = 0;
+    TORCH_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, kernel, kThreads, bytes) == cudaSuccess);
+    return blocks;
+}
+
+bool half_fits(int side, int scale, int device) {
+    const int64_t plane = int64_t(scale * side) * (scale * side / 2 + 1) * 8;
+    return plane <= smem_capacity(device);
+}
+
 struct Table {
     Axis axis;
     at::Tensor storage;
@@ -1025,3 +1275,82 @@ at::Tensor flash_debug_fft2(const at::Tensor& x) {
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return out;
 }
+
+// ---- Half-spectrum inference entries ----------------------------------------
+// Supported when the shape is compiled and the half plane fits shared memory.
+bool flash_half_supported(int64_t h0, int64_t w0, int64_t scale, int64_t pad, int64_t device) {
+    if (h0 != w0 || scale < 1 || scale > 3 || (scale > 1 && pad)) return false;
+    const int side = scale == 1 ? int(h0 + 2 * pad) : int(h0);
+    if (side % 2 || !compiled(side, int(scale))) return false;
+    return half_fits(side, int(scale), int(device));
+}
+
+// x: (B, C, h0, w0); k: (1|B, C, H, W/2 + 1) half spectrum of the padded size (rfft2 of the PSF); l: (C,).
+at::Tensor flash_half_forward(const at::Tensor& x, const at::Tensor& k, const at::Tensor& l, int64_t pad, int64_t mode) {
+    TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kFloat && x.dim() == 4 && x.is_contiguous());
+    check_kernel_batch(x, k);
+    TORCH_CHECK(l.scalar_type() == at::kFloat && l.is_contiguous() && l.numel() == x.size(1));
+    const int h0 = x.size(2), w0 = x.size(3), H = h0 + 2 * pad, W = w0 + 2 * pad;
+    TORCH_CHECK(k.size(2) == H && k.size(3) == W / 2 + 1, "kernel half spectrum must be (1|B, C, H, W/2 + 1)");
+    check_pad_mode(mode, pad, h0, w0);
+    TORCH_CHECK(flash_half_supported(h0, w0, 1, pad, x.get_device()), "shape not supported on this device");
+    c10::cuda::CUDAGuard guard(x.device());
+    auto out = at::empty_like(x);
+    const int m = int(mode);
+#define FLASH_HALF1(n) if (H == n) launch_half_s1<n, n>(x, k, l, out, int(pad), m);
+    FLASH_S1_SIZES(FLASH_HALF1)
+#undef FLASH_HALF1
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return out;
+}
+
+// x: (B, C, H, W); x0: (B, C, S*H, S*W); k: (1|B, C, S*H, S*W/2 + 1); l: (C,).
+at::Tensor flash_half_scaled_forward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& k,
+                                     const at::Tensor& l, int64_t scale) {
+    TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kFloat && x.dim() == 4 && x.is_contiguous());
+    TORCH_CHECK(x0.scalar_type() == at::kFloat && x0.is_contiguous() && x0.size(0) == x.size(0) &&
+                x0.size(1) == x.size(1) && x0.size(2) == scale * x.size(2) && x0.size(3) == scale * x.size(3));
+    check_kernel_batch(x, k);
+    TORCH_CHECK(k.size(2) == x0.size(2) && k.size(3) == x0.size(3) / 2 + 1, "kernel half spectrum shape");
+    TORCH_CHECK(l.scalar_type() == at::kFloat && l.is_contiguous() && l.numel() == x.size(1));
+    TORCH_CHECK(flash_half_supported(x.size(2), x.size(3), scale, 0, x.get_device()), "shape not supported on this device");
+    c10::cuda::CUDAGuard guard(x.device());
+    auto out = at::empty_like(x0);
+    const int side = x.size(2);
+#define FLASH_HALF2(n) if (scale == 2 && side == n) launch_half_scaled<n, n, 2>(x, x0, k, l, out);
+#define FLASH_HALF3(n) if (scale == 3 && side == n) launch_half_scaled<n, n, 3>(x, x0, k, l, out);
+    FLASH_S2_SIZES(FLASH_HALF2)
+    FLASH_S3_SIZES(FLASH_HALF3)
+#undef FLASH_HALF2
+#undef FLASH_HALF3
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return out;
+}
+
+int64_t flash_half_occupancy(int64_t side, int64_t device) {
+    c10::cuda::CUDAGuard guard(at::Device(at::kCUDA, int(device)));
+#define FLASH_OCC(n) if (side == n) return half_s1_occupancy<n, n>(int(device));
+    FLASH_S1_SIZES(FLASH_OCC)
+#undef FLASH_OCC
+    return 0;
+}
+
+// Diagnostic entry: half-kernel rfft2 of square real planes (..., n, n) -> (..., n, n/2 + 1).
+at::Tensor flash_debug_rfft2(const at::Tensor& x) {
+    TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kFloat && x.is_contiguous() && x.dim() >= 2 &&
+                x.size(-1) == x.size(-2) && x.size(-1) % 2 == 0);
+    const int n = x.size(-1);
+    TORCH_CHECK(int64_t(n) * (n / 2 + 1) * 8 <= smem_capacity(x.get_device()), "plane does not fit");
+    c10::cuda::CUDAGuard guard(x.device());
+    auto sizes = x.sizes().vec();
+    sizes.back() = n / 2 + 1;
+    auto out = at::empty(sizes, x.options().dtype(at::kComplexFloat));
+    bool done = false;
+#define FLASH_DEBUG(m) if (n == m) { launch_debug_rfft2<m, m>(x, out); done = true; }
+    FLASH_DEBUG_SIZES(FLASH_DEBUG)
+#undef FLASH_DEBUG
+    TORCH_CHECK(done, "no debug instantiation for ", n);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return out;
+}
+
