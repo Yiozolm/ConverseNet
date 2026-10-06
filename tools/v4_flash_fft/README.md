@@ -165,3 +165,45 @@ Push `claude/v4-dev`, open `tools/v4_flash_fft/a100_colab.ipynb` in Colab with a
 runtime, run all cells and send back the zip. It runs `flash_study.py` (all cases, now
 including the 128x128 and 144x144 planes) and `seed_sweep.py` on the production and small
 s2/s3 shapes.
+
+## Memory and FLOP efficiency (`efficiency.py`)
+
+FlashAttention-style accounting against hardware peaks
+(`artifacts/v4_flash_fft/efficiency_rtx5060ti_003/efficiency.md`). Peaks are derived from device
+properties: FP32 = 36 SMs x 128 lanes x 2 x 2.63 GHz = 24.3 TFLOP/s and DRAM =
+2 x 14 GHz x 128 bit = 448 GB/s; a 1 GiB device copy measures 390 GB/s.
+
+- Memory comes from the allocator: `saved` is what autograd keeps after the forward, `peak`
+  is over forward + VJP.
+- DRAM bytes and executed FP32 FLOPs (fadd + fmul + 2 ffma) are Nsight Compute counters over
+  one call.
+- Rates divide counters by the uninstrumented CUDA-event time. SASS instruction counting
+  instruments the kernels, and ncu's own kernel durations come out 10-40x too long.
+- Model FFT FLOPs (5 N log2 N for the standard algorithm's transforms) are the same for both
+  paths, so the fused recomputation is not credited.
+
+| Case | Path | fwd+VJP | Saved | Peak | DRAM / call | DRAM BW | Measured FP32 | Model FFT |
+|---|---|---|---|---|---|---|---|---|
+| s1 B4 C128 100 | production | 3.09 ms | 55.6 MiB | 230 MiB | 1172 MB | 380 GB/s (85%) | 3.7% | 2.0% |
+| s1 B4 C128 100 | fused | 1.69 ms | 10.2 MiB | 70 MiB | 292 MB | 173 GB/s (39%) | 6.7% | 3.7% |
+| circular s1 B4 C64 96 pad 2 | production | 1.16 ms | 27.8 MiB | 115 MiB | 442 MB | 380 GB/s (85%) | 4.9% | 2.7% |
+| circular s1 B4 C64 96 pad 2 | fused | 0.82 ms | 4.9 MiB | 33 MiB | 41 MB | 51 GB/s (11%) | 6.9% | 3.9% |
+| s2 B4 C64 48 (96x96) | production | 1.40 ms | 32.1 MiB | 151 MiB | 493 MB | 352 GB/s (79%) | 2.9% | 2.3% |
+| s2 B4 C64 48 (96x96) | fused | 0.82 ms | 4.5 MiB | 36 MiB | 98 MB | 119 GB/s (27%) | 5.3% | 3.8% |
+| s3 B2 C32 32 (96x96) | production | 0.62 ms | 8.4 MiB | 41 MiB | 49 MB | 79 GB/s (18%) | 1.7% | 1.3% |
+| s3 B2 C32 32 (96x96) | fused | 0.47 ms | 2.3 MiB | 12 MiB | 18 MB | 38 GB/s (9%) | 2.3% | 1.8% |
+
+Reading:
+- Production is bandwidth-bound wherever its spectra exceed L2: 79-86% of peak DRAM
+  bandwidth, 97% of the measured copy rate. Its FP32 use is 2-5% of peak, so it cannot go
+  faster without moving fewer bytes.
+- Fused moves 2.7-11x fewer DRAM bytes per call (1172 -> 292 MB at s1 C128) and keeps
+  3.4-7.7x less memory for backward (all ten cases). Peak memory is 3.3-4.2x lower.
+- Fused is neither DRAM-bound (9-39% of peak) nor FLOP-bound (2-7% of FP32 peak). Its limit is
+  on-chip: one 80 KB block per SM, a barrier per Stockham stage, shared-memory bank
+  conflicts, and global loads that do not overlap compute.
+- Of the fused s1 C128 traffic, the forward kernel moves 41 MB, the ideal x read plus output
+  write. The four backward launches move 212 MB against about 72 MB of necessary traffic:
+  the parked Y spectrum and the grad_k read-modify-write get written back to DRAM.
+- Small s3 shapes fit in L2 for both paths, so the fused gain there (1.3x) comes from fewer
+  kernels and passes, not from DRAM.
