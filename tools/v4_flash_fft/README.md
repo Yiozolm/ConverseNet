@@ -376,3 +376,87 @@ the compensated kernels:
   smaller. The fused spectrum part is again 0.70-0.90x cuFFT's; the transposed-cuFFT control
   is 0.95-1.03x.
 - Each channel's grad_l sum cancels only 6-10x in s1, against 17-71x in s2/s3.
+
+## More operations: kernel batches, padding modes, inference (`ops_study.py`)
+
+The studies above cover one 3x3 kernel per channel with circular (s1) or no (s2/s3) padding
+and, for s2/s3, an independent prior. The models also run:
+- the USRNet data term (`ConvReverseDataNet`): one 7x7 kernel per (b, c) plane (weight batch
+  B), eps 1e-3, no padding, with the nearest-upsampled prior built from x. The recipe
+  (`--scale 3`, patch 96) runs it once at s3 (32 -> 96) and four times at s1 (96x96) per
+  forward, next to 35 p-block calls at circular pad 2;
+- Converse2D's replicate (ConverseMSRResNet: kernel 5, pad 4), reflect and zero padding at s1.
+
+Kernel changes (`fused.cu`), both run-time arguments, so no new instantiations:
+- `KB`: the kernel plane of (b, c) is `c` (KB == 1) or `b*C + c`. In the backward, the
+  per-plane grad_k partial buffer is grad_k itself when KB == B; only grad_l is batch-reduced.
+- `mode` (s1): `pad_source` maps a padded position to its interior index (circular wraps,
+  replicate clamps, reflect mirrors about the edge pixel, zeros reads nothing). The pad
+  adjoint sums the padded gradient plane over `fold_set`: an optional position below, a
+  contiguous range and an optional position above, ascending; for circular that is the
+  earlier dr, dq = -1, 0, +1 order.
+- `compare_commit.py`: all 8 locally eligible `flash_study` cases are bitwise identical to a
+  build of the sources at 17dd026, so the earlier paths' arithmetic is untouched. ptxas: no
+  spills in any s1 kernel before or after; the s2 48 backward gained 36 B and the s2 64
+  forward 16 B (64 -> 80 B); the s3 48 forward's 72 B is unchanged.
+
+RTX 5060 Ti, training fwd+VJP (`ops_rtx5060ti_001`). Absolute times in this run are about
+1.3x those of `flash_rtx5060ti_005` on both sides (desktop GPU load); ratios are comparable.
+
+| Case | Production | Fused | rel-L2 ratio: output / grad_x / grad_weight / grad_bias | Budgets |
+|---|---|---|---|---|
+| data term s1 B4 C64 96, k7, KB 4 | 1620 us | 1398 us (1.16x) | 1.00 / 1.00 / 1.00 / 0.99 | pass |
+| data term s3 B4 C64 32 -> 96, k7, KB 4, nearest | 2058 us | 1367 us (**1.50x**) | 0.80 / 0.82 / 0.86 / 0.72 | pass |
+| data term s2 B4 C64 48 -> 96, k7, KB 4, nearest | 1752 us | 1480 us (1.18x) | 0.83 / 0.84 / 0.91 / **1.38** | FAIL (grad_bias) |
+| replicate s1 B4 C64 92 pad 4, k5 | 1667 us | 1130 us (1.47x) | 1.00 / 1.00 / 1.00 / 1.00 | pass |
+| reflect s1 B4 C64 96 pad 2 | 1731 us | 1122 us (1.54x) | 1.00 / 1.00 / 1.00 / 1.00 | pass |
+| zeros s1 B4 C64 96 pad 2 | 1654 us | 1131 us (1.46x) | 1.00 / 1.00 / 1.00 / 1.00 | pass |
+| circular s1 B4 C64 96 pad 2 (control) | 1503 us | 1140 us (1.32x) | 1.00 / 1.00 / 1.00 / 0.99 | pass |
+| circular s1 B4 C128 96 pad 2 (control) | 4136 us | 2130 us (1.94x) | 1.00 / 1.00 / 1.00 / 1.00 | pass |
+
+Seeded gate, 8 seeds (`ops_rtx5060ti_002_seeds`): all 32 case/output pairs pass. Single-run
+failures: s2 data-term grad_bias 3/8 (geomean 1.14), s3 data-term grad_bias 1/8 (geomean 0.99,
+one seed at 2.71); every other output 0/8 at geomeans 0.80-1.00. The s2/s3 grad_bias max-abs
+geomeans of 0.01-0.04 are relative to the policy floor: both paths' worst element errors are
+1e-8 to 4e-8, under the 1e-6 floor, not a production defect.
+
+Reading:
+- The padding modes are free: the same kernel with another index map. They gain more than
+  circular (1.46-1.54x against 1.32x) because production serves them with F.pad + forward +
+  crop: a separate pad kernel, no training-callback fusion, and ATen's replicate-pad backward
+  accumulates with atomics. The fused fold is deterministic.
+- The s1 data term gains only 1.16x: production's KB == B adjoint already writes grad_k per
+  plane, the kernel FFT preparation (B*C planes, 4x the KB == 1 work) is the same on both
+  sides, and the fused kernels are on-chip bound at C64.
+- The s3 data term, the recipe's first call, gains 1.50x with 0.72-0.86x of production's
+  error. The s2 data term's grad_bias shows the known reduction noise and passes the seeded
+  gate at 1.14.
+
+Inference (`ops_rtx5060ti_003_inference`, `--inference`): the fused full-spectrum forward
+under no_grad against production's half-spectrum inference forward (rfft2, correction kernel,
+irfft2; kernel spectrum cached per weight tensor, so production's time excludes the kernel
+preparation):
+
+| Case | Production fwd | Fused, kernel prep included | Fused, k and l given | Output rel-L2 ratio |
+|---|---|---|---|---|
+| data term s1 C64 96, KB 4 | 262 us | 533 us (0.49x) | 283 us (0.93x) | 0.79 |
+| data term s3 32 -> 96, KB 4 | 342 us | 524 us (0.65x) | 223 us (1.54x) | 0.70 |
+| data term s2 48 -> 96, KB 4 | 344 us | 547 us (0.63x) | 256 us (1.34x) | 0.70 |
+| replicate / reflect / zeros / circular s1 C64 96 | 243-249 us | 329-361 us (0.68-0.74x) | 198-205 us (1.21-1.23x) | 0.77-0.85 |
+| circular s1 C128 96 pad 2 | 687 us | 618 us (1.11x) | 470 us (1.46x) | 0.79 |
+
+Reading:
+- Accuracy: the fused forward has 0.70-0.85x of the half-spectrum path's error everywhere.
+- Speed: the per-call kernel preparation (PSF pad/roll, `fft2` of (KB, C, H, W), sigmoid)
+  costs 125-300 us here and erases the gain. With k given, as production's cache provides it
+  for parameter kernels, the full-spectrum fused forward is 1.2-1.5x faster. The data term's
+  kernels are activations, which production never caches either, so there the fair comparison
+  needs production's preparation on the clock too (not measured).
+- The fused forward does the full-spectrum transforms; inference needs half. A half-spectrum
+  fused forward (R2C rows, C2C columns on H x (W/2+1), C2R rows) would keep a 100x100 plane in
+  41 KB (two blocks per SM), fit the s2 128x128 and s3 144x144 inference planes in 67 and 84
+  KB under the 99 KB limit, and halve the column passes. Not built.
+
+Still not covered: s2/s3 with padding (ConverseMSRResNet's k2 s2 pad 2 upsamplers; their
+inference already has the FFT-free `_nearest_k2_s2` path), independent prior at s1, sizes
+that are not compiled or not 2/3/5-smooth, and the operator integration items listed above.

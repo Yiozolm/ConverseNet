@@ -1,5 +1,7 @@
 // Research prototype: SRAM-resident s1 training forward, one block per (b, c) plane.
-//   out = real_crop(ifft2(solve(fft2(circular_pad(x)), k, l)), pad)
+//   out = real_crop(ifft2(solve(fft2(pad(x)), k, l)), pad)
+// pad is circular, replicate, reflect or zeros; k has one plane per channel or
+// one per (b, c) plane (the USRNet data term).
 // The padded complex plane lives in shared memory for the whole chain; global
 // memory sees one read of x, one read of k and one write of the output.
 // FFTs are mixed-radix (2, 3, 4, 5) Stockham passes, in place through registers,
@@ -132,6 +134,58 @@ __device__ void fft_lines(float2* s, int lines, int line_stride, int elem_stride
 
 __device__ __forceinline__ int wrap(int i, int n) { return i < 0 ? i + n : (i >= n ? i - n : i); }
 
+// Padding modes of the s1 plane, as F.pad: circular wraps, replicate clamps to
+// the edge pixel, reflect mirrors about it (pad < n) and zeros reads nothing
+// outside. pad_source maps padded position i to its interior index, -1 for a
+// zero. The pad adjoint sums the padded plane over every position that maps
+// to an interior pixel: fold_set lists them in ascending order as an optional
+// position below, a contiguous range around i + pad and an optional one above
+// (circular keeps the earlier dr = -1, 0, +1 order).
+enum PadMode { kCircular = 0, kReplicate = 1, kReflect = 2, kZeros = 3 };
+__device__ __forceinline__ int pad_source(int mode, int i, int pad, int n) {
+    const int s = i - pad;
+    switch (mode) {
+    case kReplicate: return s < 0 ? 0 : (s >= n ? n - 1 : s);
+    case kReflect: return s < 0 ? -s : (s >= n ? 2 * (n - 1) - s : s);
+    case kZeros: return (s < 0 || s >= n) ? -1 : s;
+    default: return wrap(s, n);
+    }
+}
+struct FoldSet {
+    int below, lo, hi, above;
+    __device__ __forceinline__ int count() const { return (below >= 0) + (hi - lo + 1) + (above >= 0); }
+    __device__ __forceinline__ int at(int t) const {
+        if (below >= 0) {
+            if (t == 0) return below;
+            --t;
+        }
+        return t <= hi - lo ? lo + t : above;
+    }
+};
+__device__ __forceinline__ FoldSet fold_set(int mode, int r, int pad, int n) {
+    const int own = r + pad, N = n + 2 * pad;
+    FoldSet f{-1, own, own, -1};
+    switch (mode) {
+    case kReplicate:
+        if (r == 0) f.lo = 0;
+        if (r == n - 1) f.hi = N - 1;
+        break;
+    case kReflect:
+        if (r >= 1 && r <= pad) f.below = pad - r;
+        if (r >= n - 1 - pad && r <= n - 2) f.above = 2 * (n - 1) + pad - r;
+        break;
+    case kZeros: break;
+    default:
+        if (own - n >= 0) f.below = own - n;
+        if (own + n < N) f.above = own + n;
+    }
+    return f;
+}
+// Kernel plane of (b, c): one plane per channel (KB == 1) or one per (b, c).
+__device__ __forceinline__ size_t kernel_plane(int KB, int C, int b, int c) {
+    return KB == 1 ? size_t(c) : size_t(b) * C + c;
+}
+
 // Same FP32 operation boundaries as scale1_forward_planes with p = y.
 __device__ __forceinline__ float2 solve(float2 y, float2 k, float l) {
     const float d = __fadd_rn(__fadd_rn(__fmul_rn(k.x, k.x), __fmul_rn(k.y, k.y)), l);
@@ -254,7 +308,7 @@ __device__ __forceinline__ void static_fft(float2* s, const float2* __restrict__
 template <int H, int W, bool Pair>
 __global__ void __launch_bounds__(kThreads) static_s1_forward(const float* __restrict__ x, const float2* __restrict__ k,
                                                               const float* __restrict__ l, float* __restrict__ out,
-                                                              int C, int h0, int w0, int pad,
+                                                              int C, int h0, int w0, int pad, int KB, int mode,
                                                               const float2* __restrict__ tw_rows,
                                                               const float2* __restrict__ tw_cols) {
     extern __shared__ float2 s[];
@@ -264,13 +318,18 @@ __global__ void __launch_bounds__(kThreads) static_s1_forward(const float* __res
     const float* x1 = x0 + size_t(C) * plane;
     for (int i = threadIdx.x; i < H * W; i += kThreads) {
         const int r = i / W, q = i % W;
-        const int src = wrap(r - pad, h0) * w0 + wrap(q - pad, w0);
-        s[i] = make_float2(x0[src], Pair ? x1[src] : 0.f);
+        const int sr = pad_source(mode, r, pad, h0), sq = pad_source(mode, q, pad, w0);
+        if (sr < 0 || sq < 0) {
+            s[i] = make_float2(0.f, 0.f);
+        } else {
+            const int src = sr * w0 + sq;
+            s[i] = make_float2(x0[src], Pair ? x1[src] : 0.f);
+        }
     }
     __syncthreads();
     static_fft<W, 0, 1, false, false, H, W, 1>(s, tw_rows, threadIdx.x);
     static_fft<H, 0, 1, false, true, W, 1, W>(s, tw_cols, threadIdx.x);
-    const float2* kp = k + size_t(c) * H * W;
+    const float2* kp = k + kernel_plane(KB, C, b, c) * (H * W);
     const float lc = l[c];
     for (int i = threadIdx.x; i < H * W; i += kThreads)
         s[i] = solve(s[i], __ldg(kp + i), lc);
@@ -289,7 +348,7 @@ __global__ void __launch_bounds__(kThreads) static_s1_forward(const float* __res
 }
 
 template <int H, int W, bool Pair>
-void launch_static(const at::Tensor& x, const at::Tensor& k, const at::Tensor& l, at::Tensor& out, int pad,
+void launch_static(const at::Tensor& x, const at::Tensor& k, const at::Tensor& l, at::Tensor& out, int pad, int mode,
                    const float2* tw_rows, const float2* tw_cols) {
     auto kernel = static_s1_forward<H, W, Pair>;
     const int bytes = H * W * sizeof(float2);
@@ -297,15 +356,15 @@ void launch_static(const at::Tensor& x, const at::Tensor& k, const at::Tensor& l
     const int blocks = (Pair ? x.size(0) / 2 : x.size(0)) * x.size(1);
     kernel<<<blocks, kThreads, bytes, at::cuda::getCurrentCUDAStream()>>>(
         x.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()), l.data_ptr<float>(), out.data_ptr<float>(),
-        x.size(1), x.size(2), x.size(3), pad, tw_rows, tw_cols);
+        x.size(1), x.size(2), x.size(3), pad, int(k.size(0)), mode, tw_rows, tw_cols);
 }
 
 template <bool Pair>
-void dispatch_static(const at::Tensor& x, const at::Tensor& k, const at::Tensor& l, at::Tensor& out, int pad, int H,
-                     int W, const float2* tr, const float2* tc) {
-    if (H == 100 && W == 100) return launch_static<100, 100, Pair>(x, k, l, out, pad, tr, tc);
-    if (H == 96 && W == 96) return launch_static<96, 96, Pair>(x, k, l, out, pad, tr, tc);
-    if (H == 64 && W == 64) return launch_static<64, 64, Pair>(x, k, l, out, pad, tr, tc);
+void dispatch_static(const at::Tensor& x, const at::Tensor& k, const at::Tensor& l, at::Tensor& out, int pad, int mode,
+                     int H, int W, const float2* tr, const float2* tc) {
+    if (H == 100 && W == 100) return launch_static<100, 100, Pair>(x, k, l, out, pad, mode, tr, tc);
+    if (H == 96 && W == 96) return launch_static<96, 96, Pair>(x, k, l, out, pad, mode, tr, tc);
+    if (H == 64 && W == 64) return launch_static<64, 64, Pair>(x, k, l, out, pad, mode, tr, tc);
     TORCH_CHECK(false, "no static instantiation for ", H, "x", W);
 }
 
@@ -421,10 +480,13 @@ __device__ void store_block_sum(DF value, DF* partial, float* out) {
 
 // Batch sums in order b = 0, 1, ...: grad_k from the per-plane FP32 terms and
 // grad_l from the per-plane (hi, lo) block sums, both two-term, rounded once.
+// With one kernel plane per (b, c) the per-plane terms already are grad_k and
+// only grad_l is reduced.
 __global__ void reduce_batches(const float2* __restrict__ part, const float* __restrict__ gl_part,
-                               float2* __restrict__ gk, float* __restrict__ gl, int B, int C, int64_t N) {
+                               float2* __restrict__ gk, float* __restrict__ gl, int B, int C, int64_t N,
+                               bool reduce_k) {
     const int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x, total = C * N;
-    if (i < total) {
+    if (reduce_k && i < total) {
         CDF v = cdf(part[i]);
         for (int b = 1; b < B; ++b) v = cdf_add(v, cdf(part[b * total + i]));
         gk[i] = cdf_round(v);
@@ -447,9 +509,17 @@ float2 df_constant(double v) {
 
 void reduce_partials(const at::Tensor& part, const at::Tensor& gl_part, at::Tensor& gk, at::Tensor& gl) {
     const int64_t B = part.size(0), C = part.size(1), N = part.numel() / (B * C);
-    reduce_batches<<<(C * N + 255) / 256, 256, 0, at::cuda::getCurrentCUDAStream()>>>(
+    const bool reduce_k = !part.is_same(gk);
+    const int64_t threads = reduce_k ? C * N : C;
+    reduce_batches<<<(threads + 255) / 256, 256, 0, at::cuda::getCurrentCUDAStream()>>>(
         reinterpret_cast<const float2*>(part.data_ptr()), gl_part.data_ptr<float>(),
-        reinterpret_cast<float2*>(gk.data_ptr()), gl.data_ptr<float>(), int(B), int(C), N);
+        reinterpret_cast<float2*>(gk.data_ptr()), gl.data_ptr<float>(), int(B), int(C), N, reduce_k);
+}
+
+// Per-plane grad_k partials: grad_k itself when every plane has its own kernel.
+at::Tensor kernel_partials(const at::Tensor& x, const at::Tensor& k, at::Tensor& gk) {
+    if (k.size(0) == x.size(0)) return gk;
+    return at::empty({x.size(0), x.size(1), k.size(2), k.size(3)}, k.options());
 }
 
 // One block per (b, c) plane, all planes in one launch. Each block writes its
@@ -460,13 +530,14 @@ template <int H, int W>
 __global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
     const float* __restrict__ x, const float* __restrict__ g, const float2* __restrict__ k, const float* __restrict__ l,
     float* __restrict__ gx, float2* __restrict__ part, float* __restrict__ gl_part, int C,
-    int h0, int w0, int pad, const float2* __restrict__ tw_rows, const float2* __restrict__ tw_cols, float2 inv_n) {
+    int h0, int w0, int pad, int KB, int mode, const float2* __restrict__ tw_rows,
+    const float2* __restrict__ tw_cols, float2 inv_n) {
     extern __shared__ float2 s[];
     __shared__ DF partial[kThreads / 32];
     constexpr int N = H * W;
     const int b = blockIdx.x / C, c = blockIdx.x % C;
     const size_t plane = size_t(h0) * w0;
-    const float2* kp = k + size_t(c) * N;
+    const float2* kp = k + kernel_plane(KB, C, b, c) * N;
     float2* yp = part + size_t(blockIdx.x) * N;
     const float lc = l[c];
     const DF scale{inv_n.x, inv_n.y};
@@ -478,7 +549,8 @@ __global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
         const size_t offset = (size_t(b) * C + c) * plane;
         for (int i = threadIdx.x; i < N; i += kThreads) {
             const int r = i / W, q = i % W;
-            s[i] = make_float2(x[offset + wrap(r - pad, h0) * w0 + wrap(q - pad, w0)], 0.f);
+            const int sr = pad_source(mode, r, pad, h0), sq = pad_source(mode, q, pad, w0);
+            s[i] = make_float2(sr < 0 || sq < 0 ? 0.f : x[offset + sr * w0 + sq], 0.f);
         }
         __syncthreads();
         static_fft<W, 0, 1, false, false, H, W, 1>(s, tw_r, tid);
@@ -514,17 +586,15 @@ __global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
         __syncthreads();
         static_fft<H, 0, 1, true, true, W, 1, W>(s, tw_c, tid);
         static_fft<W, 0, 1, true, false, H, W, 1>(s, tw_r, tid);
-        // Each interior pixel collects its own padded copy plus any wrapped margin copies.
+        // Pad adjoint: each interior pixel collects its own padded copy plus the
+        // margin copies its mode maps onto it, rows then columns, ascending.
         for (int i = threadIdx.x; i < h0 * w0; i += kThreads) {
             const int r = i / w0, q = i % w0;
+            const FoldSet rows = fold_set(mode, r, pad, h0), cols = fold_set(mode, q, pad, w0);
             float sum = 0.f;
-            for (int dr = -1; dr <= 1; ++dr) {
-                const int R = r + pad + dr * h0;
-                if (R < 0 || R >= H) continue;
-                for (int dq = -1; dq <= 1; ++dq) {
-                    const int Q = q + pad + dq * w0;
-                    if (Q >= 0 && Q < W) sum = __fadd_rn(sum, s[R * W + Q].x);
-                }
+            for (int a = 0; a < rows.count(); ++a) {
+                const int R = rows.at(a);
+                for (int z = 0; z < cols.count(); ++z) sum = __fadd_rn(sum, s[R * W + cols.at(z)].x);
             }
             gx[offset + i] = sum;
         }
@@ -535,16 +605,16 @@ __global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
 
 template <int H, int W>
 void launch_backward(const at::Tensor& x, const at::Tensor& g, const at::Tensor& k, const at::Tensor& l, at::Tensor& gx,
-                     at::Tensor& gk, at::Tensor& gl, int pad, const float2* tr, const float2* tc) {
+                     at::Tensor& gk, at::Tensor& gl, int pad, int mode, const float2* tr, const float2* tc) {
     auto kernel = static_s1_backward<H, W>;
     const int bytes = H * W * sizeof(float2);
     TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes) == cudaSuccess);
-    auto part = at::empty({x.size(0), x.size(1), H, W}, k.options());
+    auto part = kernel_partials(x, k, gk);
     auto gl_part = at::empty({x.size(0), x.size(1), 2}, l.options());
     kernel<<<x.size(0) * x.size(1), kThreads, bytes, at::cuda::getCurrentCUDAStream()>>>(
         x.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()), l.data_ptr<float>(),
         gx.data_ptr<float>(), reinterpret_cast<float2*>(part.data_ptr()), gl_part.data_ptr<float>(), x.size(1),
-        x.size(2), x.size(3), pad, tr, tc, df_constant(1.0 / (H * W)));
+        x.size(2), x.size(3), pad, int(k.size(0)), mode, tr, tc, df_constant(1.0 / (H * W)));
     reduce_partials(part, gl_part, gk, gl);
 }
 
@@ -574,7 +644,7 @@ struct Twiddles {
 template <int H, int W, int S>
 __global__ void __launch_bounds__(kThreads, 1) static_s_forward(
     const float* __restrict__ x, const float* __restrict__ x0, const float2* __restrict__ k,
-    const float* __restrict__ l, float* __restrict__ out, float2* __restrict__ scratch, int C, Twiddles tw,
+    const float* __restrict__ l, float* __restrict__ out, float2* __restrict__ scratch, int C, int KB, Twiddles tw,
     float prediction_factor, float power_factor) {
     extern __shared__ float2 s[];
     constexpr int SH = S * H, SW = S * W, N = SH * SW, n = H * W;
@@ -590,7 +660,7 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_forward(
     for (int i = tid; i < N; i += kThreads) s[i] = make_float2(x0p[i], 0.f);
     __syncthreads();
     fft2_plane<SH, SW>(s, tw.high_rows, tw.high_cols, tid);
-    const float2* kp = k + size_t(c) * N;
+    const float2* kp = k + kernel_plane(KB, C, bc / C, c) * N;
     const float lc = l[c];
     for (int i = tid; i < n; i += kThreads) {
         const int h = i / W, w = i % W;
@@ -630,7 +700,7 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
     const float* __restrict__ x, const float* __restrict__ x0, const float* __restrict__ g,
     const float2* __restrict__ k, const float* __restrict__ l, float* __restrict__ gx, float* __restrict__ gx0,
     float2* __restrict__ part, float* __restrict__ gl_part, float2* __restrict__ scratch_y,
-    int C, Twiddles tw, float2 inv_n, float2 mean_factor, float2 inverse_aliases) {
+    int C, int KB, Twiddles tw, float2 inv_n, float2 mean_factor, float2 inverse_aliases) {
     extern __shared__ float2 s[];
     __shared__ DF partial[kThreads / 32];
     constexpr int SH = S * H, SW = S * W, N = SH * SW, n = H * W;
@@ -651,7 +721,7 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
     for (int i = tid; i < N; i += kThreads) s[i] = make_float2(g[hi + i], 0.f);
     __syncthreads();
     fft2_plane<SH, SW>(s, tw.high_rows, tw.high_cols, tid);
-    const float2* kp = k + size_t(c) * N;
+    const float2* kp = k + kernel_plane(KB, C, blockIdx.x / C, c) * N;
     const float lc = l[c];
     const DF scale{inv_n.x, inv_n.y}, factor{mean_factor.x, mean_factor.y}, inverse{inverse_aliases.x, inverse_aliases.y};
     DF gl_sum = df(0.f);
@@ -719,7 +789,7 @@ void scaled_forward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor&
     const float factor = float(H * W) / float(N);
     kernel<<<x.size(0) * x.size(1), kThreads, N * 8, at::cuda::getCurrentCUDAStream()>>>(
         x.data_ptr<float>(), x0.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()), l.data_ptr<float>(),
-        out.data_ptr<float>(), reinterpret_cast<float2*>(scratch.data_ptr()), x.size(1),
+        out.data_ptr<float>(), reinterpret_cast<float2*>(scratch.data_ptr()), x.size(1), int(k.size(0)),
         twiddles(H, W, S * H, S * W, x.get_device()), factor, factor);
 }
 
@@ -730,13 +800,13 @@ void scaled_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor
     auto kernel = static_s_backward<H, W, S>;
     TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, N * 8) == cudaSuccess);
     auto scratch_y = at::empty({x.size(0), x.size(1), H, W}, k.options());
-    auto part = at::empty({x.size(0), x.size(1), S * H, S * W}, k.options());
+    auto part = kernel_partials(x, k, gk);
     auto gl_part = at::empty({x.size(0), x.size(1), 2}, l.options());
     const float2 inverse = df_constant(1.0 / (S * S));  // alias mean and 1/S^2 coincide
     kernel<<<x.size(0) * x.size(1), kThreads, N * 8, at::cuda::getCurrentCUDAStream()>>>(
         x.data_ptr<float>(), x0.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()),
         l.data_ptr<float>(), gx.data_ptr<float>(), gx0.data_ptr<float>(), reinterpret_cast<float2*>(part.data_ptr()),
-        gl_part.data_ptr<float>(), reinterpret_cast<float2*>(scratch_y.data_ptr()), x.size(1),
+        gl_part.data_ptr<float>(), reinterpret_cast<float2*>(scratch_y.data_ptr()), x.size(1), int(k.size(0)),
         twiddles(H, W, S * H, S * W, x.get_device()), df_constant(1.0 / N), inverse, inverse);
     reduce_partials(part, gl_part, gk, gl);
 }
@@ -813,25 +883,41 @@ Axis axis_for(int n, int device) {
 
 }  // namespace
 
-// x: (B, C, h0, w0) float; k: (1, C, H, W) complex spectrum of the padded size; l: (C,) float.
+// Kernel batch: one plane per channel, or one per (b, c) as the USRNet data term.
+void check_kernel_batch(const at::Tensor& x, const at::Tensor& k) {
+    TORCH_CHECK(k.scalar_type() == at::kComplexFloat && k.is_contiguous() && k.size(1) == x.size(1) &&
+                (k.size(0) == 1 || k.size(0) == x.size(0)), "kernel spectrum must be (1|B, C, H, W) complex64");
+}
+void check_pad_mode(int64_t mode, int64_t pad, int64_t h0, int64_t w0) {
+    TORCH_CHECK(mode >= kCircular && mode <= kZeros, "pad mode must be 0 circular, 1 replicate, 2 reflect, 3 zeros");
+    TORCH_CHECK(pad >= 0 && pad <= h0 && pad <= w0, "padding must not exceed the input");
+    TORCH_CHECK(mode != kReflect || (pad < h0 && pad < w0), "reflect padding must be smaller than the input");
+}
+
+// x: (B, C, h0, w0) float; k: (1|B, C, H, W) complex spectrum of the padded size; l: (C,) float.
 // variant 0: generic runtime sizes; 1: compile-time sizes; 2: compile-time + batch pairs.
-at::Tensor flash_s1_forward(const at::Tensor& x, const at::Tensor& k, const at::Tensor& l, int64_t pad, int64_t variant) {
+// mode: PadMode of the s1 plane (variants 0 and 2 and batch kernels: circular, KB == 1 only).
+at::Tensor flash_s1_forward(const at::Tensor& x, const at::Tensor& k, const at::Tensor& l, int64_t pad, int64_t variant,
+                            int64_t mode) {
     TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kFloat && x.dim() == 4 && x.is_contiguous());
-    TORCH_CHECK(k.scalar_type() == at::kComplexFloat && k.is_contiguous() && k.size(0) == 1 && k.size(1) == x.size(1));
+    check_kernel_batch(x, k);
     TORCH_CHECK(l.scalar_type() == at::kFloat && l.is_contiguous() && l.numel() == x.size(1));
     const int C = x.size(1), h0 = x.size(2), w0 = x.size(3), H = h0 + 2 * pad, W = w0 + 2 * pad;
     TORCH_CHECK(k.size(2) == H && k.size(3) == W && H * W <= kMaxElements);
+    check_pad_mode(mode, pad, h0, w0);
     c10::cuda::CUDAGuard guard(x.device());
     auto out = at::empty_like(x);
     if (variant) {
         TORCH_CHECK(variant == 1 || x.size(0) % 2 == 0, "batch pairs need an even batch");
+        TORCH_CHECK(variant == 1 || k.size(0) == 1, "batch pairs share one kernel per channel");
         const auto* tr = axis_for(W, x.get_device()).twiddle;
         const auto* tc = axis_for(H, x.get_device()).twiddle;
-        if (variant == 1) dispatch_static<false>(x, k, l, out, pad, H, W, tr, tc);
-        else dispatch_static<true>(x, k, l, out, pad, H, W, tr, tc);
+        if (variant == 1) dispatch_static<false>(x, k, l, out, pad, int(mode), H, W, tr, tc);
+        else dispatch_static<true>(x, k, l, out, pad, int(mode), H, W, tr, tc);
         C10_CUDA_KERNEL_LAUNCH_CHECK();
         return out;
     }
+    TORCH_CHECK(k.size(0) == 1 && mode == kCircular, "the generic variant handles circular padding, KB == 1");
     const int bytes = H * W * sizeof(float2);
     TORCH_CHECK(cudaFuncSetAttribute(fused_s1_forward, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes) == cudaSuccess);
     fused_s1_forward<<<x.size(0) * C, kThreads, bytes, at::cuda::getCurrentCUDAStream()>>>(
@@ -841,24 +927,26 @@ at::Tensor flash_s1_forward(const at::Tensor& x, const at::Tensor& k, const at::
     return out;
 }
 
-// Returns (grad_x, grad_k, grad_l) for the s1 shared-prior solve; x, g: (B, C, h0, w0).
+// Returns (grad_x, grad_k, grad_l) for the s1 shared-prior solve; x, g: (B, C, h0, w0); k: (1|B, C, H, W).
 std::vector<at::Tensor> flash_s1_backward(const at::Tensor& x, const at::Tensor& g, const at::Tensor& k,
-                                          const at::Tensor& l, int64_t pad) {
+                                          const at::Tensor& l, int64_t pad, int64_t mode) {
     TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kFloat && x.dim() == 4 && x.is_contiguous());
     TORCH_CHECK(g.sizes() == x.sizes() && g.scalar_type() == at::kFloat && g.is_contiguous());
-    TORCH_CHECK(k.scalar_type() == at::kComplexFloat && k.is_contiguous() && k.size(0) == 1 && k.size(1) == x.size(1));
+    check_kernel_batch(x, k);
     TORCH_CHECK(l.scalar_type() == at::kFloat && l.is_contiguous() && l.numel() == x.size(1));
     const int h0 = x.size(2), w0 = x.size(3), H = h0 + 2 * pad, W = w0 + 2 * pad;
-    TORCH_CHECK(k.size(2) == H && k.size(3) == W && pad <= h0 && pad <= w0);
+    TORCH_CHECK(k.size(2) == H && k.size(3) == W);
+    check_pad_mode(mode, pad, h0, w0);
     c10::cuda::CUDAGuard guard(x.device());
     auto gx = at::empty_like(x);
     auto gk = at::empty_like(k);
     auto gl = at::empty({x.size(1)}, l.options());
     const auto* tr = axis_for(W, x.get_device()).twiddle;
     const auto* tc = axis_for(H, x.get_device()).twiddle;
-    if (H == 100 && W == 100) launch_backward<100, 100>(x, g, k, l, gx, gk, gl, pad, tr, tc);
-    else if (H == 96 && W == 96) launch_backward<96, 96>(x, g, k, l, gx, gk, gl, pad, tr, tc);
-    else if (H == 64 && W == 64) launch_backward<64, 64>(x, g, k, l, gx, gk, gl, pad, tr, tc);
+    const int m = int(mode);
+    if (H == 100 && W == 100) launch_backward<100, 100>(x, g, k, l, gx, gk, gl, pad, m, tr, tc);
+    else if (H == 96 && W == 96) launch_backward<96, 96>(x, g, k, l, gx, gk, gl, pad, m, tr, tc);
+    else if (H == 64 && W == 64) launch_backward<64, 64>(x, g, k, l, gx, gk, gl, pad, m, tr, tc);
     else TORCH_CHECK(false, "no backward instantiation for ", H, "x", W);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return {gx, gk, gl};
@@ -876,14 +964,14 @@ bool flash_supported(int64_t h0, int64_t w0, int64_t scale, int64_t pad, int64_t
 
 int64_t flash_smem_capacity(int64_t device) { return smem_capacity(int(device)); }
 
-// x: (B, C, H, W); x0: (B, C, S*H, S*W); k: (1, C, S*H, S*W); l: (C,).
+// x: (B, C, H, W); x0: (B, C, S*H, S*W); k: (1|B, C, S*H, S*W); l: (C,).
 at::Tensor flash_scaled_forward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& k, const at::Tensor& l,
                                 int64_t scale) {
     TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kFloat && x.dim() == 4 && x.is_contiguous());
     TORCH_CHECK(x0.scalar_type() == at::kFloat && x0.is_contiguous() && x0.size(0) == x.size(0) &&
                 x0.size(1) == x.size(1) && x0.size(2) == scale * x.size(2) && x0.size(3) == scale * x.size(3));
-    TORCH_CHECK(k.scalar_type() == at::kComplexFloat && k.is_contiguous() && k.size(0) == 1 && k.size(1) == x.size(1) &&
-                k.size(2) == x0.size(2) && k.size(3) == x0.size(3));
+    check_kernel_batch(x, k);
+    TORCH_CHECK(k.size(2) == x0.size(2) && k.size(3) == x0.size(3));
     TORCH_CHECK(l.scalar_type() == at::kFloat && l.is_contiguous() && l.numel() == x.size(1));
     TORCH_CHECK(flash_supported(x.size(2), x.size(3), scale, 0, x.get_device()), "shape not supported on this device");
     c10::cuda::CUDAGuard guard(x.device());
@@ -902,6 +990,8 @@ at::Tensor flash_scaled_forward(const at::Tensor& x, const at::Tensor& x0, const
 std::vector<at::Tensor> flash_scaled_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& g,
                                               const at::Tensor& k, const at::Tensor& l, int64_t scale) {
     TORCH_CHECK(g.sizes() == x0.sizes() && g.scalar_type() == at::kFloat && g.is_contiguous());
+    check_kernel_batch(x, k);
+    TORCH_CHECK(k.size(2) == x0.size(2) && k.size(3) == x0.size(3));
     TORCH_CHECK(flash_supported(x.size(2), x.size(3), scale, 0, x.get_device()), "shape not supported on this device");
     c10::cuda::CUDAGuard guard(x.device());
     auto gx = at::empty_like(x);
