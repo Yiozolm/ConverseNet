@@ -577,3 +577,56 @@ Findings:
 - For the gate: a single-run grad_bias comparison on s2/s3 cannot distinguish the two paths;
   the seeded gate with enough seeds can, and the device regularizer moves the fused path from
   "equal within noise" to about 0.6-0.85x of production's error.
+
+## A100 with the compensated backward (`flash-NVIDIA_A100-SXM4-40GB-20261007T064737`)
+
+Colab, torch 2.11+cu130, branch at 06b831c. The run started four minutes after that push and
+before the notebook gained the new studies, so it holds the original four studies on the current
+kernels: the two-term backward, kernel batches and padding modes (run-time arguments), the
+half-spectrum and regularizer kernels compiled in, and the anatomy with the device-regularizer path.
+
+Accuracy: all 10 cases pass the single-seed gate (the s3 144x144 plane at a worst ratio of 0.87,
+against 1.42 and FAIL with the uncompensated kernels) and all 40 seeded case/output pairs pass.
+
+| Case | Worst single-seed rel-L2 ratio | grad_bias seeded geomean (single-run failures) | grad_weight seeded geomean |
+|---|---|---|---|
+| s1, all four cases | 1.00 | 1.00 (0/8) | 1.00 (0/8) |
+| s2 B4 C64 64 -> 128 | 0.88 | 0.81 (1/8) | 0.94 (1/8, max seed 1.37) |
+| s2 B4 C64 32 | 1.16 | 0.73 (0/8) | 0.85 (1/8) |
+| s3 B2 C32 48 -> 144 | 0.87 | 1.01 (2/8), was 1.26 (4/8) | 0.83 (0/8) |
+| s3 B2 C32 24 | 0.89 | 0.99 (1/8) | 0.92 (0/8) |
+
+The anatomy on the A100 repeats the RTX picture: with the device regularizer the grad_bias gate
+geomean is 0.62-0.95 against 0.73-1.01 for the FP32 sigmoid chain, and the transposed-cuFFT control
+exceeds 1.25 in 1-3 of 8 seeds per s2/s3 case while fused does in 0-2.
+
+Timing, forward+VJP (production is within 2% of the earlier run):
+
+| Case | Production | Fused, this run | Fused, 20261006T150610 (uncompensated) |
+|---|---|---|---|
+| circular s1 B4 C64 96 pad 2 | 679 us | 985 us (0.69x) | 699 us (0.97x) |
+| circular s1 B4 C128 96 pad 2 | 1169 us | 1295 us (0.90x) | 903 us (1.30x) |
+| s1 B4 C128 100 | 1108 us | 1300 us (0.85x) | 923 us (1.20x) |
+| s1 B4 C64 96 | 726 us | 927 us (0.78x) | 745 us (1.05x) |
+| s2 B4 C64 64 -> 128 | 1058 us | 1210 us (0.87x) | 900 us (1.18x) |
+| s2 B4 C64 48 | 889 us | 892 us (1.00x) | 779 us (1.24x) |
+| s2 B4 C64 32 | 884 us | 736 us (1.20x) | 765 us (1.20x) |
+| s3 B2 C32 48 -> 144 | 819 us | 736 us (1.11x) | 758 us (1.14x) |
+| s3 B2 C32 32 / 24 | 880 / 822 us | 730 / 734 us (1.21x / 1.12x) | 741 / 749 us |
+
+Reading:
+- The compensated backward costs the A100 its speed advantage at the production sizes. From the
+  efficiency counters at s1 C128 100: the fused forward is 0.33 -> 0.37 ms, the backward 0.59 ->
+  0.93 ms; DRAM per call is unchanged at 272 MB while the executed FP32 rate rose from 3.0 to 5.2
+  TFLOP/s (15 -> 27% of peak). The two-term pointwise phase roughly doubles the FP32 work, and the
+  A100 (64 FP32 lanes per SM, 19.5 TFLOP/s) is FP32-bound in it. s2 128x128: backward 0.60 -> 0.91
+  ms, FP32 2.0 -> 3.9 TFLOP/s. On the RTX 5060 Ti the same change cost 10% (2.12x -> 1.92x) because
+  production is DRAM-bound there and the fused path has FP32 to spare.
+- Memory is as before: 3.4-7.7x less saved for backward, peak 2.3-2.9x lower. The small cases sit
+  on the Colab launch floor.
+- The accuracy gain came from the compensation (the A100's seeded failures went from 10/32 and the
+  s3 144 excess to none), so the trade is real. The next step is partial compensation: keep the
+  two-term arithmetic for the terms that feed grad_k and grad_l (the gd dot product, the grad_k
+  term, the grad_l sum) and return grad_Y, which feeds grad_x and never failed a budget
+  uncompensated, to plain FP32. Not done.
+- This zip has no ops, half-spectrum or s2/s3-check results; the updated notebook (510dedb) runs them.
