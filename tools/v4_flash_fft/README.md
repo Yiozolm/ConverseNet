@@ -164,7 +164,10 @@ reverted. This is an open accuracy item for any integration under the current po
 Push `claude/v4-dev`, open `tools/v4_flash_fft/a100_colab.ipynb` in Colab with an A100
 runtime, run all cells and send back the zip. It runs `flash_study.py` (all cases, now
 including the 128x128 and 144x144 planes) and `seed_sweep.py` on the production and small
-s2/s3 shapes.
+s2/s3 shapes, then `ops_study.py` (training gate and its 8-seed sweep), `half_study.py`,
+`s23_error_check.py` (32 seeds, all eight s2/s3 cases), `efficiency.py` and `error_anatomy.py`
+(all planes, the data terms and the device-regularizer path). About an hour, half of it the
+two builds.
 
 ## Memory and FLOP efficiency (`efficiency.py`)
 
