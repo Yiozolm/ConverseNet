@@ -420,6 +420,15 @@ __device__ __forceinline__ DF df_add(DF a, DF b) {
     return fast_two_sum(s.hi, __fadd_rn(s.lo, t.lo));
 }
 __device__ __forceinline__ DF df_sub(DF a, DF b) { return df_add(a, df_neg(b)); }
+// Sloppy addition: the high parts are summed exactly, the low parts in one FP32
+// add. Error about 2^-47 of the larger operand, which only matters when the high
+// parts cancel by more than 2^20. The pointwise adjoint uses it (its inputs carry
+// FFT rounding of 1e-7 already); the reductions keep df_add.
+__device__ __forceinline__ DF df_adds(DF a, DF b) {
+    const DF s = two_sum(a.hi, b.hi);
+    return fast_two_sum(s.hi, __fadd_rn(s.lo, __fadd_rn(a.lo, b.lo)));
+}
+__device__ __forceinline__ DF df_subs(DF a, DF b) { return df_adds(a, df_neg(b)); }
 __device__ __forceinline__ DF df_mul(DF a, DF b) {
     const DF p = two_prod(a.hi, b.hi);
     return fast_two_sum(p.hi, __fmaf_rn(a.hi, b.lo, __fmaf_rn(a.lo, b.hi, p.lo)));
@@ -436,29 +445,41 @@ __device__ __forceinline__ DF df_div(DF a, DF b) {
     const float q3 = __fdiv_rn(r.hi, b.hi);
     return df_add(fast_two_sum(q1, q2), df(q3));
 }
+// 1/d as two terms: one IEEE reciprocal and a Newton correction, about 2^-46,
+// in place of the three divisions of df_div(1, d).
+__device__ __forceinline__ DF df_rcp(DF d) {
+    const float r0 = __frcp_rn(d.hi);
+    const DF p = two_prod(d.hi, r0);
+    const float e = __fsub_rn(__fsub_rn(__fsub_rn(1.f, p.hi), p.lo), __fmul_rn(d.lo, r0));
+    return fast_two_sum(r0, __fmul_rn(r0, e));
+}
 __device__ __forceinline__ CDF cdf(float2 a) { return {df(a.x), df(a.y)}; }
 __device__ __forceinline__ float2 cdf_round(CDF a) { return make_float2(df_round(a.re), df_round(a.im)); }
-__device__ __forceinline__ CDF cdf_add(CDF a, CDF b) { return {df_add(a.re, b.re), df_add(a.im, b.im)}; }
-__device__ __forceinline__ CDF cdf_sub(CDF a, CDF b) { return {df_sub(a.re, b.re), df_sub(a.im, b.im)}; }
+__device__ __forceinline__ CDF cdf_add(CDF a, CDF b) { return {df_adds(a.re, b.re), df_adds(a.im, b.im)}; }
+__device__ __forceinline__ CDF cdf_sub(CDF a, CDF b) { return {df_subs(a.re, b.re), df_subs(a.im, b.im)}; }
 __device__ __forceinline__ CDF cdf_neg(CDF a) { return {df_neg(a.re), df_neg(a.im)}; }
 __device__ __forceinline__ CDF cdf_conj(CDF a) { return {a.re, df_neg(a.im)}; }
 // a * b for FP32 complex a, b: exact products, two-term sums.
 __device__ __forceinline__ CDF cmul_ff(float2 a, float2 b) {
-    return {df_sub(two_prod(a.x, b.x), two_prod(a.y, b.y)), df_add(two_prod(a.x, b.y), two_prod(a.y, b.x))};
+    return {df_subs(two_prod(a.x, b.x), two_prod(a.y, b.y)), df_adds(two_prod(a.x, b.y), two_prod(a.y, b.x))};
 }
 __device__ __forceinline__ CDF cmul_df(CDF a, float2 b) {
-    return {df_sub(df_mul_f(a.re, b.x), df_mul_f(a.im, b.y)), df_add(df_mul_f(a.re, b.y), df_mul_f(a.im, b.x))};
+    return {df_subs(df_mul_f(a.re, b.x), df_mul_f(a.im, b.y)), df_adds(df_mul_f(a.re, b.y), df_mul_f(a.im, b.x))};
 }
 __device__ __forceinline__ CDF cmul_dd(CDF a, CDF b) {
-    return {df_sub(df_mul(a.re, b.re), df_mul(a.im, b.im)), df_add(df_mul(a.re, b.im), df_mul(a.im, b.re))};
+    return {df_subs(df_mul(a.re, b.re), df_mul(a.im, b.im)), df_adds(df_mul(a.re, b.im), df_mul(a.im, b.re))};
 }
 __device__ __forceinline__ CDF cscale(CDF a, DF f) { return {df_mul(a.re, f), df_mul(a.im, f)}; }
 __device__ __forceinline__ CDF cscale_f(float2 a, DF f) { return {df_mul_f(f, a.x), df_mul_f(f, a.y)}; }
 // |k|^2 with exact squares.
-__device__ __forceinline__ DF df_norm(float2 k) { return df_add(two_prod(k.x, k.x), two_prod(k.y, k.y)); }
+__device__ __forceinline__ DF df_norm(float2 k) { return df_adds(two_prod(k.x, k.x), two_prod(k.y, k.y)); }
 // -Re(t * conj(r)) = -(t.re r.re + t.im r.im): the cancelling gd dot product.
 __device__ __forceinline__ DF neg_real_dot(CDF t, CDF r) {
-    return df_neg(df_add(df_mul(t.re, r.re), df_mul(t.im, r.im)));
+    return df_neg(df_adds(df_mul(t.re, r.re), df_mul(t.im, r.im)));
+}
+// Production's FP32 gradient spectrum, G = FFT(g) * (1/N) as the store callback rounds it.
+__device__ __forceinline__ float2 scaled32(float2 z, float inv_n) {
+    return make_float2(__fmul_rn(z.x, inv_n), __fmul_rn(z.y, inv_n));
 }
 
 // ---- Two-term regularizer: l = sigmoid(bias - 9) + eps and its derivative ----
@@ -600,19 +621,20 @@ __global__ void __launch_bounds__(kThreads, 1) static_s1_backward(
         static_fft<H, 0, 1, false, true, W, 1, W>(s, tw_c, tid);
         for (int i = threadIdx.x; i < N; i += kThreads) {
             {
-                // Production's adjoint, every step two-term (see the DF helpers):
-                // grad_Y = (G + gy) + gm conj(k); grad_k term = conj(G) q + gm conj(Y) + 2 k gd.
-                const float2 ki = __ldg(kp + i), Y = yp[i];
-                const CDF G = cscale_f(s[i], scale);
-                // One two-term reciprocal of d replaces the six divisions.
-                const DF rd = df_div(df(1.f), df_add(df_norm(ki), df(lc)));
+                // Partial compensation: the terms that feed grad_k and grad_l stay two-term
+                // (sloppy adds, Newton reciprocal). G enters them as production's FP32 value,
+                // and grad_Y, which feeds grad_x, is assembled in FP32 with production's
+                // boundaries: (G + gy) + gm conj(k). grad_k term = conj(G) q + gm conj(Y) + 2 k gd.
+                const float2 ki = __ldg(kp + i), Y = yp[i], G = scaled32(s[i], scale.hi);
+                const DF rd = df_rcp(df_adds(df_norm(ki), df(lc)));
                 const CDF q = cscale(cdf_sub(cdf(Y), cmul_ff(ki, Y)), rd);
-                const CDF t = cmul_df(G, ki), gy = cscale(t, rd), gm = cdf_neg(gy);
+                const CDF t = cmul_ff(G, ki), gy = cscale(t, rd), gm = cdf_neg(gy);
                 const DF v = neg_real_dot(t, cscale(q, rd));
-                s[i] = cdf_round(cdf_add(cdf_add(G, gy), cmul_df(gm, conj2(ki))));
+                const float2 gy32 = cdf_round(gy), gm32 = make_float2(-gy32.x, -gy32.y);
+                s[i] = add2(add2(G, gy32), prod(gm32, conj2(ki)));
                 const DF two_v = df_mul_f(v, 2.f);
                 const CDF power{df_mul_f(two_v, ki.x), df_mul_f(two_v, ki.y)};
-                yp[i] = cdf_round(cdf_add(cdf_add(cmul_dd(cdf_conj(G), q), cmul_df(gm, conj2(Y))), power));
+                yp[i] = cdf_round(cdf_add(cdf_add(cmul_df(q, conj2(G)), cmul_df(gm, conj2(Y))), power));
                 gl_sum = df_add(gl_sum, v);
             }
         }
@@ -761,7 +783,9 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
     const DF scale{inv_n.x, inv_n.y}, factor{mean_factor.x, mean_factor.y}, inverse{inverse_aliases.x, inverse_aliases.y};
     DF gl_sum = df(0.f);
     for (int i = tid; i < n; i += kThreads) {
-        // Production's adjoint (scale2/scale3 kernels), every step two-term.
+        // Partial compensation as in the s1 backward: two-term terms for grad_k and
+        // grad_l (sloppy adds, Newton reciprocal), G as production's FP32 value, and
+        // grad_p in FP32 with production's boundaries: G + gm conj(k).
         const int h = i / W, w = i % W;
         CDF pm = cdf(make_float2(0.f, 0.f)), t = pm;
         DF pw = df(0.f);
@@ -770,22 +794,21 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
             const int off = (h + (j / S) * H) * SW + w + (j % S) * W;
             const float2 kk = __ldg(kp + off);
             pm = cdf_add(pm, cmul_ff(kk, pp[off]));
-            pw = df_add(pw, df_norm(kk));
-            t = cdf_add(t, cmul_df(cscale_f(s[off], scale), kk));
+            pw = df_adds(pw, df_norm(kk));
+            t = cdf_add(t, cmul_ff(scaled32(s[off], scale.hi), kk));
         }
-        // One two-term reciprocal of d replaces the six divisions.
-        const DF rd = df_div(df(1.f), df_add(df_mul(pw, factor), lc));
+        const DF rd = df_rcp(df_adds(df_mul(pw, factor), lc));
         const CDF q = cscale(cdf_sub(cdf(yp[i]), cscale(pm, factor)), rd);
         const CDF gy = cscale(t, rd), gm = cscale(cdf_neg(gy), inverse);
         const DF v = neg_real_dot(t, cscale(q, rd)), two_power = df_mul_f(df_mul(v, inverse), 2.f);
+        const float2 gm32 = cdf_round(gm);
 #pragma unroll
         for (int j = 0; j < S * S; ++j) {
             const int off = (h + (j / S) * H) * SW + w + (j % S) * W;
-            const float2 kk = __ldg(kp + off), P = pp[off];
-            const CDF G = cscale_f(s[off], scale);
-            s[off] = cdf_round(cdf_add(G, cmul_df(gm, conj2(kk))));
+            const float2 kk = __ldg(kp + off), P = pp[off], G = scaled32(s[off], scale.hi);
+            s[off] = add2(G, prod(gm32, conj2(kk)));
             const CDF power{df_mul_f(two_power, kk.x), df_mul_f(two_power, kk.y)};
-            pp[off] = cdf_round(cdf_add(cdf_add(cmul_dd(cdf_conj(G), q), cmul_df(gm, conj2(P))), power));
+            pp[off] = cdf_round(cdf_add(cdf_add(cmul_df(q, conj2(G)), cmul_df(gm, conj2(P))), power));
         }
         yp[i] = cdf_round(gy);
         gl_sum = df_add(gl_sum, v);

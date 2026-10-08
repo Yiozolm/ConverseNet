@@ -630,3 +630,55 @@ Reading:
   term, the grad_l sum) and return grad_Y, which feeds grad_x and never failed a budget
   uncompensated, to plain FP32. Not done.
 - This zip has no ops, half-spectrum or s2/s3-check results; the updated notebook (510dedb) runs them.
+
+## Partial compensation of the backward (`flash_rtx5060ti_006_partial`)
+
+The A100 run showed the two-term backward is FP32-bound there. The pointwise adjoint now keeps
+two-term arithmetic only where it bought accuracy, and cheaper two-term arithmetic at that:
+- `df_adds`: the high parts are summed exactly (TwoSum), the low parts in one FP32 add, about
+  2^-47 of the larger operand; the pointwise helpers (complex products, sums, |k|^2, the gd dot
+  product) use it. The block and batch reductions keep the accurate `df_add`.
+- `df_rcp`: 1/d from one IEEE reciprocal and a Newton correction (about 2^-46) in place of the
+  three divisions of `df_div(1, d)`.
+- The gradient spectrum enters t and the grad_k term as production's FP32 value, FFT(g) * (1/N)
+  as the store callback rounds it; its FFT error (1e-7) dwarfs that rounding.
+- grad_Y (s1) and grad_p (s2/s3), which feed grad_x and never failed a budget uncompensated,
+  are assembled in FP32 with production's boundaries: (G + gy) + gm conj(k), and G + gm conj(k).
+q, t, gy, gm, the gd term, the grad_k term and the grad_l sum stay two-term, so the kernel and
+regularizer gradients keep their accuracy. The pointwise phase does about half the FP32
+operations of the full two-term version. ptxas: no spills in any s1 backward; the s2 48 backward
+spill fell from 36 to 12 B.
+
+Accuracy is unchanged within the intervals. `s23_check_rtx5060ti_003_partial` (64 seeds; the
+previous values from `_002_reg` in parentheses):
+
+| Case, grad_bias geomean | fused | fused + device regularizer | grad_weight, fused |
+|---|---|---|---|
+| s2 32 | 0.90 (0.90) | 0.61 (0.61) | 0.83 (0.83) |
+| s2 48 | 0.86 (0.85) | 0.68 (0.66) | 0.83 (0.84) |
+| s3 32 | 0.79 (0.79) | 0.58 (0.59) | 0.78 (0.79) |
+| s3 24 | 0.85 (0.86) | 0.73 (0.75) | 0.92 (0.94) |
+| data term s2 48 | 0.98 (0.98) | 0.88 (0.87) | 0.89 (0.90) |
+| data term s3 32 | 0.89 (0.89) | 0.73 (0.72) | 0.84 (0.85) |
+
+Single-run failure rates are within 3 points of the previous run; grad_weight never fails. The
+s1 seed sweep (`seed_sweep_006_partial.json`, four s1 cases plus s2 48 and s3 32) passes every
+output at geomean 1.00 for s1 and 0.58-0.88 for s2/s3 with no single-run failure; the ops gate
+(`ops_rtx5060ti_004_partial`) repeats the earlier single-seed picture, including the s2 data
+term's fixed-seed grad_bias draw of 1.38.
+
+RTX 5060 Ti, forward+VJP (desktop load of about 14% in this run; compare ratios):
+
+| Case | Uncompensated (`_003`) | Full two-term (`_005`) | Partial (`_006`) |
+|---|---|---|---|
+| circular s1 B4 C128 96 pad 2 | 2.12x | 1.92x | **2.18x** |
+| s1 B4 C128 100 | 1.99x | 1.81x | **2.06x** |
+| circular s1 B4 C64 96 pad 2 | 1.43x | 1.28x | 1.48x |
+| s1 B4 C64 96 | - | - | 1.48x |
+| s2 B4 C64 48 | 1.56x | - | 1.57x |
+| s2 32 / s3 32 / s3 24 | 1.34x / 1.36x / 1.23x | - | 1.29x / 1.36x / 1.22x |
+| ops: padding modes | - | 1.46-1.54x | 1.69-1.73x |
+| ops: data term s1 / s2 / s3 | - | 1.16x / 1.18x / 1.50x | 1.27x / 1.27x / 1.60x |
+
+On the A100 the backward's pointwise FP32 work halves; the expected effect at s1 C128 is a
+backward near the uncompensated 0.6 ms instead of 0.93 ms. Needs the notebook rerun.
