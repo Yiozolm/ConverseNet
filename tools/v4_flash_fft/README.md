@@ -682,3 +682,63 @@ RTX 5060 Ti, forward+VJP (desktop load of about 14% in this run; compare ratios)
 
 On the A100 the backward's pointwise FP32 work halves; the expected effect at s1 C128 is a
 backward near the uncompensated 0.6 ms instead of 0.93 ms. Needs the notebook rerun.
+
+## A100 with the partial compensation and every study (`flash-NVIDIA_A100-SXM4-40GB-20261008T114317`)
+
+Colab, torch 2.11+cu130, the full notebook: flash study, seed sweep, ops study and its sweep,
+half-spectrum study, the 32-seed s2/s3 check, efficiency and anatomy.
+
+Training fwd+VJP against production (the two earlier A100 runs for comparison):
+
+| Case | Production | Partial (this run) | Full two-term (20261007) | Uncompensated (20261006) |
+|---|---|---|---|---|
+| circular s1 B4 C128 96 pad 2 | 1168 us | 1084 us (**1.08x**) | 0.90x | 1.30x |
+| s1 B4 C128 100 | 1108 us | 1091 us (1.02x) | 0.85x | 1.20x |
+| circular s1 B4 C64 96 pad 2 | 702 us | 815 us (0.86x) | 0.69x | 0.97x |
+| s1 B4 C64 96 | 746 us | 810 us (0.92x) | 0.78x | 1.05x |
+| s2 B4 C64 64 -> 128 | 1055 us | 1002 us (1.05x) | 0.87x | 1.18x |
+| s2 B4 C64 48 | 1032 us | 864 us (1.19x) | 1.00x | 1.24x |
+| s3 B2 C32 48 -> 144 | 861 us | 771 us (1.12x) | 1.11x | 1.14x |
+| s2 32 / s3 32 / s3 24 | 913 / 930 / 846 us | 1.20x / 1.20x / 1.11x | 1.20x / 1.21x / 1.12x | 1.20x / 1.21x / 1.12x |
+
+- The s1 C128 backward is 0.72 ms (forward 0.37, fwd+VJP 1.09), between the full two-term 0.93 ms
+  and the uncompensated 0.59 ms, at 21% of FP32 peak (27% and 15%) with DRAM per call unchanged
+  at 273 MB. The s2 128x128 backward is 0.70 ms (0.91 / 0.60). Half of the lost ground is back;
+  the remaining two-term work on the gd and grad_k terms costs the A100 about 0.13 ms per call.
+- Memory as before: 3.4-7.7x less saved for backward, peak 2.3-2.9x lower.
+- Ops study on the A100: padding modes 1.16-1.19x; data term s3 1.03x, s2 0.93x, s1 0.65x. The
+  data-term production calls sit at the 0.7-0.9 ms Colab launch floor, so the fused path's own
+  kernel time shows as a loss there; the s2 data term's single-seed grad_bias draw is 1.26 (its
+  8-seed geomean 1.06 with 1 failure). Every seeded pair passes.
+
+Accuracy: all 10 flash cases pass, all seeded pairs pass (s3 144x144 grad_bias 0.93 with 1/8
+single-run failures; s2 128x128 grad_bias 0.81 and grad_weight 0.94, 1/8 each). The 32-seed
+check with the 128x128 and 144x144 planes:
+
+| Case, grad_bias geomean [CI] | fused | fused + device regularizer | control (its single-run failures) |
+|---|---|---|---|
+| s2 64 -> 128 | 0.92 [0.78, 1.07] | 0.80 [0.65, 0.95] | 1.00 [0.83, 1.20] (34%) |
+| s3 48 -> 144 | 0.89 [0.78, 1.01] | 0.69 [0.60, 0.81] | 1.05 [0.92, 1.19] (38%) |
+| s2 32 / 48, s3 32 / 24 | 0.78-0.90 | 0.57-0.78 | 0.92-1.13 (25-28%) |
+| data term s2 48 / s3 32 | 0.99 / 0.86 | 0.88 / 0.73 | 0.93 / 1.03 (19% / 31%) |
+
+grad_weight: fused 0.78-0.91 with 0-3% single-run failures, control 0.97-1.03. The fused path fails
+the single-run grad_bias budget in 0-16% of seeds against the control's 19-38%: the same picture as
+on the RTX, now including the production planes. The device regularizer's two-term sigmoid is again
+7e-15 against FP64.
+
+Half-spectrum inference forward (k and l given; both fused kernels are eligible on the A100):
+
+| Case | Production fwd | Half | Full-spectrum fused |
+|---|---|---|---|
+| p-block s1 B4 C128 96 pad 2 | 301 us | 174 us (**1.73x**) | 327 us (0.92x) |
+| p-block s1 B4 C64 96 pad 2 | 240 us | 93 us (2.59x) | 147 us (1.63x) |
+| data term s1 C64 96, KB 4 | 138 us | 111 us (1.25x) | 211 us (0.65x) |
+| replicate s1 92 pad 4 | 179 us | 87 us (2.07x) | 133 us (1.35x) |
+| s1 C64 64 | 129 us | 35 us (3.68x) | 57 us (2.26x) |
+| data term s3 32 -> 96 / s2 48 -> 96 | 189 / 191 us | 108 / 112 us (1.75x / 1.70x) | 162 / 177 us |
+| s2 64 -> 128 / s3 48 -> 144 | 243 / 190 us | 167 / 96 us (1.45x / 1.97x) | 233 / 135 us |
+
+Every output passes (half kernel 1.00x at s1, 0.78-0.85x at s2/s3), two blocks per SM at every s1
+size, bitwise repeatable. Production's inference forward is 2.4x faster on the A100 than on the
+RTX 5060 Ti (301 vs 721 us at C128), so the half kernel's margin is 1.7x there against 3.6x.
