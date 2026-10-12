@@ -140,6 +140,13 @@ stayed on ATen.
     captures identical; release suite 212/212.
   - Two-round timing there: circular s1 B4/C128 96 pad 2 1.30x, s1 B4/C128 100 1.38x.
 
+### Resolution of the 54 sm_80 failures (2026-10-12)
+
+The records above are unchanged. The 54 FP64-budget failures were attributed on 2026-10-12 to
+ATen's complex multiply fusing a different product on sm_80 than on sm_120 while the fused
+training kernels hard-coded the sm_120 pattern; with the pattern measured per device (bf7df51)
+the A100 release suite passes 230/230. See `tools/v4_release_a100/README.md`.
+
 ### A100 after the 32-bit load callbacks (git 87b7ac0, binary e46ca5df)
 
 - Release suite: 54 failures with callbacks on and off, the same names as at 347b040.

@@ -14,6 +14,15 @@ direct indexed copies. Eligible s2 kernels without batch/channel broadcast
 also form their kernel gradient in the fused VJP, preserving the existing
 FP32 operation boundaries and broadcast fallback.
 
+The fused kernels reproduce ATen's FP32 complex multiply, which rounds each
+component once as a single FMA; which of the two products the SASS fuses
+differs by architecture (sm_120 fuses `ai*br` in the imaginary part, sm_80
+`ar*bi`). At the first differentiable call on a device the extension compares
+`at::mul` with both roundings on 65536 random pairs and makes the kernels
+follow the matching one; `torch.ops.converse2d._training_product_pattern()`
+reports the measurement and `CONVERSE2D_PRODUCT_PATTERN=0..3` forces a pattern
+for diagnosis. The measurement cannot run inside CUDA graph capture.
+
 Some CUDA training FFTs do their adjacent copies inside the transform, through
 cuFFT LTO callbacks compiled at run time with NVRTC:
 - the input FFT reads real or circularly padded `x` as `(x, +0)`;

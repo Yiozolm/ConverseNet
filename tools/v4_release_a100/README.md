@@ -128,10 +128,51 @@ moved as well, so the per-kernel ratios on Colab are indicative only. The step-l
 which are what the branch is judged on, are 1.29x and 1.31x for LayerNorm and 1.45x and 1.51x
 for the pointwise gradient across the two runs.
 
+## Cause of the 54 sm_80 failures (`aten_rounding_probe.py`)
+
+Comparing run 2 with the local report of the same commit, row by row: on the RTX 5060 Ti every
+failing case has a budget ratio of exactly 1.00, i.e. the fused path and the frozen Python FP32
+expression are bitwise equal there. On the A100 the candidate's error is unchanged (geometric mean
+1.06x of its RTX value over the failing rows, 1.00x over all 1760 rows) while the baseline's
+dropped to 0.63x. Over all 432 small-plane dweight/dbias rows the A100 ratio scatters
+symmetrically (25 below 0.8x, 31 above 1.25x, geometric mean 1.01): two equally accurate rounding
+patterns, and the failures are the upper tail of 35-element noise.
+
+`aten_rounding_probe.py` computes, in FP64 with exact FP32 products, every plausible rounding of
+ATen's complex multiply, conjugate multiply, `re² + im²`, complex/real division, real*complex and
+add on 2^20 random elements, and counts bitwise matches with the ATen result. The two GPUs agree on
+every operation but one component:
+
+| ATen FP32 operation | RTX 5060 Ti (sm_120) | A100 (sm_80) |
+|---|---|---|
+| complex multiply, real part | `r(ar*br - r(ai*bi))` (fuses ar*br) | same |
+| complex multiply, imaginary part | `r(r(ar*bi) + ai*br)` (fuses ai*br) | **`r(ar*bi + r(ai*br))` (fuses ar*bi)** |
+| conjugate multiply, real part | `r(ar*br + r(ai*bi))` | same |
+| `re.square() + im.square()` | two roundings, no FMA | same |
+| complex / real | `r(ar * r(1/den))` | same |
+| `fft2` of a real 5x7 plane vs C2C of `(x, 0)` | bitwise equal | bitwise equal |
+
+The fused training kernels' single `product()` helper hard-coded the sm_120 pattern. Commit
+bf7df51 measures the pattern against `at::mul` on the current device at first use and makes the
+kernels follow it (`Converse2D/README.md`, `test_product_pattern.py`,
+`torch.ops.converse2d._training_product_pattern()`). The RTX 5060 Ti measures pattern 0 (the
+historical one, arithmetic unchanged), the A100 pattern 2.
+
+## Run 3: A100-SXM4-40GB at bf7df51 (`v4_release-NVIDIA_A100-SXM4-40GB-20261012T104608`)
+
+Same VM image; build 81 s, binary `360f5c2b9950`. Measured product pattern 2
+(`[2, 0, 1, 0, 0, 1]`: real part matches the ar*br fusion, imaginary part the ar*bi fusion).
+
+**Release suite: 230 run, 0 failures.** The 54 sm_80 FP64-budget failures recorded since
+codex/v4.0.0 are gone, and `test_product_pattern` confirms byte identity between the fused path and
+the Python FP32 expression on the small-plane training cases of the fast matrix on the A100 as well.
+Locally the same commit passes 230/230 on the RTX 5060 Ti with unchanged arithmetic
+(`.build/product-pattern-release-001.log`).
+
 ## State of the sm_80 release suite
 
-On the A100 the FP32 release suite has had the same 54 FP64-budget failures since codex/v4.0.0
-(all on planes below 16 pixels a side: the 5x7 training matrix, PSF preparation, s2/s3 fusion).
-Nothing on claude/v4-dev added to or removed from that set once the LayerNorm gate was corrected.
-They remain recorded as failures, not relabelled; a release note has to state them as a known
-sm_80 limitation or the release has to fix them.
+Runs 1 and 2 above and every A100 run in `tools/v4_fft_callbacks_prod/` keep their recorded 54
+failures; they were FP64-budget misses of two equally accurate rounding patterns on planes below 16
+pixels a side, not an accuracy defect of either path, and they are resolved by matching the device's
+pattern (run 3). Inference kernels form their complex products with `c10::complex` arithmetic and were
+never affected; their A100 rows passed in every run.

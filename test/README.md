@@ -33,6 +33,7 @@ while build checks, the CPU extension and the portable Python fallback still run
 | `test_layernorm_training.py` | Fused channels-first LayerNorm training: byte-exact forward, FP64-budgeted VJPs over all masks, seeded channel-vector budgets, geometries/alignment, permuted upstream, determinism, dispatch boundaries, native higher-order fallback |
 | `test_peripheral_policy.py` | CPU-only automatic dispatch boundaries for large inference tensors, frozen/differentiable inputs and all three GradMode contexts |
 | `test_cuda_graph.py` | Graph ownership, replay, invalidation and training transitions |
+| `test_product_pattern.py` | The fused training kernels follow the complex-product FMA rounding of ATen on this device: unambiguous measurement, byte identity with the Python FP32 expression on small-plane training cases |
 | `test_pretrained_fp32.py` | DnCNN/SRResNet/USRNet pretrained outputs and three-seed, three-step USRNet/Adam regression |
 
 `support.py` owns shared fixtures, byte comparisons and CPU/CUDA policy.
@@ -156,6 +157,18 @@ rel-L2 gate; its max-abs is gated over seeds because values of a few units carry
 1–2 ulp errors, at the max-abs floor, from per-pixel statistics that the frozen
 forward kernel and ATen round differently. The forward output stays byte-exact
 per seed.
+
+ATen's FP32 complex multiply is one FMA per component, and which product the
+SASS fuses differs by architecture (sm_120 fuses `ai*br` in the imaginary part,
+sm_80 `ar*bi`). The fused training kernels follow the pattern measured against
+`at::mul` on the current device at first use; `test_product_pattern.py` checks
+the measurement is unambiguous and that small-plane training results are byte-
+identical to the Python FP32 expression. Before this (bf7df51) the A100 release
+suite had 54 FP64-budget failures on planes below 16 pixels a side since
+codex/v4.0.0: the two patterns are equally accurate and their 35-element error
+ratios scatter symmetrically, so the single-run budget failed in the upper tail
+(`tools/v4_release_a100/README.md`). With the pattern matched the A100 passes
+230/230.
 
 Private peripheral and preparation tests still carry their own exact contracts.
 An optimization that changes those operations must supply its own independent
