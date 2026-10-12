@@ -33,3 +33,6 @@ dataset/
 
 # Local release/benchmark tooling; historical copies remain at 0a99235.
 tools/release/
+
+# Local profiling trees (NCU/nsys reports); only their markdown reports are tracked
+profile/
