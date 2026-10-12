@@ -1,8 +1,53 @@
 # ConverseNet — FP32 release
 
 This branch contains the FP32 implementation: full-spectrum training and
-half-spectrum inference, selected by autograd requirements. Build and API:
+general half-spectrum inference, selected by autograd requirements. Build and API:
 [Converse2D](Converse2D/README.md).
+
+The v4 development branch also provides a deterministic split-K FP32 weight
+gradient for the USRNet prior pointwise convolutions (`models/pointwise.py`,
+kernel `peripheral/pointwise_wgrad.cu`): CUDA training, contiguous NCHW
+inputs, 64 or 128 input and output channels, trainable weights. It replaces
+cuDNN's deterministic direct weight-gradient kernel, which dominated the B4
+training step, with a GEMM that streams both operands once and accumulates
+with compensated (hi, lo) sums, so its FP64 error is below the native kernel
+in both channel directions. Other shapes, inference, frozen weights and the
+`pytorch` backend retain native convolution. Forward, input/bias gradients
+and higher derivatives use native ATen; checkpoint keys are unchanged. This
+path requires AMP and both TF32 flags to be disabled. See the
+[numerical policy](test/README.md#v4-numerical-acceptance), the
+study record (record on the `claude/v4-dev` branch, `tools/v4_pointwise_wgrad/`) and the earlier
+GEMM experiments (record on the `claude/v4-dev` branch, `tools/v4_experiments/`).
+
+The explicit nearest-prior `Converse2D` module also has a CUDA inference path
+for kernel size 2 and scale 2. It solves each 2x2 phase block in FP32 with
+compensated arithmetic, fuses regularization, and removes valid padding that
+would be cropped away. Eligible outputs are contiguous. Differentiable calls,
+the `pytorch` backend and the public arbitrary-prior operator keep their
+existing paths. See the experiment record (record on the `claude/v4-dev` branch, `tools/v4_campaign/`).
+
+Two more training paths are fused on this branch. The channels-first `LayerNorm`
+of `models/util_converse.py` runs a fused CUDA training forward and first-order
+VJP for contiguous FP32 NCHW inputs with 64 or 128 channels: byte-identical
+output to the ATen expression, gradients gated by the FP32 policy, higher
+derivatives on the native expression. See
+the study record (record on the `claude/v4-dev` branch, `tools/v4_layernorm_training/`). Some training FFTs
+run their adjacent pad, scale and crop copies inside cuFFT LTO callbacks, each
+plan admitted only when a probe reproduces the ATen expression bit for bit; see
+[Converse2D](Converse2D/README.md) and
+the callback record (record on the `claude/v4-dev` branch, `tools/v4_fft_callbacks_prod/`).
+
+The fused training kernels reproduce ATen's FP32 complex multiply, whose FMA
+pattern differs between GPU architectures; the extension measures it on the
+current device at first use. With that, the release suite passes on both the
+RTX 5060 Ti (sm_120) and the A100 (sm_80, via the Colab CLI); the earlier 54
+sm_80 budget failures and their cause are recorded in
+the A100 record (record on the `claude/v4-dev` branch, `tools/v4_release_a100/`). The audited paired
+fine-tuning protocol of [roadmap_quality](tools/roadmap_quality/README.md)
+(pretrained USRNet, 250 updates, seeds 17/29/43, 100 fixed held-out crops)
+reaches the same PSNR/SSIM as the frozen baseline checkout within 1e-5 dB on
+every seed, with the training step 1.7x faster on the A100; it is short paired
+fine-tuning on fixed data, not a convergence or external-test-set claim.
 
 The project description and published results below are from the original work;
 they are not new performance or convergence measurements for this branch.

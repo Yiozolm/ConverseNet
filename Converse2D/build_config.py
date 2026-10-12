@@ -14,16 +14,20 @@ HOST_SOURCES = (
     'converse2d.cpp', 'operator.cpp', 'reference/reference.cpp',
     'inference/cache.cpp', 'inference/inference_preparation.cpp',
     'training/full_spectrum/production.cpp',
+    'training/full_spectrum/fft_callbacks.cpp',
     'peripheral/alpha_residual.cpp',
     'peripheral/layernorm.cpp',
+    'peripheral/pointwise_wgrad.cpp',
 )
 CUDA_SOURCES = (
     'inference/inference_prepare.cu', 'inference/inference_dispatch.cu',
     'inference/inference_scale1.cu', 'inference/inference_scale2.cu',
     'inference/inference_scale3.cu', 'inference/inference_generic.cu',
+    'inference/nearest_k2_s2.cu',
     'training/full_spectrum/full_fusion.cu',
     'peripheral/alpha_residual.cu',
     'peripheral/layernorm.cu',
+    'peripheral/pointwise_wgrad.cu',
 )
 _INCLUDE = re.compile(r'^\s*#include\s+"([^"]+)"\s*$', re.M)
 
@@ -49,6 +53,11 @@ def source_hashes(cuda=True):
     paths = [(name, PACKAGE / name) for name in dependency_names(cuda)]
     paths += [('../build_config.py', Path(__file__)), ('../setup.py', ROOT / 'setup.py')]
     return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in paths}
+
+def link_libraries(cuda=True):
+    # Training FFT callbacks: cuFFT plans plus NVRTC for their LTO-IR. Both
+    # resolve to the cufft/nvrtc libraries the installed torch already loads.
+    return ['cufft', 'nvrtc'] if cuda else []
 
 def compile_flags():
     cxx = ['/O2', '/std:c++17'] if os.name == 'nt' else ['-O3', '-std=c++17']

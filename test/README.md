@@ -13,26 +13,35 @@ while build checks, the CPU extension and the portable Python fallback still run
 | File | Coverage |
 | --- | --- |
 | `test_build_layout.py` | Source selection and transitive fingerprints; no Torch/compiler required |
-| `test_full_spectrum_default.py` | Full/half routing; exact FP32 output/VJP; shared/broadcast kernels, gradient masks, weak regularization and strided layouts |
-| `test_fp32_release.py` | Independent FP64 noninferiority, higher derivatives, cache/streams, dtype contracts and CPU fallback |
+| `test_full_spectrum_default.py` | Full/half routing; budgeted FP32 output/VJP; shared/broadcast kernels, gradient masks, weak regularization and strided layouts |
+| `test_fp32_release.py` | Frozen FP32 baseline, independent FP64 budgets, denominator statistics, training and three inference contexts, higher derivatives, cache/streams and dtype contracts |
+| `test_numerical_policy.py` | Budget boundaries, improved-but-different candidates, nonfinite rejection, zero baseline, outliers and report preservation |
+| `test_pointwise_wgrad.py` | Split-K pointwise weight VJP for C64-to-128 and C128-to-64: FP64 budgets against deterministic cuDNN over all gradient masks, B1/B4 and other geometries, raw-operator tails/bounds/determinism and contracts, native higher-order fallback, checkpoint compatibility and backend isolation |
+| `test_nearest_k2_s2.py` | Explicit nearest-prior FP32 inference, pad cancellation/layout, extreme finite weights/eps, CPU and differentiable fallbacks, arbitrary-prior isolation and Graph updates |
 | `test_gradient_mask.py` | All gradient subsets, broadcast reductions, higher derivatives and masked backward Graph replay; verifies unused reductions are skipped |
 | `test_inference_p0.py` | Frozen-input cache reuse without changing ATen arithmetic, cross-GradMode cache hits and layout invalidation |
 | `test_negative_metadata.py` | Lazy negative kernels, cold PSF materialization and same-pointer/version cache invalidation across all three GradMode contexts |
 | `test_psf_preparation.py` | PSF boundary/layout cases, shared-ancestor gradient order, second/third derivatives, streams and per-call kernel FFT |
-| `test_scale2_kernel_fusion.py` | Exact non-broadcast s2 kernel VJPs, weak regularization, gradient subsets, conjugated spectra and Graph replay |
-| `test_scale3_fusion.py` | Exact nine-alias reduction order, separate mean factors, broadcast VJPs, strided/weak-regularization cases and guarded fallback |
+| `test_scale2_kernel_fusion.py` | Budgeted non-broadcast s2 kernel VJPs, weak regularization, gradient subsets, conjugated spectra and Graph replay |
+| `test_scale3_fusion.py` | Budgeted nine-alias cancellation, large mean counts, broadcast VJPs, strided/weak-regularization cases and guarded fallback |
+| `test_scale1_forward_planes.py` | s1 forward plane-kernel dispatch at the 65535-row grid limit and byte parity with the original fallback kernel |
+| `test_fft_callbacks.py` | cuFFT callback FFT selection at the side-16 boundary; public s1/s2/s3, circular s1, layout, second-derivative and in-place-rebase FP64 budgets at sizes that exercise callbacks |
 | `test_batch_reduce.py` | B2/B4 shared-kernel batch reductions, original accumulation order, gradient masks, fallback geometry, higher derivatives and Graph replay |
 | `test_peripheral_fusion.py` | Alpha residual FP32 multiply/add boundaries, gradient subsets, aliases, higher derivatives, layouts and streams |
-| `test_layernorm_affine.py` | Private affine values/gradients, full-inference dispatch precedence and unchanged training statistics |
-| `test_layernorm_full.py` | Six ATen reduction geometries, alignment/tails, byte and FP64 gates, unsupported-input fallbacks, higher derivatives, streams and Graph replay |
+| `test_layernorm_affine.py` | Private affine values/gradients, full-inference dispatch precedence and fused training statistics routing |
+| `test_layernorm_full.py` | Six ATen reduction geometries, alignment/tails, byte and FP64 gates, unsupported-input fallbacks, training routing, higher derivatives, streams and Graph replay |
+| `test_layernorm_training.py` | Fused channels-first LayerNorm training: byte-exact forward, FP64-budgeted VJPs over all masks, seeded channel-vector budgets, geometries/alignment, permuted upstream, determinism, dispatch boundaries, native higher-order fallback |
 | `test_peripheral_policy.py` | CPU-only automatic dispatch boundaries for large inference tensors, frozen/differentiable inputs and all three GradMode contexts |
 | `test_cuda_graph.py` | Graph ownership, replay, invalidation and training transitions |
-| `test_pretrained_fp32.py` | DnCNN/SRResNet checkpoint and inference compatibility |
+| `test_product_pattern.py` | The fused training kernels follow the complex-product FMA rounding of ATen on this device: unambiguous measurement, byte identity with the Python FP32 expression on small-plane training cases |
+| `test_pretrained_fp32.py` | DnCNN/SRResNet/USRNet pretrained outputs and three-seed, three-step USRNet/Adam regression |
 
 `support.py` owns shared fixtures, byte comparisons and CPU/CUDA policy.
 `extension_loader.py` builds locally under `.build/` and verifies source/header
 and binary fingerprints. Tests never import fixtures from another test module.
-The FP32 tests retain their numerical thresholds, shapes and random seeds.
+Existing fixtures retain their shapes and random seeds. Public operator spatial
+comparisons use FP64 error budgets, including shared-ancestor gradients; byte
+checks still protect copying, cache consistency and private peripheral operations.
 Three additional CUDA Graph tests cover the optional execution switch, CPU
 passthrough and training passthrough inherited from main.
 
@@ -59,3 +68,117 @@ expressions and compares both Graph runners using the same model object.
 `tools/profile_fp32_roadmap.py` records a fresh full-model Torch or Nsight trace.
 The independently checked real-photo fine-tuning and resume tools live under
 `tools/roadmap_quality/`; their results do not replace numerical release gates.
+
+## v4 numerical acceptance
+
+`fp32_baseline.py` is an unchanged copy of `models/converse_core.py` from
+`0d636215e23d472825e09cc340a99f1d2ae2b78c`, with a newline-normalized SHA-256
+guard in `numerical_policy.py`. It is test-only and must not follow candidate
+arithmetic changes. Training uses its full-spectrum FP32 expression; inference
+uses its half-spectrum FP32 expression, so FFT representation differences do not
+silently become a new accuracy allowance. Both are compared against the current
+independent Python full-spectrum FP64 reference using identical FP32 input values
+promoted to FP64, including identical upstream gradients.
+
+Every output and each of dx/dprior/dweight/dbias must be finite and pass:
+
+| Regime | Relative L2 limit | Maximum absolute error limit |
+| --- | --- | --- |
+| Normal (`eps=1e-5`) | `max(1.25 * baseline, 1e-7)` | `max(1.50 * baseline, 1e-6)` |
+| Weak (`eps=1e-8`, bias=-40) | `max(1.50 * baseline, 1e-7)` | `max(1.50 * baseline, 1e-6)` |
+
+These are initial project budgets, not IEEE guarantees. The supplied specification
+does not fix the weak floor or a weak max-abs bound; this implementation starts
+with the normal floor and retains a 1.50x max-abs safety gate. There is no automatic
+2x stress exemption. Normal production inference also retains `atol=rtol=1e-5`
+smoke checks. The dynamic-range stress fixture (input multipliers 1e-3 to 1e3)
+records allclose diagnostically because a fixed spatial absolute tolerance is
+not scale invariant; it still must pass BOTH normal FP64 budgets. Initial
+calibration on the unchanged CUDA implementation exposed six such smoke failures
+while all 1,760 FP64 comparisons passed; the original failed report is retained.
+Floors apply separately to each tensor; relative percentiles use a diagnostic
+near-zero floor and never decide admission. A ratio with a zero baseline and
+nonzero candidate is JSON `null`; the explicit budget still decides pass/fail.
+
+The full matrix covers s1–s4, all four kernel broadcasts, contiguous/sliced/
+transposed inputs, odd/even extents, width one, partial block tails, normalized
+kernels, dynamic range, near-zero inputs/kernels, cancellation, and weak kernel
+amplitudes 0, 1e-6 and 1e-3. Each fixture exercises training, no_grad,
+inference_mode, and GradMode with frozen inputs. The CPU fallback runs the fast
+matrix independently; CUDA absence is a skip, never a CUDA validation success.
+
+```sh
+# Fast PR gate: 16 cases, all scales/broadcasts, full gradients and inference.
+CONVERSE2D_NUMERICAL_LEVEL=fast python -m unittest discover -s test -p test_fp32_release.py -v
+# Arithmetic changes and release: full matrix (default), plus all semantic tests.
+python -m unittest discover -s test -p 'test_*.py' -v
+# Optional historical bit identity in public spatial comparisons.
+CONVERSE2D_EXACT_REGRESSION=1 python -m unittest discover -s test -p test_full_spectrum_default.py -v
+```
+
+On PowerShell set `$env:CONVERSE2D_NUMERICAL_LEVEL='fast'` (remove it for a full
+release run) and invoke `./tools/run.ps1` with the same Python arguments.
+Use `CONVERSE_PYTHON` to select an existing PyTorch environment when needed.
+
+Reports are uniquely named JSON files under `artifacts/fp32_release/` (override
+with `CONVERSE2D_REPORT_DIR`). They preserve failed rows, max-abs/relative-L2,
+P50/P90/P99/P99.9/max diagnostic relative error, effective limits and ratios,
+FP64 denominator min/P01/median/max, baseline identity, source/binary checked-build
+manifest, Git state, device and PyTorch/CUDA versions. Keep the initial run and
+each optimization's reports together with complete-operator timing results.
+Never overwrite a failed experiment or refresh the baseline to make it pass.
+
+Pretrained DnCNN/SRResNet and USRNet s1–s4 record model output max-abs/relative-L2
+against Python FP32 and keep the 1e-5 spatial gate. No PSNR/SSIM claim is made
+without a ground-truth evaluation dataset. The short USRNet training test uses
+two iterations/one block, fixed data and initial weights for seeds 17/29/43,
+three Adam steps, and records output, loss, gradients, updated parameters and
+optimizer tensors with a 3e-5 model smoke tolerance. It is not proof
+of convergence; long training/quality campaigns remain necessary for release
+claims involving convergence.
+
+The guarded USRNet pointwise weight gradient has separate real-image B4 tests
+under `tools/v4_experiments/`. The ordinary small model smoke never activates
+this path. Promotion additionally requires all 140 actual prior pointwise
+calls (70 active and 70 native), three B4 seeds with three Adam updates, and
+paired complete-layer and complete-model timings. The model control switches
+only `PointwiseConv2d.backend` to `pytorch`, keeping every Converse solver on
+the same checked CUDA build. `wgrad_production_study.py` runs the actual
+production module and records its Python source hashes separately from the
+C++ binary manifest. Prototype results do not substitute for production tests.
+
+The fused LayerNorm training VJP (`test_layernorm_training.py`) gates its channel
+vectors dweight/dbias with the seeded budget over `SEEDED_MIN_SEEDS` seeds per
+geometry, not per seed: they are cancelling sums over every pixel, and the
+2026-10-12 A100 release run plus eight-seed sweeps on both GPUs
+(`tools/v4_release_a100/`) showed 1–3 of 8 seeds missing the single-seed factor
+on the same geometries while every seeded verdict passed. dx keeps a per-seed
+rel-L2 gate; its max-abs is gated over seeds because values of a few units carry
+1–2 ulp errors, at the max-abs floor, from per-pixel statistics that the frozen
+forward kernel and ATen round differently. The forward output stays byte-exact
+per seed.
+
+ATen's FP32 complex multiply is one FMA per component, and which product the
+SASS fuses differs by architecture (sm_120 fuses `ai*br` in the imaginary part,
+sm_80 `ar*bi`). The fused training kernels follow the pattern measured against
+`at::mul` on the current device at first use; `test_product_pattern.py` checks
+the measurement is unambiguous and that small-plane training results are byte-
+identical to the Python FP32 expression. Before this (bf7df51) the A100 release
+suite had 54 FP64-budget failures on planes below 16 pixels a side since
+codex/v4.0.0: the two patterns are equally accurate and their 35-element error
+ratios scatter symmetrically, so the single-run budget failed in the upper tail
+(`tools/v4_release_a100/` on the `claude/v4-dev` branch). With the pattern matched the A100 passes
+230/230.
+
+Private peripheral and preparation tests still carry their own exact contracts.
+An optimization that changes those operations must supply its own independent
+FP64 budget test; do not globally weaken `assert_bytes_equal`. Cache and stream
+consistency, spectrum routing, dtype rejection, higher derivatives and per-call
+training kernel FFT checks remain required. Fast-math, AMP and TF32 stay disabled.
+
+The opt-in FP16/BF16 boundary study (record on the `claude/v4-dev` branch, `tools/v4_mixed_precision/`)
+has separate experimental tests and quantized-reference budgets. Its Python
+adapter casts low precision storage to FP32 before calling this same checked
+operator. Production dtype rejection and the FP32 budgets above still apply.
+Pretrained quantization sensitivity and short optimizer trajectories are
+research evidence, not mixed-precision production or convergence approval.

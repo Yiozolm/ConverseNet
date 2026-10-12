@@ -80,6 +80,7 @@ class FullSolve : public torch::autograd::Function<FullSolve> {
   public:
     static Tensor forward(torch::autograd::AutogradContext *ctx, Tensor y,
                           Tensor p, Tensor k, Tensor l, int64_t s) {
+        ensure_product_pattern();
         if (s == 1) {
             auto out = full_scale1_forward_cuda(y, p, k, l);
             ctx->save_for_backward({y, p, k, l, out[1], out[2]});
@@ -118,6 +119,7 @@ class FullSolve : public torch::autograd::Function<FullSolve> {
         const auto s = ctx->saved_data["s"].toInt();
         const bool shared = ctx->saved_data["shared"].toBool();
         c10::cuda::CUDAGuard guard(a[0].device());
+        ensure_product_pattern();
         torch::autograd::variable_list result(5);
         if (at::GradMode::is_enabled()) {
             if (shared) {

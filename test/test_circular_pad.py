@@ -25,6 +25,8 @@ import torch
 import torch.nn.functional as F
 from support import CUDATestCase, profiled
 from models.converse_core import converse2d_reference, converse2d_fp32
+from fp32_baseline import converse2d_reference as baseline_reference
+from numerical_policy import assert_budget
 
 
 def python_pad_complex(x, padding):
@@ -42,7 +44,8 @@ def old_spatial(x, weight, bias, padding, eps=1e-5, solver=None):
 
 
 def python_spatial(x, weight, bias, padding, eps=1e-5):
-    return old_spatial(x, weight, bias, padding, eps, converse2d_reference)
+    reference = baseline_reference if x.dtype == torch.float32 else converse2d_reference
+    return old_spatial(x, weight, bias, padding, eps, reference)
 
 
 def candidate_spatial(x, weight, bias, padding, eps=1e-5):
@@ -80,6 +83,13 @@ def capture(fn, raw, upstream, padding=2, eps=1e-5,
     requested = [x for x in data if x.requires_grad]
     grad = torch.autograd.grad(out, requested, upstream.to(device="cuda", dtype=dtype))
     return (out, *grad)
+
+
+def check_spatial_budget(test, actual, raw, upstream, **kwargs):
+    baseline = capture(python_spatial, raw, upstream, **kwargs)
+    high = capture(python_spatial, raw, upstream, dtype=torch.float64, **kwargs)
+    assert_budget(test, actual, baseline, high,
+                  regime='weak' if kwargs.get('eps', 1e-5) < 1e-5 else 'normal')
 
 
 def complex_upstream(shape, kind):
@@ -230,7 +240,7 @@ class CircularPreparationContracts(CUDATestCase):
                 with self.subTest(batch=batch, broadcast=(kb, kc)):
                     actual = capture(candidate_spatial, raw, g)
                     self.assert_results_equal(actual, capture(old_spatial, raw, g))
-                    self.assert_results_equal(actual, capture(python_spatial, raw, g))
+                    check_spatial_budget(self, actual, raw, g)
         # Actual prior shape without 35 model calls; memory/layout representative.
         raw, g = fixture(batch=4, channels=128, height=96, width=96)
         self.assert_results_equal(capture(candidate_spatial, raw, g),
@@ -242,20 +252,21 @@ class CircularPreparationContracts(CUDATestCase):
             if not any(bits):
                 continue
             with self.subTest(requires_grad=bits):
-                self.assert_results_equal(capture(candidate_spatial, raw, g, needs=bits),
-                                          capture(python_spatial, raw, g, needs=bits))
+                check_spatial_budget(self, capture(candidate_spatial, raw, g, needs=bits),
+                                     raw, g, needs=bits)
         for requested in ((0,), (1,), (2,), (0, 2), (0, 1, 2)):
             results = []
-            for fn in (candidate_spatial, python_spatial):
-                a = leaves(raw)
+            for fn, dtype in ((candidate_spatial, torch.float32), (python_spatial, torch.float32),
+                              (python_spatial, torch.float64)):
+                a = leaves(raw, dtype=dtype)
                 out = fn(*a, 2)
-                results.append((out, *torch.autograd.grad(out, [a[i] for i in requested], g.cuda())))
+                results.append((out, *torch.autograd.grad(out, [a[i] for i in requested], g.cuda().to(dtype))))
             with self.subTest(requested=requested):
-                self.assert_results_equal(*results)
+                assert_budget(self, *results)
 
     def test_independent_fp64_error_noninferiority_with_padding(self):
         # FP64 runs ONLY the independent Python expression; production input
-        # stays FP32. No tolerance is added to either error comparison.
+        # stays FP32. Apply the same output/VJP budget as the public entry point.
         for batch in (1, 4):
             for weak in (None, 0., 1e-6):
                 raw, g = fixture(batch=batch, weak=weak)
@@ -263,24 +274,18 @@ class CircularPreparationContracts(CUDATestCase):
                 high = capture(python_spatial, raw, g, eps=eps, dtype=torch.float64)
                 reference = capture(python_spatial, raw, g, eps=eps)
                 actual = capture(candidate_spatial, raw, g, eps=eps)
-                self.assert_results_equal(actual, reference)
-                for name, a, p, r in zip(("out", "dx", "dweight", "dbias"), actual, reference, high):
-                    def errors(t):
-                        difference = t.double() - r
-                        return (difference.abs().max().item(),
-                                (difference.norm() / r.norm().clamp_min(1e-300)).item())
-                    ae, pe = errors(a), errors(p)
-                    with self.subTest(batch=batch, weak=weak, tensor=name):
-                        self.assertLessEqual(ae[0], pe[0])
-                        self.assertLessEqual(ae[1], pe[1])
+                with self.subTest(batch=batch, weak=weak):
+                    assert_budget(self, actual, reference, high,
+                                  regime='normal' if weak is None else 'weak')
 
     def test_shared_ancestor_residual_and_repeated_operator_accumulation(self):
         for batch in (2, 4):
             raw, up = fixture(batch=batch)
             for dynamic_kernel in (False, True):
                 results = []
-                for fn in (candidate_spatial, old_spatial, python_spatial):
-                    base, weight, bias = leaves(raw)
+                for fn, dtype in ((candidate_spatial, torch.float32), (old_spatial, torch.float32),
+                                  (python_spatial, torch.float32), (python_spatial, torch.float64)):
+                    base, weight, bias = leaves(raw, dtype=dtype)
                     x = base.sin()
                     if dynamic_kernel:
                         weight = base.mean(0, keepdim=True)[..., :3, :3].reshape(1, 3, 9)
@@ -294,7 +299,7 @@ class CircularPreparationContracts(CUDATestCase):
                     results.append((output, *torch.autograd.grad(loss, requested)))
                 with self.subTest(batch=batch, dynamic=dynamic_kernel):
                     self.assert_results_equal(results[0], results[1])
-                    self.assert_results_equal(results[0], results[2])
+                    assert_budget(self, results[0], results[2], results[3])
 
     def test_complete_second_third_derivatives_and_repeated_backward(self):
         raw, g = fixture(batch=2, channels=2, height=4, width=5)
@@ -307,8 +312,9 @@ class CircularPreparationContracts(CUDATestCase):
                                          create_graph=True)
             third = torch.autograd.grad(sum(v.square().mean() for v in second), a)
             results.append((out, *first, *second, *third))
+        high_output = capture(python_spatial, raw, g, eps=.2, dtype=torch.float64)[0]
+        assert_budget(self, (results[0][0],), (results[2][0],), (high_output,))
         for other in results[1:]:
-            self.assert_bytes_equal(results[0][0], other[0], "higher-order output")
             # Existing release higher-order policy: FP32 ATen, 3e-5 tolerance.
             for a, b in zip(results[0][1:], other[1:]):
                 self.assertTrue(torch.isfinite(a).all().item())
@@ -326,8 +332,9 @@ class CircularPreparationContracts(CUDATestCase):
         raw, g = fixture(batch=4)
         for inplace in (False, True):
             results, layouts = [], []
-            for fn in (candidate_spatial, old_spatial, python_spatial):
-                a = leaves(raw)
+            for fn, dtype in ((candidate_spatial, torch.float32), (old_spatial, torch.float32),
+                              (python_spatial, torch.float32), (python_spatial, torch.float64)):
+                a = leaves(raw, dtype=dtype)
                 out = fn(*a, 2, .1)
                 layouts.append((out.stride(), out.storage_offset(), out._base is not None,
                                 torch._C._is_alias_of(out, a[0])))
@@ -335,14 +342,14 @@ class CircularPreparationContracts(CUDATestCase):
                 # Function can forbid this and alter an existing public API.
                 if inplace:
                     out.mul_(.875).add_(.125)
-                results.append((out, *torch.autograd.grad(out, a, g.cuda())))
+                results.append((out, *torch.autograd.grad(out, a, g.cuda().to(dtype))))
             with self.subTest(inplace=inplace):
                 self.assertEqual(layouts[0], layouts[1])
                 self.assertEqual(layouts[0], layouts[2])
                 self.assertTrue(layouts[0][2])
                 self.assertFalse(layouts[0][3])
                 self.assert_results_equal(results[0], results[1])
-                self.assert_results_equal(results[0], results[2])
+                assert_budget(self, results[0], results[2], results[3])
 
     def test_kernel_fft_runs_per_call_and_parameter_updates_are_observed(self):
         raw, g = fixture(batch=2)

@@ -3,3 +3,6 @@
 #include <string>
 at::Tensor converse2d_forward(at::Tensor, at::Tensor, at::Tensor, at::Tensor,
                               int64_t, double, const std::string &);
+
+at::Tensor converse2d_nearest_k2_s2(at::Tensor, at::Tensor, at::Tensor,
+                                    double, const std::string&);

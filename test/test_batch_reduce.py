@@ -3,8 +3,10 @@ import unittest
 
 import torch
 
-from support import CUDATestCase, compare_spatial, leaves
+from support import CUDATestCase, compare_spatial, leaves, check_operator_results
 from models.converse_core import converse2d_reference
+from fp32_baseline import converse2d_reference as baseline_reference
+from numerical_policy import assert_budget
 
 
 def fixture(batch, *, channels=3, height=5, width=7, kb=1, kc=None, weak=None):
@@ -26,7 +28,7 @@ def fixture(batch, *, channels=3, height=5, width=7, kb=1, kc=None, weak=None):
 
 
 class BatchReduceCUDA(CUDATestCase):
-    def test_all_independent_masks_and_shared_masks_match_python_bytes(self):
+    def test_all_independent_masks_and_shared_masks_meet_fp64_budget(self):
         for batch in (2, 4):
             raw, upstream = fixture(batch)
             for mask in range(1, 16):
@@ -99,8 +101,9 @@ class BatchReduceCUDA(CUDATestCase):
             upstream = torch.randn(batch, 3, 5, 7, generator=generator).cuda()
             for shared in (False, True):
                 results = []
-                for solve in (torch.ops.converse2d.forward, converse2d_reference):
-                    base = raw.cuda().requires_grad_()
+                for solve, dtype in ((torch.ops.converse2d.forward, torch.float32),
+                                     (baseline_reference, torch.float32), (converse2d_reference, torch.float64)):
+                    base = raw.cuda().to(dtype).requires_grad_()
                     x = base.sin()
                     prior = x if shared else base.cos()
                     kernel = base.mean(0, keepdim=True)[..., :3, :3].reshape(1, 3, 9).softmax(-1).reshape(1, 3, 3, 3)
@@ -109,11 +112,11 @@ class BatchReduceCUDA(CUDATestCase):
                     loss = (output * upstream).sum() + .03 * base.square().sum()
                     results.append((output, *torch.autograd.grad(loss, base)))
                 with self.subTest(batch=batch, shared=shared):
-                    self.assert_results_equal(*results)
+                    assert_budget(self, *results)
 
     def test_conjugated_noncontiguous_spectral_inputs_and_upstream(self):
         # Match the pre-existing arbitrary-complex spectral contract; the
-        # public spatial comparisons above retain their zero-byte-margin gate.
+        # public spatial comparisons above use independent FP64 budgets.
         def reference(y, p, k, regularizer):
             power = k.real.square() + k.imag.square()
             q = (y - k * p) / (power + regularizer)
@@ -195,7 +198,7 @@ class BatchReduceCUDA(CUDATestCase):
         torch.cuda.current_stream().wait_stream(stream)
         graph.replay()
         torch.cuda.synchronize()
-        self.assert_results_equal(actual, expected)
+        check_operator_results(self, actual, data, upstream.cuda(), 1, .1)
         graph.reset()
 
 

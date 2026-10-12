@@ -5,6 +5,7 @@ import unittest
 import torch
 
 from support import CUDATestCase, compare_spatial, fixture, leaves
+from numerical_policy import assert_budget
 
 
 def spectral_reference(y, prior, kernel, regularizer):
@@ -18,7 +19,7 @@ def spectral_reference(y, prior, kernel, regularizer):
 
 
 class Scale3FusionCUDA(CUDATestCase):
-    def test_all_gradient_masks_and_broadcasts_match_python_bytes(self):
+    def test_all_gradient_masks_and_broadcasts_meet_fp64_budget(self):
         for kb, kc in ((1, 1), (1, 3), (2, 1), (2, 3)):
             raw, upstream = fixture(3, kb=kb, kc=kc)
             for mask in range(1, 16):
@@ -68,12 +69,12 @@ class Scale3FusionCUDA(CUDATestCase):
         regularizer = torch.ones(1, 1, 1, 1, device="cuda")
         upstream = prior.flip(-2).contiguous()
         results = []
-        for call in (lambda *a: torch.ops.converse2d._training_full_spectral(*a, 3),
-                     spectral_reference):
-            y = torch.zeros(1, 1, 1, 2, dtype=torch.complex64, device="cuda", requires_grad=True)
-            output = call(y, prior, kernel, regularizer)
-            results.append((output, *torch.autograd.grad(output, y, upstream)))
-        self.assert_results_equal(*results)
+        for call, dtype in ((lambda *a: torch.ops.converse2d._training_full_spectral(*a, 3), torch.complex64),
+                            (spectral_reference, torch.complex64), (spectral_reference, torch.complex128)):
+            y = torch.zeros(1, 1, 1, 2, dtype=dtype, device="cuda", requires_grad=True)
+            output = call(y, prior.to(dtype), kernel.to(dtype), regularizer.to(y.real.dtype))
+            results.append((output, *torch.autograd.grad(output, y, upstream.to(dtype))))
+        assert_budget(self, *results)
 
     def test_large_mean_counts_keep_distinct_prediction_and_power_factors(self):
         # The first inexact integer region is inexpensive enough to exercise
@@ -94,9 +95,9 @@ class Scale3FusionCUDA(CUDATestCase):
         regularizer = torch.ones(1, 1, 1, 1, device="cuda")
         actual = torch.ops.converse2d._training_full_spectral(y, prior, kernel, regularizer, 3)
         expected = spectral_reference(y, prior, kernel, regularizer)
-        self.assertTrue(torch.isfinite(actual).all().item())
-        self.assertTrue(torch.equal(actual.view(torch.int32), expected.view(torch.int32)),
-                        "large-count forward must preserve ATen mean factors and output bits")
+        high = spectral_reference(y.to(torch.complex128), prior.to(torch.complex128),
+                                  kernel.to(torch.complex128), regularizer.double())
+        assert_budget(self, (actual,), (expected,), (high,))
 
     def test_alias_reduction_dispatch_and_width_one_fallback(self):
         for width in (1, 2, 7):
@@ -120,7 +121,7 @@ class Scale3FusionCUDA(CUDATestCase):
 
     def test_conjugated_nonhermitian_spectra(self):
         # Retain the existing internal-spectrum tolerance; spatial admission
-        # and the targeted cancellation/count tests above use zero byte margin.
+        # and the targeted cancellation/count tests above use FP64 budgets.
         for kb, kc in ((1, 1), (1, 3), (2, 1), (2, 3)):
             generator = torch.Generator().manual_seed(109471 + 7 * kb + kc)
             raw = [torch.randn(2, 3, 5, 7, dtype=torch.complex64, generator=generator),

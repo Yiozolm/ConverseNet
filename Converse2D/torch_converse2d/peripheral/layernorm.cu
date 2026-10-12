@@ -1,6 +1,8 @@
 #include "layernorm.h"
 #include <algorithm>
 #include <cstdint>
+#include <tuple>
+#include <type_traits>
 #include <cuda_runtime.h>
 #include <c10/cuda/CUDAException.h>
 #include <c10/cuda/CUDAStream.h>
@@ -62,6 +64,7 @@ int reduction_stride(int channels,int pixels,int hw,uintptr_t pointer) {
 template<int Channels>
 __global__ void full_layernorm_parallel_two_pass(
     const float* input,const float* weight,const float* bias,float* output,
+    float* mean_out,float* denominator_out,
     int pixels,int hw,int mean_stride,int variance_stride,float factor,float eps) {
     // A warp spans adjacent pixels; y lanes reproduce ATen's input partitions.
     // Every thread in a tail CTA participates in every barrier.
@@ -98,7 +101,13 @@ __global__ void full_layernorm_parallel_two_pass(
     if(y==0) {
         if(valid) {
             const float variance=__fmul_rn(scratch[0][x],factor);
-            denominators[x]=__fsqrt_rn(__fadd_rn(variance,eps));
+            const float denominator=__fsqrt_rn(__fadd_rn(variance,eps));
+            denominators[x]=denominator;
+            // Training keeps the per-pixel statistics for the fused backward.
+            if(denominator_out) {
+                mean_out[pixel]=mean;
+                denominator_out[pixel]=denominator;
+            }
         } else denominators[x]=1.f;
     }
     __syncthreads();
@@ -115,13 +124,112 @@ __global__ void full_layernorm_parallel_two_pass(
     }
 }
 
+// Fused first-order VJP. One thread owns one pixel and walks its channels, so
+// a warp reads 32 adjacent pixels of each channel plane in one transaction.
+// dx = (1/sigma) * (g*w - mean_c(g*w) - xhat * mean_c(g*w*xhat)); the channel
+// vectors dweight = sum(g*xhat) and dbias = sum(g) are reduced across the
+// block in a fixed order (xor-shuffle tree, then warps in index order) and
+// handed back as per-block partials so the host finishes with one ATen sum.
+constexpr int kBackwardThreads=128;
+constexpr int kBackwardWarps=kBackwardThreads/32;
+
+// Knuth TwoSum: hi+lo == hi_old+lo_old+value exactly (barring overflow); every
+// operation is an explicit IEEE round so no contraction can reorder it.
+__device__ __forceinline__ void two_sum_accumulate(float& hi,float& lo,float value) {
+    const float s=__fadd_rn(hi,value);
+    const float bb=__fsub_rn(s,hi);
+    const float err=__fadd_rn(__fsub_rn(hi,__fsub_rn(s,bb)),__fsub_rn(value,bb));
+    hi=s;
+    lo=__fadd_rn(lo,err);
+}
+
+template<int Channels>
+__global__ void __launch_bounds__(kBackwardThreads) full_layernorm_backward(
+    const float* __restrict__ grad,const float* __restrict__ input,
+    const float* __restrict__ mean,const float* __restrict__ denominator,
+    const float* __restrict__ weight,float* __restrict__ grad_input,
+    float* __restrict__ partials,int pixels,int hw,bool needs_input,bool needs_params) {
+    __shared__ float w[Channels];
+    __shared__ float sums[kBackwardWarps][2][Channels];
+    const int tid=threadIdx.x,lane=tid&31,warp=tid>>5;
+    for(int c=tid;c<Channels;c+=kBackwardThreads)w[c]=weight[c];
+    __syncthreads();
+    const int pixel=int(blockIdx.x)*kBackwardThreads+tid;
+    const bool valid=pixel<pixels;
+    const int base=valid ? (pixel/hw)*Channels*hw+pixel%hw : 0;
+    const float m=valid ? mean[pixel] : 0.f;
+    const float d=valid ? denominator[pixel] : 1.f;
+    // xhat is the forward's own normalized value: the same division, not a
+    // rounded reciprocal product. The two channel means are 64/128-term sums
+    // whose rounding enters every dx element of the pixel, so they accumulate
+    // as compensated (hi, lo) pairs; the order stays the serial channel order.
+    // Together these take the fused dx from 1.15x to <= 1.0x of the ATen
+    // expression's FP64 error (tools/v4_layernorm_training/README.md).
+    float sum_g=0.f,sum_g_lo=0.f,sum_gx=0.f,sum_gx_lo=0.f;
+    #pragma unroll 4
+    for(int c=0;c<Channels;++c) {
+        float g=0.f,xhat=0.f;
+        if(valid) {
+            const int i=base+c*hw;
+            g=grad[i];
+            xhat=__fdiv_rn(__fsub_rn(input[i],m),d);
+        }
+        const float gw=__fmul_rn(g,w[c]);
+        two_sum_accumulate(sum_g,sum_g_lo,gw);
+        two_sum_accumulate(sum_gx,sum_gx_lo,__fmul_rn(gw,xhat));
+        if(needs_params) {
+            float pw=__fmul_rn(g,xhat),pb=g;
+            #pragma unroll
+            for(int offset=16;offset>0;offset>>=1) {
+                pw=__fadd_rn(pw,__shfl_xor_sync(0xffffffffu,pw,offset));
+                pb=__fadd_rn(pb,__shfl_xor_sync(0xffffffffu,pb,offset));
+            }
+            if(lane==0) {
+                sums[warp][0][c]=pw;
+                sums[warp][1][c]=pb;
+            }
+        }
+    }
+    if(needs_input && valid) {
+        constexpr float factor=1.f/Channels;
+        const float a=__fmul_rn(__fadd_rn(sum_g,sum_g_lo),factor);
+        const float b=__fmul_rn(__fadd_rn(sum_gx,sum_gx_lo),factor);
+        #pragma unroll 4
+        for(int c=0;c<Channels;++c) {
+            const int i=base+c*hw;
+            const float xhat=__fdiv_rn(__fsub_rn(input[i],m),d);
+            const float gw=__fmul_rn(grad[i],w[c]);
+            grad_input[i]=__fdiv_rn(__fsub_rn(__fsub_rn(gw,a),__fmul_rn(xhat,b)),d);
+        }
+    }
+    if(needs_params) {
+        __syncthreads();
+        for(int t=tid;t<2*Channels;t+=kBackwardThreads) {
+            const int k=t/Channels,c=t%Channels;
+            float s=sums[0][k][c];
+            #pragma unroll
+            for(int i=1;i<kBackwardWarps;++i)s=__fadd_rn(s,sums[i][k][c]);
+            partials[(size_t(blockIdx.x)*2+k)*Channels+c]=s;
+        }
+    }
+}
+
 } // namespace
 
 at::Tensor channel_layernorm_cuda(const at::Tensor& input,const at::Tensor& weight,
-                                       const at::Tensor& bias,double eps) {
+                                       const at::Tensor& bias,double eps,
+                                       at::Tensor* mean_out,at::Tensor* denominator_out) {
     auto output=at::empty(input.sizes(),input.options());
     const auto hw=input.size(2)*input.size(3);
     const auto pixels=input.size(0)*hw;
+    float* mean_pointer=nullptr;
+    float* denominator_pointer=nullptr;
+    if(mean_out && denominator_out) {
+        *mean_out=at::empty({pixels},input.options());
+        *denominator_out=at::empty({pixels},input.options());
+        mean_pointer=mean_out->data_ptr<float>();
+        denominator_pointer=denominator_out->data_ptr<float>();
+    }
     const float factor=static_cast<float>(pixels)/static_cast<float>(input.numel());
     const int mean_stride=reduction_stride(int(input.size(1)),int(pixels),int(hw),
         reinterpret_cast<uintptr_t>(input.const_data_ptr()));
@@ -134,12 +242,54 @@ at::Tensor channel_layernorm_cuda(const at::Tensor& input,const at::Tensor& weig
     const auto stream=c10::cuda::getCurrentCUDAStream(input.get_device());
     if(input.size(1)==64)
         full_layernorm_parallel_two_pass<64><<<grid,block,0,stream>>>(input.const_data_ptr<float>(),weight.const_data_ptr<float>(),
-            bias.const_data_ptr<float>(),output.data_ptr<float>(),int(pixels),int(hw),mean_stride,variance_stride,factor,float(eps));
+            bias.const_data_ptr<float>(),output.data_ptr<float>(),mean_pointer,denominator_pointer,
+            int(pixels),int(hw),mean_stride,variance_stride,factor,float(eps));
     else
         full_layernorm_parallel_two_pass<128><<<grid,block,0,stream>>>(input.const_data_ptr<float>(),weight.const_data_ptr<float>(),
-            bias.const_data_ptr<float>(),output.data_ptr<float>(),int(pixels),int(hw),mean_stride,variance_stride,factor,float(eps));
+            bias.const_data_ptr<float>(),output.data_ptr<float>(),mean_pointer,denominator_pointer,
+            int(pixels),int(hw),mean_stride,variance_stride,factor,float(eps));
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return output;
+}
+
+std::tuple<at::Tensor,at::Tensor,at::Tensor> channel_layernorm_backward_cuda(
+    const at::Tensor& grad_output,const at::Tensor& input,const at::Tensor& mean,
+    const at::Tensor& denominator,const at::Tensor& weight,
+    bool needs_input,bool needs_weight,bool needs_bias) {
+    const auto channels=input.size(1);
+    const auto hw=input.size(2)*input.size(3);
+    const auto pixels=input.size(0)*hw;
+    const bool needs_params=needs_weight || needs_bias;
+    at::Tensor grad_input,grad_weight,grad_bias,partials;
+    if(needs_input)grad_input=at::empty(input.sizes(),input.options());
+    const int blocks=int((pixels+kBackwardThreads-1)/kBackwardThreads);
+    if(needs_params)partials=at::empty({blocks,2,channels},input.options());
+    const auto stream=c10::cuda::getCurrentCUDAStream(input.get_device());
+    const auto launch=[&](auto tag) {
+        constexpr int C=decltype(tag)::value;
+        full_layernorm_backward<C><<<blocks,kBackwardThreads,0,stream>>>(
+            grad_output.const_data_ptr<float>(),input.const_data_ptr<float>(),
+            mean.const_data_ptr<float>(),denominator.const_data_ptr<float>(),
+            weight.const_data_ptr<float>(),needs_input ? grad_input.data_ptr<float>() : nullptr,
+            needs_params ? partials.data_ptr<float>() : nullptr,
+            int(pixels),int(hw),needs_input,needs_params);
+    };
+    if(channels==64)launch(std::integral_constant<int,64>{});
+    else launch(std::integral_constant<int,128>{});
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    if(needs_params) {
+        // Fixed-order ATen reduction over the per-block partials; separate
+        // storage so neither accumulated parameter gradient aliases the other.
+        if(needs_weight) {
+            grad_weight=at::empty({channels},input.options());
+            at::sum_out(grad_weight,partials.select(1,0),{0});
+        }
+        if(needs_bias) {
+            grad_bias=at::empty({channels},input.options());
+            at::sum_out(grad_bias,partials.select(1,1),{0});
+        }
+    }
+    return {grad_input,grad_weight,grad_bias};
 }
 
 } // namespace converse2d::peripheral

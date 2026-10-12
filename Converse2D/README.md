@@ -14,14 +14,55 @@ direct indexed copies. Eligible s2 kernels without batch/channel broadcast
 also form their kernel gradient in the fused VJP, preserving the existing
 FP32 operation boundaries and broadcast fallback.
 
-`torch.no_grad()`, `torch.inference_mode()`, or all-frozen inputs select the
-half-spectrum inference path, including versioned fixed-kernel caches and
+The fused kernels reproduce ATen's FP32 complex multiply, which rounds each
+component once as a single FMA; which of the two products the SASS fuses
+differs by architecture (sm_120 fuses `ai*br` in the imaginary part, sm_80
+`ar*bi`). At the first differentiable call on a device the extension compares
+`at::mul` with both roundings on 65536 random pairs and makes the kernels
+follow the matching one; `torch.ops.converse2d._training_product_pattern()`
+reports the measurement and `CONVERSE2D_PRODUCT_PATTERN=0..3` forces a pattern
+for diagnosis. The measurement cannot run inside CUDA graph capture.
+
+Some CUDA training FFTs do their adjacent copies inside the transform, through
+cuFFT LTO callbacks compiled at run time with NVRTC:
+- the input FFT reads real or circularly padded `x` as `(x, +0)`;
+- the output IFFT applies ATen's `1/N` scaling at its store;
+- the real/crop VJP reads the gradient straight into the padded spectrum.
+
+Each callback plan is admitted only if a random probe reproduces the replaced
+ATen expression bit for bit. Shapes whose callback plan uses a different FFT
+algorithm keep ATen; on the RTX 5060 Ti this includes the unpadded 96x96 IFFT.
+The kernel FFT and every VJP expression stay ATen. Planes with a side below 16,
+plans cuFFT cannot create, and stream capture without a cached plan also use
+ATen. Set `CONVERSE2D_FFT_CALLBACKS=0` to force ATen everywhere, or a comma list
+of `real,circular,inverse,crop_embed` to enable only those sites.
+
+For the public arbitrary-prior `forward`, `torch.no_grad()`,
+`torch.inference_mode()`, or all-frozen inputs select the half-spectrum
+inference path, including versioned fixed-kernel caches and
 graph-owned caches. `model.eval()` alone does not disable gradients.
 Frozen inputs under GradMode keep their existing ATen half-spectrum solve;
 they can reuse fixed-kernel preparation without switching its rounding order.
 Cache entries snapshot kernel sizes, strides and storage offset as well as its
 identity/version. First-order backward skips unused gradient outputs and
 reductions; higher-order derivatives keep the ATen fallback.
+
+The Python `Converse2D` module establishes an exact nearest-upsampled prior.
+For CUDA inference with kernel size 2 and scale 2, its private `_nearest_k2_s2`
+entry instead uses a pixel-local FP32 solve. Two-component FP32 accumulation
+and division correction meet the same frozen-FP32/independent-FP64 budgets;
+device arithmetic never uses FP64. Regularization is computed in that kernel.
+An exceptional power-of-two rescaling handles finite intermediates that would
+otherwise overflow the compensated calculation. This is not a guarantee of
+accurate results for every finite FP32 input.
+
+Valid small padding is omitted because cropping complete 2x2 phase blocks
+cancels it. This eligible module output is contiguous with storage offset zero,
+instead of a view into the padded output. Invalid padding retains the original
+errors; larger valid padding still uses pad/solve/crop. The fast path requires
+normal-range FP32 `eps`; other positive finite values retain padded FFT
+semantics. CPU, differentiable calls, arbitrary priors and `backend="pytorch"`
+keep their existing routing, gradient order and higher derivatives.
 
 ## Build
 

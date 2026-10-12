@@ -8,4 +8,8 @@ at::Tensor spatial(at::Tensor x, at::Tensor prior, at::Tensor weight,
 at::Tensor circular_pad_complex(at::Tensor x,int64_t padding);
 at::Tensor circular_s1(at::Tensor x,at::Tensor weight,at::Tensor bias,int64_t padding,double eps);
 at::Tensor real_crop(at::Tensor spectrum,int64_t padding);
+// Measures, once per device, which product ATen's FP32 complex multiply fuses
+// and makes the fused kernels follow it; see full_fusion.cu.
+void ensure_product_pattern();
+at::Tensor product_pattern_report();
 } // namespace converse2d::full_training

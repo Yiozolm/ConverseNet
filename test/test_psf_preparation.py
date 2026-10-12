@@ -3,12 +3,14 @@ import unittest
 
 import torch
 
-from support import CUDATestCase, fixture, leaves
+from support import CUDATestCase, fixture, leaves, check_operator_results
 from models.converse_core import converse2d_reference
+from fp32_baseline import converse2d_reference as baseline_reference
+from numerical_policy import assert_budget
 
 
 class PSFPreparationCUDA(CUDATestCase):
-    def test_kernel_layouts_and_padding_boundaries_keep_bytes(self):
+    def test_kernel_layouts_and_padding_boundaries_meet_budget(self):
         cases = ((1, 1, 1, 1, 1), (1, 3, 5, 3, 5), (1, 3, 6, 3, 2),
                  (1, 4, 5, 2, 5), (2, 2, 3, 4, 6), (3, 3, 4, 2, 3), (4, 2, 3, 3, 4))
         for scale, h, w, kh, kw in cases:
@@ -43,7 +45,7 @@ class PSFPreparationCUDA(CUDATestCase):
                             if need_kernel:
                                 self.assertTrue(gradients[2].is_contiguous(), "upstream kernel VJP layout")
                             results.append((output, *gradients))
-                        self.assert_results_equal(*results)
+                        check_operator_results(self, results[0], data, up, scale, .1)
 
     def test_shared_ancestor_and_dynamic_kernel_keep_gradient_order(self):
         for scale in (1, 2, 3):
@@ -53,8 +55,9 @@ class PSFPreparationCUDA(CUDATestCase):
             for shared_prior in (False, True):
                 with self.subTest(scale=scale, shared_prior=shared_prior):
                     results = []
-                    for call in (torch.ops.converse2d.forward, converse2d_reference):
-                        base = base_raw.cuda().requires_grad_()
+                    for call, dtype in ((torch.ops.converse2d.forward, torch.float32),
+                                        (baseline_reference, torch.float32), (converse2d_reference, torch.float64)):
+                        base = base_raw.cuda().to(dtype).requires_grad_()
                         x = base.sin()
                         prior = x if shared_prior else base.cos()
                         if scale > 1:
@@ -67,7 +70,7 @@ class PSFPreparationCUDA(CUDATestCase):
                         loss = (output * upstream).sum() + base.square().sum() * .03
                         gradient = torch.autograd.grad(loss, base)[0]
                         results.append((output, gradient))
-                    self.assert_results_equal(*results)
+                    assert_budget(self, *results)
 
     def test_nonlinear_second_and_third_derivatives(self):
         for scale in (1, 2, 3):
@@ -115,7 +118,7 @@ class PSFPreparationCUDA(CUDATestCase):
                 reference = converse2d_reference(*data, 2)
                 expected = (reference, *torch.autograd.grad(reference, data, gradient))
             stream.synchronize()
-            self.assert_results_equal(actual, expected)
+            check_operator_results(self, actual, data, gradient, 2)
             self.assertEqual(torch.cuda.current_device(), caller)
 
 

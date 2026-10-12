@@ -73,6 +73,33 @@ class RealCropContracts(CUDATestCase):
         torch.use_deterministic_algorithms(self.deterministic, warn_only=self.warn_only)
         torch.utils.deterministic.fill_uninitialized_memory = self.fill
 
+    def test_unpadded_public_forward_uses_fused_vjp_at_every_scale(self):
+        for scale, shared in ((1, True), (1, False), (2, False), (3, False)):
+            with self.subTest(scale=scale, shared=shared):
+                generator = torch.Generator().manual_seed(98200 + scale)
+                x = torch.randn(2, 3, 6, 7, generator=generator).cuda().requires_grad_()
+                x0 = x if shared else torch.randn(2, 3, 6 * scale, 7 * scale, generator=generator).cuda().requires_grad_()
+                weight = torch.rand(1, 3, 3, 3, generator=generator).cuda().requires_grad_()
+                bias = torch.randn(1, 3, 1, 1, generator=generator).cuda()
+                out = torch.ops.converse2d.forward(x, x0, weight, bias, scale, 1e-5)
+                # The fused real/crop+IFFT node edges go straight to the solved spectrum.
+                self.assertIn("RealCropIFFTBackward", node_names(out))
+                # Native view metadata: out is the real view of the complex IFFT.
+                z = out._base
+                self.assertEqual(z.dtype, torch.complex64)
+                self.assertEqual((out.stride(), out.storage_offset()), (z.real.stride(), z.real.storage_offset()))
+                # Planes below 16 keep ATen FFTs, so the fused VJP must equal the
+                # native z.real chain (through z's IFFT node) byte for byte.
+                g = upstream(out.shape, "transposed")
+                inputs = (x, weight) if shared else (x, x0, weight)
+                fused = torch.autograd.grad(out, inputs, g, retain_graph=True)
+                native = torch.autograd.grad(z.real, inputs, g)
+                for index, (a, b) in enumerate(zip(fused, native)):
+                    self.assert_bytes_equal(a, b, f"public forward real VJP {index}")
+                with torch.no_grad():
+                    frozen = torch.ops.converse2d.forward(x, x0, weight, bias, scale, 1e-5)
+                    self.assertFalse(any("RealCrop" in name for name in node_names(frozen)))
+
     def test_exact_view_alias_layout_and_no_grad_modes(self):
         schema = torch.ops.converse2d._training_real_crop.default._schema
         self.assertIsNotNone(schema.arguments[0].alias_info)
