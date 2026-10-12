@@ -56,12 +56,15 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--rounds', type=int, default=6)
     parser.add_argument('--iters', type=int, default=20)
+    parser.add_argument('--s1-threads', type=int, nargs=2, default=(1024, 512), metavar=('FWD', 'BWD'),
+                        help='s1 block sizes of the forward and backward kernels, 512 or 1024')
     args = parser.parse_args()
     if args.output.exists():
         raise SystemExit(f'{args.output} exists; keep earlier evidence')
     study.load_extension()
     ext = study.build()
-    report = dict(device=torch.cuda.get_device_name(), torch=torch.__version__, cases={})
+    ext.set_s1_threads(*args.s1_threads)
+    report = dict(device=torch.cuda.get_device_name(), torch=torch.__version__, s1_threads=list(args.s1_threads), cases={})
     for name, (b, c, h, w, pad) in study.CASES.items():
         torch.manual_seed(72001)
         x = torch.randn(b, c, h, w, device='cuda', requires_grad=True)

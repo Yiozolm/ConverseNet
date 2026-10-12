@@ -119,15 +119,19 @@ def main():
     parser.add_argument('--rounds', type=int, default=6)
     parser.add_argument('--iters', type=int, default=20)
     parser.add_argument('--cases', nargs='*', default=list(CASES))
+    parser.add_argument('--s1-threads', type=int, nargs=2, default=(1024, 512), metavar=('FWD', 'BWD'),
+                        help='s1 block sizes of the forward and backward kernels, 512 or 1024')
     args = parser.parse_args()
     if args.output.exists():
         raise SystemExit(f'{args.output} exists; keep earlier evidence')
     args.output.mkdir(parents=True)
     study.load_extension()
     ext = study.build()
+    ext.set_s1_threads(*args.s1_threads)
     device = torch.cuda.current_device()
     report = dict(device=torch.cuda.get_device_name(), capability=list(torch.cuda.get_device_capability()),
                   torch=torch.__version__, cuda=torch.version.cuda, smem_optin_bytes=ext.smem_capacity(device),
+                  s1_threads=list(args.s1_threads),
                   started=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), cases={})
     print(f"{report['device']}: opt-in shared memory per block {report['smem_optin_bytes']} bytes", flush=True)
     for name in args.cases:
@@ -182,7 +186,7 @@ def main():
     (args.output / 'flash.json').write_text(json.dumps(report, indent=1))
     lines = [f"# Fused SRAM training: {report['device']} (sm_{''.join(map(str, report['capability']))})", '',
              f"- torch {report['torch']} / CUDA {report['cuda']}; opt-in shared memory per block "
-             f"{report['smem_optin_bytes']} B", '',
+             f"{report['smem_optin_bytes']} B; s1 block sizes (forward, backward) {report['s1_threads']}", '',
              '| case | plane | path | production us | flash us | speedup | worst rel-L2 ratio | budgets | repeatable |',
              '|---|---|---|---|---|---|---|---|---|']
     for name, row in report['cases'].items():

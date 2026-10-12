@@ -742,3 +742,63 @@ Half-spectrum inference forward (k and l given; both fused kernels are eligible 
 Every output passes (half kernel 1.00x at s1, 0.78-0.85x at s2/s3), two blocks per SM at every s1
 size, bitwise repeatable. Production's inference forward is 2.4x faster on the A100 than on the
 RTX 5060 Ti (301 vs 721 us at C128), so the half kernel's margin is 1.7x there against 3.6x.
+
+## Memory movement of the s1 kernels on sm_120 (`flash_rtx5060ti_007_memory`, `profile/flash-memory-v2-20261012`)
+
+`profile/flash-bottleneck-20261012` profiled the s1 forward and backward at B4 C128 100x100 on
+the RTX 5060 Ti: latency-bound at 33% occupancy (one 80 KB block of 16 warps per SM), 38-39% of
+stall samples on long-scoreboard waits at the pad/embed loads and the k loads, DRAM at 27-36% of
+peak. Its per-line counters and the source gave four memory causes, none of them arithmetic:
+one global load in flight per warp in the pad loops; k re-read from DRAM for every batch in the
+backward (batch-major blocks pushed 35 MB through the 32 MB L2 between two uses of a channel's
+80 KB spectrum: 84 MB read where the inputs are 48 MB); the twiddle gathers as the largest L1TEX
+stream (57% of global sectors, 5.5 sectors per request); and k/Y loads consumed by the next
+instruction after a barrier. `fused.cu` now batches every thread's pad/embed loads into registers
+before the first shared store, orders the grid channel-major in both kernels (partial slots stay
+`(b, c)`, so the reduction order is unchanged), copies the twiddle tables (1.6 KB) into shared
+memory, loads k and Y one step ahead in the pointwise loops, prefetches the g plane to L2 at block
+start, and makes the block size a template parameter: `set_s1_threads(forward, backward)`, 512 or
+1024 each, defaults 1024 and 512. `compare_commit.py --commit 6dd4bbb`: 8/8 eligible cases
+bitwise identical, output and every gradient.
+
+NCU, one call each, B4 C128 100x100 (uncontrolled clocks, 10-16% foreign GPU load):
+
+| metric | fwd before | fwd 512 | fwd 1024 | bwd before | bwd 512 | bwd 1024 |
+|---|---|---|---|---|---|---|
+| kernel time | 413 us | 307 us | **282 us** | 865 us | **626 us** | 649 us |
+| DRAM read | 31.9 MB | 39.2 MB | 44.7 MB | 83.8 MB | **54.1 MB** | 56.5 MB |
+| L2 read hit | 44% | 59% | 54% | 39% | **79%** | 84% |
+| global load sectors | 6.26 M | 2.18 M | 2.19 M | 10.3 M | 4.20 M | 4.21 M |
+| registers; spill loads | 125; 0 | 128; 0 | 64; 0 | 128; 0 | 128; 0 | 64; 360 k |
+| warps active; eligible/cycle | 33%; 0.68 | 33%; 0.96 | 66%; 2.14 | 33%; 0.92 | 33%; 1.56 | 67%; 3.12 |
+| stall long scoreboard (cycles/inst) | 4.41 | 1.29 | 1.41 | 3.52 | **0.36** | 0.64 |
+| stall mio throttle / barrier | 1.18 / 0.80 | 1.55 / 0.65 | 2.91 / 1.86 | 0.53 / 0.54 | 0.65 / 0.42 | 1.79 / 1.27 |
+
+The backward lost the predicted 30 MB of DRAM reads and 10x of its long-scoreboard stall. The
+forward fits 64 registers and gains another 8% from 32 resident warps; the two-term backward
+spills at 64 registers (the 74 MB DRAM write at 1024 is spill traffic) and stays at 512. Shared
+load bank conflicts rose 2.3x with the shared twiddle gathers, and the remaining stalls are mio
+throttle, barrier and wait: the shared-memory FFT itself is now the limit, not DRAM.
+
+RTX 5060 Ti, forward+VJP against production (`_006_partial` is this morning's baseline):
+
+| Case | `_006` | 512 / 512 | 1024 / 1024 | 1024 / 512 (default) |
+|---|---|---|---|---|
+| circular s1 B4 C64 96 pad 2 | 1.48x | 1.73x | 1.79x | **1.86x** (1337 / 720 us) |
+| circular s1 B4 C128 96 pad 2 | 2.18x | 2.66x | 2.74x | **2.86x** (3706 / 1297 us) |
+| s1 B4 C128 100 | 2.06x | 2.55x | 2.67x | **2.62x** (3884 / 1484 us) |
+| s1 B4 C64 96 | 1.48x | 1.65x | 1.69x | 1.63x (1430 / 875 us) |
+| ops: replicate 92 pad 4 / reflect / zeros | 1.70x / 1.73x / 1.69x | - | - | 2.07x / 2.08x / 2.09x |
+| ops: data term s1 C64 96, KB 4 | 1.27x | - | - | 1.43x |
+| ops: circular C64 / C128 | 1.46x / 2.19x | - | - | 1.82x / 2.76x |
+
+Every output and gradient passes at a 1.00x rel-L2 ratio and repeats bitwise in all four
+configurations (`flash_rtx5060ti_007_memory_t512`, `_t1024`, `_memory`, `ops_rtx5060ti_005_memory`;
+10-16% foreign GPU load throughout, compare ratios).
+
+The kernels are 17% of the baseline USRNet training step's GPU time, so these ratios are about
+1.05x at the step; the pointwise convolutions (50%) and LayerNorm (16%) remain the larger items.
+Next, in the same order as FlashAttention's revisions: conflict-free twiddle and Stockham layouts,
+two shared round trips per axis instead of three, the backward's pointwise phase under 64
+registers (v3); clusters with distributed shared memory for the 128x128 and 144x144 planes and
+TMA staging of g behind FFT(x) (v4). Details in `profile/flash-memory-v2-20261012/REPORT.md`.
