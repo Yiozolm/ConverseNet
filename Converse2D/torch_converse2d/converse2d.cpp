@@ -2,6 +2,7 @@
 #include "operator.h"
 #include "peripheral/alpha_residual.h"
 #include "peripheral/layernorm.h"
+#include "peripheral/pointwise_wgrad.h"
 #include "training/full_spectrum/full_fusion.h"
 #include <torch/extension.h>
 TORCH_LIBRARY(converse2d, m) {
@@ -19,6 +20,7 @@ TORCH_LIBRARY(converse2d, m) {
     m.def("_channel_layernorm_backward(Tensor grad_output, Tensor input, Tensor mean, "
           "Tensor denominator, Tensor weight, bool needs_input, bool needs_weight, "
           "bool needs_bias) -> (Tensor, Tensor, Tensor)");
+    m.def("_pointwise_wgrad(Tensor grad_output, Tensor input) -> Tensor");
 #ifdef CONVERSE2D_WITH_CUDA
     m.def("_training_full_spectral(Tensor y, Tensor p, Tensor k, Tensor "
           "regularizer, int scale) -> Tensor");
@@ -42,6 +44,7 @@ TORCH_LIBRARY_IMPL(converse2d, CompositeImplicitAutograd, m) {
            TORCH_FN(converse2d::peripheral::channel_layernorm_forward_stats));
     m.impl("_channel_layernorm_backward",
            TORCH_FN(converse2d::peripheral::channel_layernorm_backward));
+    m.impl("_pointwise_wgrad", TORCH_FN(converse2d::peripheral::pointwise_wgrad));
 #ifdef CONVERSE2D_WITH_CUDA
     m.impl("_training_full_spectral",
            TORCH_FN(converse2d::full_training::full_spectral));

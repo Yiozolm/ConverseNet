@@ -17,6 +17,7 @@ HOST_SOURCES = (
     'training/full_spectrum/fft_callbacks.cpp',
     'peripheral/alpha_residual.cpp',
     'peripheral/layernorm.cpp',
+    'peripheral/pointwise_wgrad.cpp',
 )
 CUDA_SOURCES = (
     'inference/inference_prepare.cu', 'inference/inference_dispatch.cu',
@@ -26,6 +27,7 @@ CUDA_SOURCES = (
     'training/full_spectrum/full_fusion.cu',
     'peripheral/alpha_residual.cu',
     'peripheral/layernorm.cu',
+    'peripheral/pointwise_wgrad.cu',
 )
 _INCLUDE = re.compile(r'^\s*#include\s+"([^"]+)"\s*$', re.M)
 
