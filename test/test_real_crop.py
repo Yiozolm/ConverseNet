@@ -73,6 +73,27 @@ class RealCropContracts(CUDATestCase):
         torch.use_deterministic_algorithms(self.deterministic, warn_only=self.warn_only)
         torch.utils.deterministic.fill_uninitialized_memory = self.fill
 
+    def test_unpadded_public_forward_uses_fused_vjp_at_every_scale(self):
+        for scale, shared in ((1, True), (1, False), (2, False), (3, False)):
+            with self.subTest(scale=scale, shared=shared):
+                generator = torch.Generator().manual_seed(98200 + scale)
+                x = torch.randn(2, 3, 6, 7, generator=generator).cuda().requires_grad_()
+                x0 = x if shared else torch.randn(2, 3, 6 * scale, 7 * scale, generator=generator).cuda().requires_grad_()
+                weight = torch.rand(1, 3, 3, 3, generator=generator).cuda().requires_grad_()
+                bias = torch.randn(1, 3, 1, 1, generator=generator).cuda()
+                out = torch.ops.converse2d.forward(x, x0, weight, bias, scale, 1e-5)
+                self.assertTrue(has_real_crop_node(out))
+                # Native view metadata: out is the real view of the complex IFFT.
+                z = out._base
+                self.assertEqual(z.dtype, torch.complex64)
+                self.assertEqual((out.stride(), out.storage_offset()), (z.real.stride(), z.real.storage_offset()))
+                g = upstream(out.shape, "transposed")
+                fused, = torch.autograd.grad(out, z, g, retain_graph=True)
+                native, = torch.autograd.grad(z.real, z, g)
+                self.assert_bytes_equal(fused, native, "public forward real VJP")
+                with torch.no_grad():
+                    self.assertFalse(has_real_crop_node(torch.ops.converse2d.forward(x, x0, weight, bias, scale, 1e-5)))
+
     def test_exact_view_alias_layout_and_no_grad_modes(self):
         schema = torch.ops.converse2d._training_real_crop.default._schema
         self.assertIsNotNone(schema.arguments[0].alias_info)
