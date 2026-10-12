@@ -24,6 +24,32 @@ __global__ void scale1_forward(const Z<T> *y, const Z<T> *p, const Z<T> *k,
         d[di] = denominator;
 }
 
+// One thread per D element (kb,c,offset), looping over every batch that uses
+// that kernel plane. k, l and the denominator are loaded or computed once and
+// D gets one store; blockIdx.y = kb*C+c replaces per-element 64-bit div/mod.
+// Each output element sees exactly the same FP32 operations as scale1_forward.
+template <class T>
+__global__ void scale1_forward_planes(const Z<T> *y, const Z<T> *p,
+                                      const Z<T> *k, const T *l, Z<T> *out,
+                                      T *d, int HW, int C, int B, int KB,
+                                      int KC) {
+    const int offset = blockIdx.x * blockDim.x + threadIdx.x;
+    if (offset >= HW)
+        return;
+    const int row = blockIdx.y, kb = row / C, c = row - kb * C;
+    const Z<T> ki_value = k[(I(kb) * KC + (KC == 1 ? 0 : c)) * HW + offset];
+    const T denominator = add_rn(norm(ki_value), l[c]);
+    d[I(row) * HW + offset] = denominator;
+    const int first = KB == 1 ? 0 : kb, last = KB == 1 ? B : kb + 1;
+    for (int b = first; b < last; ++b) {
+        const I i = (I(b) * C + c) * HW + offset;
+        const Z<T> pi_value = p[i];
+        const Z<T> pm = product(ki_value, pi_value);
+        const Z<T> qi_value = add(y[i], -pm) / Z<T>(denominator, 0);
+        out[i] = add(pi_value, product(cj(ki_value), qi_value));
+    }
+}
+
 template <class T, bool FuseKernel>
 __global__ void
 scale1_adjoint(const Z<T> *g, const Z<T> *p, const Z<T> *k, const Z<T> *y,
@@ -87,6 +113,20 @@ std::vector<Tensor> full_scale1_forward_cuda(Tensor y0, Tensor p0, Tensor k0,
     auto d =
         at::empty({k.size(0), y.size(1), y.size(2), y.size(3)}, l.options());
     auto stream = c10::cuda::getCurrentCUDAStream();
+    const int64_t HW = y.size(2) * y.size(3), rows = k.size(0) * y.size(1);
+    if (HW <= INT32_MAX - 255 && rows <= 65535 && y.size(0) <= INT32_MAX) {
+        const dim3 grid(unsigned((HW + 255) / 256), unsigned(rows));
+        CONVERSE_DISPATCH_FP32(l.scalar_type(), "full_scale1_forward", [&] {
+            scale1_forward_planes<scalar_t><<<grid, 256, 0, stream>>>(
+                y.data_ptr<Z<scalar_t>>(), p.data_ptr<Z<scalar_t>>(),
+                k.data_ptr<Z<scalar_t>>(), l.data_ptr<scalar_t>(),
+                out.data_ptr<Z<scalar_t>>(), d.data_ptr<scalar_t>(), int(HW),
+                int(y.size(1)), int(y.size(0)), int(k.size(0)),
+                int(k.size(1)));
+        });
+        C10_CUDA_KERNEL_LAUNCH_CHECK();
+        return {out, Tensor(), d};
+    }
     CONVERSE_DISPATCH_FP32(l.scalar_type(), "full_scale1_forward", [&] {
         scale1_forward<scalar_t><<<(y.numel() + 255) / 256, 256, 0, stream>>>(
             y.data_ptr<Z<scalar_t>>(), p.data_ptr<Z<scalar_t>>(),
