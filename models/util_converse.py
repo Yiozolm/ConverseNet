@@ -480,14 +480,14 @@ class ConverseBlockAlphaVariant(nn.Module):
 
 
         self.conv1 = nn.Sequential(LayerNorm(in_channels, eps=1e-5, data_format="channels_first"),
-                                   nn.Conv2d(in_channels, 2*out_channels, 1, 1, 0),
+                                   PointwiseConv2d(in_channels, 2*out_channels, 1, 1, 0),
                                    nn.GELU(),
                                    Converse2D(2*out_channels, 2*out_channels, kernel_size, scale=scale, padding=padding, padding_mode=padding_mode, eps=eps), 
                                    nn.GELU(),
                                    PointwiseConv2d(2*out_channels, out_channels, 1, 1, 0))
                                   
         self.conv2 = nn.Sequential(LayerNorm(in_channels, eps=1e-5, data_format="channels_first"),
-                                   nn.Conv2d(out_channels, 2*out_channels, 1, 1, 0),
+                                   PointwiseConv2d(out_channels, 2*out_channels, 1, 1, 0),
                                    nn.GELU(),
                                    PointwiseConv2d(2*out_channels, out_channels, 1, 1, 0))
         
