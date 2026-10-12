@@ -6,6 +6,13 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
 #include <c10/util/complex.h>
+#include <ATen/CPUGeneratorImpl.h>
+#include <c10/core/GradMode.h>
+#include <c10/cuda/CUDAFunctions.h>
+#include <cuda_runtime.h>
+#include <array>
+#include <cstdlib>
+#include <mutex>
 #include <type_traits>
 #include <vector>
 
@@ -29,11 +36,96 @@ template <class T> __device__ T fma_rn(T a, T b, T c);
 template <> __device__ float fma_rn(float a, float b, float c) {
     return __fmaf_rn(a, b, c);
 }
-// Match the two FMA boundaries of the measured ATen complex multiply. Keeping
-// these explicit prevents negation/conjugation from changing which term fuses.
+// ATen's FP32 complex multiply rounds each component once, as one FMA, but
+// which of the two products the SASS fuses differs between architectures
+// (tools/v4_release_a100/aten_rounding_probe.py: sm_120 fuses ai*br in the
+// imaginary part, sm_80 fuses ar*bi; both fuse ar*br in the real part). The
+// fused kernels reproduce the frozen Python FP32 expression operation for
+// operation, so they follow the pattern measured against at::mul on the
+// current device at first use (ensure_product_pattern). Bit 0: the real part
+// fuses ai*bi instead of ar*br; bit 1: the imaginary part fuses ar*bi instead
+// of ai*br. Keeping the boundaries explicit prevents negation/conjugation from
+// changing which term fuses.
+__constant__ int c_product_pattern = 0;
 template <class T> __device__ Z<T> product(Z<T> a, Z<T> b) {
-    return {fma_rn(a.real(), b.real(), -mul_rn(a.imag(), b.imag())),
-            fma_rn(a.imag(), b.real(), mul_rn(a.real(), b.imag()))};
+    const int pattern = c_product_pattern;
+    return {(pattern & 1) ? fma_rn(-a.imag(), b.imag(), mul_rn(a.real(), b.real()))
+                          : fma_rn(a.real(), b.real(), -mul_rn(a.imag(), b.imag())),
+            (pattern & 2) ? fma_rn(a.real(), b.imag(), mul_rn(a.imag(), b.real()))
+                          : fma_rn(a.imag(), b.real(), mul_rn(a.real(), b.imag()))};
+}
+
+namespace {
+struct ProductPatternState {
+    int pattern = -1;  // -1: not yet measured on this device
+    bool forced = false;
+    int64_t matches[4] = {0, 0, 0, 0};  // real fuses ar*br, real fuses ai*bi, imag fuses ai*br, imag fuses ar*bi
+};
+std::mutex product_pattern_mutex;
+std::array<ProductPatternState, 64> product_pattern_states;
+
+// Compare at::mul on this device with the two single-FMA roundings of each
+// component, computed in FP64 where FP32 products are exact. Deterministic
+// sample; 65536 elements separate the patterns with certainty.
+ProductPatternState measure_product_pattern(c10::Device device) {
+    c10::NoGradGuard no_grad;
+    auto gen = at::detail::createCPUGenerator(20261012);
+    const auto opts = at::TensorOptions().dtype(at::kFloat);
+    const int64_t n = 1 << 16;
+    auto ar = at::randn({n}, gen, opts).to(device), ai = at::randn({n}, gen, opts).to(device),
+         br = at::randn({n}, gen, opts).to(device), bi = at::randn({n}, gen, opts).to(device);
+    auto m = at::view_as_real(at::complex(ar, ai) * at::complex(br, bi));
+    const auto re = m.select(-1, 0).contiguous(), im = m.select(-1, 1).contiguous();
+    const auto A = ar.to(at::kDouble), B = ai.to(at::kDouble), C = br.to(at::kDouble), D = bi.to(at::kDouble);
+    const auto r = [](const at::Tensor &t) { return t.to(at::kFloat); };
+    const auto d = [](const at::Tensor &t) { return t.to(at::kDouble); };
+    ProductPatternState state;
+    state.matches[0] = at::equal(re, r(A * C - d(r(B * D))));
+    state.matches[1] = at::equal(re, r(d(r(A * C)) - B * D));
+    state.matches[2] = at::equal(im, r(d(r(A * D)) + B * C));
+    state.matches[3] = at::equal(im, r(A * D + d(r(B * C))));
+    int pattern = 0;
+    if (state.matches[1] && !state.matches[0])
+        pattern |= 1;
+    if (state.matches[3] && !state.matches[2])
+        pattern |= 2;
+    state.pattern = pattern;  // no or ambiguous match keeps the historical sm_120 pattern
+    return state;
+}
+} // namespace
+
+void ensure_product_pattern() {
+    const auto index = c10::cuda::current_device();
+    TORCH_CHECK(index >= 0 && index < int(product_pattern_states.size()), "unsupported CUDA device index");
+    std::lock_guard<std::mutex> lock(product_pattern_mutex);
+    auto &state = product_pattern_states[index];
+    if (state.pattern >= 0)
+        return;
+    cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
+    C10_CUDA_CHECK(cudaStreamIsCapturing(c10::cuda::getCurrentCUDAStream(), &status));
+    TORCH_CHECK(status == cudaStreamCaptureStatusNone,
+                "converse2d: the ATen complex product pattern of this device is measured at first "
+                "use and cannot be measured inside CUDA graph capture; run one differentiable call "
+                "outside capture first");
+    ProductPatternState measured;
+    const char *forced = std::getenv("CONVERSE2D_PRODUCT_PATTERN");
+    if (forced && *forced) {
+        measured.pattern = std::atoi(forced) & 3;
+        measured.forced = true;
+    } else {
+        measured = measure_product_pattern(c10::Device(c10::kCUDA, static_cast<c10::DeviceIndex>(index)));
+    }
+    C10_CUDA_CHECK(cudaMemcpyToSymbol(c_product_pattern, &measured.pattern, sizeof(int)));
+    state = measured;
+}
+
+// [pattern, forced, real fuses ar*br, real fuses ai*bi, imag fuses ai*br, imag fuses ar*bi]
+at::Tensor product_pattern_report() {
+    ensure_product_pattern();
+    std::lock_guard<std::mutex> lock(product_pattern_mutex);
+    const auto &s = product_pattern_states[c10::cuda::current_device()];
+    return at::tensor({int64_t(s.pattern), int64_t(s.forced), s.matches[0], s.matches[1], s.matches[2],
+                       s.matches[3]}, at::kLong);
 }
 template <class T> __device__ T norm(Z<T> z);
 template <> __device__ float norm(Z<float> z) {
