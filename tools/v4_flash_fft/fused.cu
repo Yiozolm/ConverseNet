@@ -1083,14 +1083,14 @@ __global__ void __launch_bounds__(kThreads, 1) static_s_backward(
 }
 
 // Opt-in dynamic shared memory per block on this device; static shared memory
-// comes out of the same budget: the reduction buffer (up to 32 warps) and the s1
-// kernels' twiddle tables (two sides of at most 100).
+// comes out of the same budget: the reduction buffer (up to 32 warps) and the per-stage
+// twiddle tables (two sides of at most 144, about a word per root).
 int smem_capacity(int device) {
     int value = 0;
     TORCH_CHECK(cudaDeviceGetAttribute(&value, cudaDevAttrMaxSharedMemoryPerBlockOptin, device) == cudaSuccess);
     return value;
 }
-constexpr int kStaticSmem = 1024 / 32 * sizeof(DF) + 2 * 100 * sizeof(float2);
+constexpr int kStaticSmem = 1024 / 32 * sizeof(DF) + 2 * 144 * sizeof(float2);
 
 Twiddles twiddles(int h, int w, int sh, int sw, int device) {
     return {axis_for(w, device).twiddle, axis_for(h, device).twiddle, axis_for(sw, device).twiddle,
@@ -1139,9 +1139,12 @@ void scaled_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor
 // column phase the CTAs swap the quarter plane each holds for the other through
 // DSMEM: every thread reads its stay-at-home and incoming elements into registers,
 // the cluster syncs, and writes them in the new layout. Row layout:
-// s[(row - r SH/2) SW + col]; column layout: s[row (SW/2) + col / 2]. Every line of
-// every FFT pass and every solve group is computed exactly as in the single-CTA
-// kernels, so the outputs are bitwise those of static_s_forward where both fit.
+// s[(row - r SH/2) SW + col]; column layout: s[row (SW/2) + col / 2]. The low-res
+// plane is split the same way, so rank r ends its low-res transform holding exactly
+// the pixels (h, w), w % 2 == r, that it solves. Every line of every FFT pass and
+// every solve group is computed exactly as in the single-CTA kernels, so the outputs
+// are bitwise those of static_s_forward / static_s_backward where both fit (the s1
+// memory-movement and fused-stage steps are applied to the high-res passes).
 template <int SH, int SW, int T>
 __device__ __forceinline__ void exchange_rows_to_cols(float2* s, cg::cluster_group& cluster, int rank, int tid) {
     constexpr int HALF = SH / 2, CW = SW / 2, N2 = SH * CW, per = (N2 + T - 1) / T;
@@ -1187,48 +1190,78 @@ __device__ __forceinline__ void exchange_cols_to_rows(float2* s, cg::cluster_gro
     __syncthreads();
 }
 
-// Row FFTs of this CTA's half of the rows, the exchange, column FFTs of its columns.
-template <int SH, int SW, bool Inverse>
-__device__ __forceinline__ void cluster_fft2(float2* s, const Twiddles& tw, cg::cluster_group& cluster, int rank,
+// Half a plane of real rows into shared memory as (x, 0), all of a thread's loads in
+// flight before its first store (as load_padded for s1).
+template <int N2, int T>
+__device__ __forceinline__ void load_half_rows(float2* s, const float* __restrict__ src, int tid) {
+    constexpr int per = (N2 + T - 1) / T;
+    float a[per];
+#pragma unroll
+    for (int q = 0; q < per; ++q) {
+        const int i = tid + q * T;
+        a[q] = (N2 % T == 0 || i < N2) ? src[i] : 0.f;
+    }
+#pragma unroll
+    for (int q = 0; q < per; ++q) {
+        const int i = tid + q * T;
+        if (N2 % T == 0 || i < N2) s[i] = make_float2(a[q], 0.f);
+    }
+}
+
+// Row FFTs of this CTA's half of the rows, the exchange, column FFTs of its columns;
+// per-stage shared twiddles (tws) and fused stages for the high-res passes, the
+// global tables and single stages for the low-res ones.
+template <int SH, int SW, bool Inverse, bool Shared>
+__device__ __forceinline__ void cluster_fft2(float2* s, const float2* __restrict__ tw_rows,
+                                             const float2* __restrict__ tw_cols, cg::cluster_group& cluster, int rank,
                                              int tid) {
     constexpr int HALF = SH / 2, CW = SW / 2;
     if constexpr (!Inverse) {
-        static_fft<SW, 0, 1, false, false, HALF, SW, 1>(s, tw.high_rows, tid);
+        static_fft<SW, 0, 1, false, false, HALF, SW, 1, kThreads, Shared, 0, Shared>(s, tw_rows, tid);
         exchange_rows_to_cols<SH, SW, kThreads>(s, cluster, rank, tid);
-        static_fft<SH, 0, 1, false, true, CW, 1, CW>(s, tw.high_cols, tid);
+        static_fft<SH, 0, 1, false, true, CW, 1, CW, kThreads, Shared, 0, Shared>(s, tw_cols, tid);
     } else {
-        static_fft<SH, 0, 1, true, true, CW, 1, CW>(s, tw.high_cols, tid);
+        static_fft<SH, 0, 1, true, true, CW, 1, CW, kThreads, Shared, 0, Shared>(s, tw_cols, tid);
         exchange_cols_to_rows<SH, SW, kThreads>(s, cluster, rank, tid);
-        static_fft<SW, 0, 1, true, false, HALF, SW, 1>(s, tw.high_rows, tid);
+        static_fft<SW, 0, 1, true, false, HALF, SW, 1, kThreads, Shared, 0, Shared>(s, tw_rows, tid);
     }
+}
+
+// Low-res transform of this CTA's half of the rows of x; afterwards rank r holds the
+// spectrum's columns of parity r, s[h (W/2) + w/2], and parks them in yp[h W + w].
+template <int H, int W>
+__device__ __forceinline__ void cluster_low_spectrum(float2* s, const float* __restrict__ x, float2* __restrict__ yp,
+                                                     const Twiddles& tw, cg::cluster_group& cluster, int rank, int tid) {
+    constexpr int n2 = H * W / 2, CW = W / 2;
+    load_half_rows<n2, kThreads>(s, x + rank * n2, tid);
+    __syncthreads();
+    cluster_fft2<H, W, false, false>(s, tw.low_rows, tw.low_cols, cluster, rank, tid);
+    for (int d = tid; d < n2; d += kThreads) yp[(d / CW) * W + 2 * (d % CW) + rank] = s[d];
+    __syncthreads();
 }
 
 template <int H, int W, int S>
 __global__ void __cluster_dims__(2, 1, 1) __launch_bounds__(kThreads, 1) cluster_s_forward(
     const float* __restrict__ x, const float* __restrict__ x0, const float2* __restrict__ k,
-    const float* __restrict__ l, float* __restrict__ out, float2* __restrict__ scratch, int C, int KB, Twiddles tw,
-    float prediction_factor, float power_factor) {
+    const float* __restrict__ l, float* __restrict__ out, float2* __restrict__ scratch, int B, int C, int KB,
+    Twiddles tw, float prediction_factor, float power_factor) {
     extern __shared__ float2 s[];
+    __shared__ float2 tws[staged_twiddles(S * W) + staged_twiddles(S * H)];
     cg::cluster_group cluster = cg::this_cluster();
     constexpr int SH = S * H, SW = S * W, N = SH * SW, n = H * W, HALF = SH / 2, CW = SW / 2, N2 = N / 2;
-    static_assert(W % 2 == 0 && SH % 2 == 0 && n <= N2, "cluster split needs even sides");
-    const int rank = int(cluster.block_rank()), bc = blockIdx.x / 2, c = bc % C, tid = threadIdx.x;
-    // Low-res spectrum: both CTAs transform it (it fits beside nothing else yet); rank 0 parks it.
-    const float* xp = x + size_t(bc) * n;
-    for (int i = tid; i < n; i += kThreads) s[i] = make_float2(xp[i], 0.f);
+    static_assert(W % 2 == 0 && H % 2 == 0 && SH % 2 == 0 && n <= N2, "cluster split needs even sides");
+    // Planes of one channel adjacent (bc = c B + b) so its k is read from DRAM once.
+    const int rank = int(cluster.block_rank()), bc = blockIdx.x / 2, c = bc / B, b = bc % B, tid = threadIdx.x;
+    const int plane = b * C + c;
+    stage_twiddles<SH, SW, kThreads>(tws, tw.high_rows, tw.high_cols, tid);
+    const float2* twr = tws;
+    const float2* twc = tws + staged_twiddles(SW);
+    float2* yp = scratch + size_t(plane) * n;
+    cluster_low_spectrum<H, W>(s, x + size_t(plane) * n, yp, tw, cluster, rank, tid);
+    load_half_rows<N2, kThreads>(s, x0 + size_t(plane) * N + size_t(rank) * HALF * SW, tid);
     __syncthreads();
-    fft2_plane<H, W>(s, tw.low_rows, tw.low_cols, tid);
-    float2* yp = scratch + size_t(bc) * n;
-    if (rank == 0)
-        for (int i = tid; i < n; i += kThreads) yp[i] = s[i];
-    __syncthreads();
-    const float* x0p = x0 + size_t(bc) * N + size_t(rank) * HALF * SW;
-    for (int i = tid; i < N2; i += kThreads) s[i] = make_float2(x0p[i], 0.f);
-    __syncthreads();
-    cluster_fft2<SH, SW, false>(s, tw, cluster, rank, tid);
-    __threadfence();
-    cluster.sync();  // rank 0's yp is visible
-    const float2* kp = k + kernel_plane(KB, C, bc / C, c) * N;
+    cluster_fft2<SH, SW, false, true>(s, twr, twc, cluster, rank, tid);
+    const float2* kp = k + kernel_plane(KB, C, b, c) * N;
     const float lc = l[c];
     for (int i = tid; i < n / 2; i += kThreads) {
         const int h = i / (W / 2), w = 2 * (i % (W / 2)) + rank;
@@ -1252,56 +1285,56 @@ __global__ void __cluster_dims__(2, 1, 1) __launch_bounds__(kThreads, 1) cluster
         }
     }
     __syncthreads();
-    cluster_fft2<SH, SW, true>(s, tw, cluster, rank, tid);
+    cluster_fft2<SH, SW, true, true>(s, twr, twc, cluster, rank, tid);
     const float scale = float(1.0 / double(N));
-    float* op = out + size_t(bc) * N + size_t(rank) * HALF * SW;
+    float* op = out + size_t(plane) * N + size_t(rank) * HALF * SW;
     for (int i = tid; i < N2; i += kThreads) op[i] = s[i].x * scale;
 }
 
 // Backward in a cluster, as static_s_backward: P parked in the plane's grad_k partial
 // slot (each CTA parks and later owns the alias indices of its column parity), G in
 // shared memory, the low-res gy in the yp scratch (each CTA writes its own (h, w)).
-// grad_l: each CTA block-sums its pixels; rank 1 leaves its (hi, lo) in the plane's
-// second partial pair and rank 0 adds it two-term, so the plane's sum is one value.
+// The low-res inverse is split as the transform: rank r loads its gy columns, inverse
+// column FFTs, the exchange, inverse row FFTs of its half of the rows. grad_l: each
+// CTA block-sums its pixels; rank 1 leaves its (hi, lo) in a second partial pair and
+// rank 0 adds it two-term, so the plane's sum is one value.
 template <int H, int W, int S>
 __global__ void __cluster_dims__(2, 1, 1) __launch_bounds__(kThreads, 1) cluster_s_backward(
     const float* __restrict__ x, const float* __restrict__ x0, const float* __restrict__ g,
     const float2* __restrict__ k, const float* __restrict__ l, float* __restrict__ gx, float* __restrict__ gx0,
     float2* __restrict__ part, float* __restrict__ gl_part, float* __restrict__ gl_rank1,
-    float2* __restrict__ scratch_y, int C, int KB, Twiddles tw, float2 inv_n, float2 mean_factor,
+    float2* __restrict__ scratch_y, int B, int C, int KB, Twiddles tw, float2 inv_n, float2 mean_factor,
     float2 inverse_aliases, const float4* __restrict__ reg) {
     extern __shared__ float2 s[];
     __shared__ DF partial[kThreads / 32];
+    __shared__ float2 tws[staged_twiddles(S * W) + staged_twiddles(S * H)];
     cg::cluster_group cluster = cg::this_cluster();
     constexpr int SH = S * H, SW = S * W, N = SH * SW, n = H * W, HALF = SH / 2, CW = SW / 2, N2 = N / 2;
-    static_assert(W % 2 == 0 && SH % 2 == 0 && n <= N2, "cluster split needs even sides");
-    const int rank = int(cluster.block_rank()), bc = blockIdx.x / 2, c = bc % C, tid = threadIdx.x;
-    const size_t lo = size_t(bc) * n, hi = size_t(bc) * N;
+    constexpr int n2 = n / 2, LCW = W / 2;
+    static_assert(W % 2 == 0 && H % 2 == 0 && SH % 2 == 0 && n <= N2, "cluster split needs even sides");
+    const int rank = int(cluster.block_rank()), bc = blockIdx.x / 2, c = bc / B, b = bc % B, tid = threadIdx.x;
+    const int plane = b * C + c;
+    const size_t lo = size_t(plane) * n, hi = size_t(plane) * N, rows = hi + size_t(rank) * HALF * SW;
+    stage_twiddles<SH, SW, kThreads>(tws, tw.high_rows, tw.high_cols, tid);
+    const float2* twr = tws;
+    const float2* twc = tws + staged_twiddles(SW);
     float2* yp = scratch_y + lo;
     float2* pp = part + hi;
-    for (int i = tid; i < n; i += kThreads) s[i] = make_float2(x[lo + i], 0.f);
+    cluster_low_spectrum<H, W>(s, x + lo, yp, tw, cluster, rank, tid);
+    load_half_rows<N2, kThreads>(s, x0 + rows, tid);
     __syncthreads();
-    fft2_plane<H, W>(s, tw.low_rows, tw.low_cols, tid);
-    if (rank == 0)
-        for (int i = tid; i < n; i += kThreads) yp[i] = s[i];
-    __syncthreads();
-    const size_t rows = hi + size_t(rank) * HALF * SW;
-    for (int i = tid; i < N2; i += kThreads) s[i] = make_float2(x0[rows + i], 0.f);
-    __syncthreads();
-    cluster_fft2<SH, SW, false>(s, tw, cluster, rank, tid);
+    cluster_fft2<SH, SW, false, true>(s, twr, twc, cluster, rank, tid);
     for (int d = tid; d < N2; d += kThreads) pp[(d / CW) * SW + 2 * (d % CW) + rank] = s[d];
     __syncthreads();
-    for (int i = tid; i < N2; i += kThreads) s[i] = make_float2(g[rows + i], 0.f);
+    load_half_rows<N2, kThreads>(s, g + rows, tid);
     __syncthreads();
-    cluster_fft2<SH, SW, false>(s, tw, cluster, rank, tid);
-    __threadfence();
-    cluster.sync();  // yp (rank 0) and both CTAs' P are visible
-    const float2* kp = k + kernel_plane(KB, C, bc / C, c) * N;
+    cluster_fft2<SH, SW, false, true>(s, twr, twc, cluster, rank, tid);
+    const float2* kp = k + kernel_plane(KB, C, b, c) * N;
     const DF lc = reg ? DF{reg[c].x, reg[c].y} : df(l[c]);
     const DF scale{inv_n.x, inv_n.y}, factor{mean_factor.x, mean_factor.y}, inverse{inverse_aliases.x, inverse_aliases.y};
     DF gl_sum = df(0.f);
-    for (int i = tid; i < n / 2; i += kThreads) {
-        const int h = i / (W / 2), w = 2 * (i % (W / 2)) + rank, pix = h * W + w;
+    for (int i = tid; i < n2; i += kThreads) {
+        const int h = i / LCW, w = 2 * (i % LCW) + rank, pix = h * W + w;
         CDF pm = cdf(make_float2(0.f, 0.f)), t = pm;
         DF pw = df(0.f);
 #pragma unroll
@@ -1329,24 +1362,23 @@ __global__ void __cluster_dims__(2, 1, 1) __launch_bounds__(kThreads, 1) cluster
         gl_sum = df_add(gl_sum, v);
     }
     __syncthreads();
-    cluster_fft2<SH, SW, true>(s, tw, cluster, rank, tid);
+    cluster_fft2<SH, SW, true, true>(s, twr, twc, cluster, rank, tid);
     for (int i = tid; i < N2; i += kThreads) gx0[rows + i] = s[i].x;
+    __syncthreads();
+    // Low-res inverse: this CTA's gy columns (written above by this CTA) in the column layout.
+    for (int d = tid; d < n2; d += kThreads) s[d] = yp[(d / LCW) * W + 2 * (d % LCW) + rank];
+    __syncthreads();
+    cluster_fft2<H, W, true, false>(s, tw.low_rows, tw.low_cols, cluster, rank, tid);
+    for (int i = tid; i < n2; i += kThreads) gx[lo + size_t(rank) * n2 + i] = s[i].x;
     // grad_l of the plane: rank 1's block sum joins rank 0's.
-    store_block_sum(gl_sum, partial, rank == 0 ? gl_part + 2 * size_t(bc) : gl_rank1 + 2 * size_t(bc));
+    store_block_sum(gl_sum, partial, rank == 0 ? gl_part + 2 * size_t(plane) : gl_rank1 + 2 * size_t(plane));
     __threadfence();
-    cluster.sync();  // both CTAs' gy and block sums are visible
-    if (rank == 0) {
-        if (tid == 0) {
-            const DF a{gl_part[2 * bc], gl_part[2 * bc + 1]}, b{gl_rank1[2 * bc], gl_rank1[2 * bc + 1]};
-            const DF v = df_add(a, b);
-            gl_part[2 * bc] = v.hi;
-            gl_part[2 * bc + 1] = v.lo;
-        }
-        __syncthreads();
-        for (int i = tid; i < n; i += kThreads) s[i] = yp[i];
-        __syncthreads();
-        ifft2_plane<H, W>(s, tw.low_rows, tw.low_cols, tid);
-        for (int i = tid; i < n; i += kThreads) gx[lo + i] = s[i].x;
+    cluster.sync();
+    if (rank == 0 && tid == 0) {
+        const DF a{gl_part[2 * plane], gl_part[2 * plane + 1]}, z{gl_rank1[2 * plane], gl_rank1[2 * plane + 1]};
+        const DF v = df_add(a, z);
+        gl_part[2 * plane] = v.hi;
+        gl_part[2 * plane + 1] = v.lo;
     }
 }
 
@@ -1361,7 +1393,7 @@ void cluster_forward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor
     const float factor = float(H * W) / float(N);
     kernel<<<2 * x.size(0) * x.size(1), kThreads, N * 4, at::cuda::getCurrentCUDAStream()>>>(
         x.data_ptr<float>(), x0.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()), l.data_ptr<float>(),
-        out.data_ptr<float>(), reinterpret_cast<float2*>(scratch.data_ptr()), x.size(1), int(k.size(0)),
+        out.data_ptr<float>(), reinterpret_cast<float2*>(scratch.data_ptr()), x.size(0), x.size(1), int(k.size(0)),
         twiddles(H, W, S * H, S * W, x.get_device()), factor, factor);
 }
 
@@ -1381,7 +1413,8 @@ void cluster_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tenso
         x.data_ptr<float>(), x0.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()),
         l.data_ptr<float>(), gx.data_ptr<float>(), gx0.data_ptr<float>(), reinterpret_cast<float2*>(part.data_ptr()),
         gl_part.data_ptr<float>(), gl_rank1.data_ptr<float>(), reinterpret_cast<float2*>(scratch_y.data_ptr()),
-        x.size(1), int(k.size(0)), twiddles(H, W, S * H, S * W, x.get_device()), df_constant(1.0 / N), inverse, inverse,
+        x.size(0), x.size(1), int(k.size(0)), twiddles(H, W, S * H, S * W, x.get_device()), df_constant(1.0 / N), inverse,
+        inverse,
         reg.defined() ? reinterpret_cast<const float4*>(reg.data_ptr()) : nullptr);
     reduce_partials(part, gl_part, gk, gl, reg, gb);
 }

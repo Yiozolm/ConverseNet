@@ -929,3 +929,32 @@ NCU of the s2 cluster kernels, B4 C64 64 -> 128, one call (`profile/flash-cluste
 498 us and backward 935 us for 512 CTAs of 64 KB; long-scoreboard (7.5 / 4.9 cycles per instruction,
 the DSMEM and global loads) and mio-throttle (4.7 / 2.7) stalls, 33% warps active. The exchange and
 the 128-point single-stage FFTs leave the same room the s1 kernels had before their v2/v3 steps.
+
+## The s1 steps applied to the cluster kernels (`flash_rtx5060ti_014_cluster_v4b`, `cluster_check_rtx5060ti_002.json`)
+
+The first cluster kernels profiled like the s1 kernels before their memory-movement step: 16 warps
+per SM, long-scoreboard 7.5 / 4.9 and mio-throttle 4.7 / 2.7 cycles per instruction. They now carry
+the s1 treatment: batched half-plane loads, per-stage twiddle tables in shared memory with fused
+stages on the high-res axes (128: (4,4) (4,2); 144: (4,4) (3,3)), planes of one channel adjacent in
+the grid, and the low-res transform and inverse split between the two ranks (rank r transforms half
+the low-res rows, the ranks exchange, and rank r ends holding the low-res columns of its parity: the
+very pixels it solves; the backward's low-res inverse runs the same way in reverse, so rank 1 no
+longer idles). `cluster_check.py`: the four single-SM planes stay **bitwise identical** to the
+single-CTA kernels in every output and gradient; the 128x128 and 144x144 planes pass every budget
+with the ratios of the first version.
+
+NCU, one call each (`profile/flash-cluster-v4-20261012/analysis/table_v4b.md`, `table_v4b_s3.md`):
+
+| kernel | first version | revised |
+|---|---|---|
+| s2 B4 C64 64 -> 128 forward | 498 us | **400 us** (DRAM read 44 -> 31 MB, long scoreboard 7.5 -> 3.0, 94 registers) |
+| s2 B4 C64 64 -> 128 backward | 935 us | **740 us** (long scoreboard 4.9 -> 1.5, no spills) |
+| s3 B2 C32 48 -> 144 forward / backward | - | 147 us / 288 us (128 CTAs, 3.6 waves; mio 5.0 / 2.8, barrier 3.8 / 2.4) |
+
+Operator forward+VJP against production (8-11% foreign load): s2 64 -> 128 **2.33x** (3937 / 1689 us;
+1.83x before, production at this morning's baseline); s3 48 -> 144 1.07x (774 / 727 us; 0.93x
+before). The s3 case's two kernels are 435 us of its 727 us; the rest is the per-call kernel
+preparation (`fft2` of the 144x144 PSF, roll, pad) and launch overheads that production shares, so
+the fusion has little left to win at B2 C32. The cluster kernels' stalls are now mio throttle and
+barrier: the 128/144-point passes at 512 threads, the two DSMEM exchanges per transform and the
+column-layout stores; the s1 answers (a 768-thread forward, conflict-free stores) apply next.
