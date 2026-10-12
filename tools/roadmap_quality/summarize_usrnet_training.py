@@ -27,8 +27,12 @@ SHARED_SOURCE_KEYS = (
     "tools/roadmap_quality/train_usrnet_dataset.py", "tools/roadmap_quality/usrnet_training_data.py",
     "tools/roadmap_quality/evaluate_usrnet_quality.py", "utils/utils_image.py",
     "tools/roadmap_quality/run_state.py",
-    "test/extension_loader.py",
 )
+# The checked-build loader is read from each variant's own root (the worker loads
+# `<root>/test/extension_loader.py`), so it is part of that variant's effective
+# backend identity, which must be constant across seeds, not of the shared
+# worker/data code, which must be identical between the two variants.
+LOADER_SOURCE_KEY = "test/extension_loader.py"
 EXPECTED_RECIPE = dict(purpose="formal", init="pretrained", steps=STEPS, eval_every=125,
                        batch_size=4, microbatch_size=4, patch_size=96, scale=3,
                        noise_std=0.01, lr=1e-5, loss="mse", crop_border=3,
@@ -138,7 +142,7 @@ def inspect_run(directory, seed, variant, backend_validator=None):
         for key in ("split_sha256", "input_checkpoint_sha256"):
             require(digest_valid(run.get(key)), f"Missing or invalid {key}")
         require(digest_valid(dataset.get("manifest_sha256")), "Missing or invalid dataset manifest hash")
-        for key in SHARED_SOURCE_KEYS:
+        for key in SHARED_SOURCE_KEYS + (LOADER_SOURCE_KEY,):
             require(digest_valid(run["source_sha256"].get(key)), f"Missing source hash: {key}")
         protocol = run["protocol"]
         require(protocol.get("optimizer") == "Adam" and protocol.get("betas") == [0.9, 0.999]
@@ -177,8 +181,9 @@ def inspect_run(directory, seed, variant, backend_validator=None):
                 key = posixpath.normpath("Converse2D/torch_converse2d/" + name)
                 require(run["source_sha256"].get(key) == value,
                         f"Current build and recorded source disagree: {name}")
-            effective = dict(cpp=actual_sources, models={key: value for key, value in run["source_sha256"].items()
-                                                       if key.startswith("models/")})
+            effective = dict(cpp=actual_sources, loader=run["source_sha256"].get(LOADER_SOURCE_KEY),
+                             models={key: value for key, value in run["source_sha256"].items()
+                                     if key.startswith("models/")})
         result["effective_backend"] = effective
         result["effective_backend_sha256"] = hash_json(effective)
 

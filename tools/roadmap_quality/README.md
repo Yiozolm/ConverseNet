@@ -38,6 +38,10 @@ when a checked build is needed. `--root` selects the code; `--variant` only
 labels it. `--data-root`, manifest and checkpoint default to this repository
 so that a baseline checkout can share the same read-only dataset and initial
 checkpoint.
+Each variant loads `<root>/test/extension_loader.py`, so the audits count that
+file as part of the variant's own source identity (constant across seeds), not
+as shared worker/data code; a baseline whose loader predates a build-plumbing
+change is still comparable (first needed for the 2026-10-12 A100 study).
 
 Run both variants for each seed, alternating their order between seeds:
 

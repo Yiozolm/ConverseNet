@@ -154,10 +154,6 @@ save()
 md = OUT / 'paired_summary.md'
 if md.exists():
     print(md.read_text(encoding='utf-8'), flush=True)
-# Keep the archive small: drop checkpoints after the audit has read them.
-for path in OUT.rglob('*.pth'):
-    summary.setdefault('removed_checkpoints', []).append(str(path.relative_to(OUT)))
-    path.unlink()
-save()
+# Checkpoints stay: the offline audit requires them, and a re-audit must be possible later.
 print('paired quality rc', code, flush=True)
 sys.exit(code)

@@ -24,8 +24,11 @@ CLOSED = {"complete", "stable", "max_steps_reached", "budget_stopped"}
 SHARED_SOURCES = ("tools/roadmap_quality/train_usrnet_dataset.py",
                   "tools/roadmap_quality/usrnet_training_data.py",
                   "tools/roadmap_quality/evaluate_usrnet_quality.py",
-                  "tools/roadmap_quality/run_state.py", "utils/utils_image.py",
-                  "test/extension_loader.py")
+                  "tools/roadmap_quality/run_state.py", "utils/utils_image.py")
+# Each variant loads `<root>/test/extension_loader.py`, so the loader belongs to
+# that variant's source identity (constant across seeds, checked below through
+# source_sha256), not to the worker/data code shared by both variants.
+LOADER_SOURCE = "test/extension_loader.py"
 IGNORED_RECIPE = {"run_dir", "variant", "verbose_build", "root", "build", "purpose",
                   "resume", "max_wall_seconds", "deadline_utc", "steps"}
 HEX = re.compile(r"^[0-9a-f]{64}$")
@@ -143,7 +146,7 @@ def inspect_session(directory):
         require(dataset.get("train_images") == 900 and dataset.get("validation_images") == 100
                 and dataset.get("image_hashes_verified") is True, "Unverified or unexpected 900/100 split")
         sources = run["source_sha256"]
-        for name in SHARED_SOURCES:
+        for name in SHARED_SOURCES + (LOADER_SOURCE,):
             require(digest(sources.get(name)), "Missing shared source identity: " + name)
         require(dataset.get("source_sha256") == sources.get("tools/roadmap_quality/usrnet_training_data.py"),
                 "Dataset source identity mismatch")
