@@ -26,6 +26,29 @@ would be cropped away. Eligible outputs are contiguous. Differentiable calls,
 the `pytorch` backend and the public arbitrary-prior operator keep their
 existing paths. See the [experiment record](tools/v4_campaign/README.md).
 
+Two more training paths are fused on this branch. The channels-first `LayerNorm`
+of `models/util_converse.py` runs a fused CUDA training forward and first-order
+VJP for contiguous FP32 NCHW inputs with 64 or 128 channels: byte-identical
+output to the ATen expression, gradients gated by the FP32 policy, higher
+derivatives on the native expression. See
+[the study record](tools/v4_layernorm_training/README.md). Some training FFTs
+run their adjacent pad, scale and crop copies inside cuFFT LTO callbacks, each
+plan admitted only when a probe reproduces the ATen expression bit for bit; see
+[Converse2D](Converse2D/README.md) and
+[the callback record](tools/v4_fft_callbacks_prod/README.md).
+
+The fused training kernels reproduce ATen's FP32 complex multiply, whose FMA
+pattern differs between GPU architectures; the extension measures it on the
+current device at first use. With that, the release suite passes on both the
+RTX 5060 Ti (sm_120) and the A100 (sm_80, via the Colab CLI); the earlier 54
+sm_80 budget failures and their cause are recorded in
+[the A100 record](tools/v4_release_a100/README.md). The audited paired
+fine-tuning protocol of [roadmap_quality](tools/roadmap_quality/README.md)
+(pretrained USRNet, 250 updates, seeds 17/29/43, 100 fixed held-out crops)
+reaches the same PSNR/SSIM as the frozen baseline checkout within 1e-5 dB on
+every seed, with the training step 1.7x faster on the A100; it is short paired
+fine-tuning on fixed data, not a convergence or external-test-set claim.
+
 The project description and published results below are from the original work;
 they are not new performance or convergence measurements for this branch.
 

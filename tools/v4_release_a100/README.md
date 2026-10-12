@@ -176,3 +176,43 @@ failures; they were FP64-budget misses of two equally accurate rounding patterns
 pixels a side, not an accuracy defect of either path, and they are resolved by matching the device's
 pattern (run 3). Inference kernels form their complex products with `c10::complex` arithmetic and were
 never affected; their A100 rows passed in every run.
+
+## Paired fine-tuning quality on the A100 (`paired_quality.py`, `tools/roadmap_quality`)
+
+The release's convergence evidence: the audited short paired protocol (full pretrained USRNet,
+5 iterations / 7 blocks, HR96 / s3, batch 4, Adam 1e-5, 250 updates, seeds 17/29/43, all 100 fixed
+held-out crops) run against the frozen baseline checkout `0d63621` on the A100. The 1000 Open
+Images V6 files were fetched from the public bucket and verified against the split manifest's
+SHA-256 (1000/1000 in 16 s); the CPU data-protocol checks passed; both checkouts had their own
+checked build; capacity pilots ran on both.
+
+**Attempt 1 (`paired_quality-...-20261012T110649`, commit 2d794f5): all six runs complete, audit
+`invalid`.** The audit counted `test/extension_loader.py` among the shared worker files, but each
+variant loads it from its own root and claude/v4-dev changed it (cuFFT/NVRTC link flags) after
+0d63621, so every pair and the cross-seed check reported `shared_source_sha256 differs`. The
+quality tables of that attempt are identical to attempt 2 below; its report is kept as recorded.
+Commit 0652dcf moves the loader into the per-variant source identity in both audits (still required,
+still constant across seeds) and keeps checkpoints for re-audits.
+
+**Attempt 2 (`paired_quality-...-20261012T112422`, commit 0652dcf): audit `passed`, 3/3 comparable
+pairs, 0 integrity errors, training batches identical.**
+
+| Seed | Variant | RGB PSNR dB | Y PSNR dB | RGB SSIM | Y SSIM |
+|---|---|---|---|---|---|
+| 17 | before / current | 27.6719 / 27.6719 | 30.0858 / 30.0858 | 0.7395 / 0.7395 | 0.7950 / 0.7950 |
+| 29 | before / current | 27.5631 / 27.5631 | 30.0787 / 30.0787 | 0.7402 / 0.7402 | 0.7982 / 0.7982 |
+| 43 | before / current | 27.7868 / 27.7868 | 30.0863 / 30.0863 | 0.7451 / 0.7451 | 0.7976 / 0.7976 |
+
+Per-seed deltas (current minus before) are within ±6e-6 dB and ±1e-6 SSIM against gates of
+-0.05 dB and -0.001; all four gates pass on every seed, the same picture as the 2026-10-01 RTX 5060 Ti
+study of the earlier branch state.
+
+| Seed | Warm step median, before -> current | Step speedup | Data+steps | Loop incl. eval/I-O | Peak allocated, before -> current |
+|---|---|---|---|---|---|
+| 17 | 258.6 -> 152.4 ms | 1.697x | 1.536x | 1.402x | 9.09 -> 7.93 GiB |
+| 29 | 258.2 -> 153.7 ms | 1.680x | 1.537x | 1.401x | 9.09 -> 7.93 GiB |
+| 43 | 259.3 -> 153.5 ms | 1.690x | 1.542x | 1.412x | 9.09 -> 7.93 GiB |
+
+This is short paired fine-tuning on fixed data, not convergence to a final model or an external test
+set; it shows the v4 arithmetic trains the same model as the baseline to the audit's precision while
+the step runs 1.7x faster on the A100.
