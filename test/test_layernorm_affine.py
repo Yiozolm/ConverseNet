@@ -1,7 +1,8 @@
-"""LayerNorm keeps its original statistics and affine gradient order."""
+"""LayerNorm keeps its affine gradient order and routes training statistics to the fused kernel."""
 import unittest
 import torch
 from support import CUDATestCase
+from numerical_policy import comparison
 
 
 def reference(x, weight, bias, eps=1e-5):
@@ -35,7 +36,19 @@ class LayerNormAffineCUDA(CUDATestCase):
                         requested = [t for t in (x, layer.weight, layer.bias) if t.requires_grad]
                         results.append((output, *torch.autograd.grad(output, requested, upstream)))
                     with self.subTest(channels=channels, layout=layout, mask=mask):
-                        self.assert_results_equal(*results)
+                        if channels in (64, 128) and layout == 'contiguous':
+                            # Fused training domain: exact output, budgeted VJPs
+                            # (test_layernorm_training.py owns the full gates).
+                            self.assert_bytes_equal(results[1][0], results[0][0], 'output')
+                            high = [t.detach().double().requires_grad_(t.requires_grad)
+                                    for t in (x, layer.weight, layer.bias)]
+                            oracle = torch.autograd.grad(reference(*high), [t for t in high if t.requires_grad],
+                                                         upstream.double())
+                            for index, (actual, expected, ref64) in enumerate(zip(results[1][1:], results[0][1:], oracle)):
+                                row = comparison(actual, expected, ref64)
+                                self.assertTrue(row['passed'], f'VJP {index}: {row}')
+                        else:
+                            self.assert_results_equal(*results)
 
     def test_shared_ancestor_second_and_third_derivatives(self):
         from models.util_converse import _channel_affine
@@ -72,7 +85,7 @@ class LayerNormAffineCUDA(CUDATestCase):
         gradient = torch.autograd.grad(output.sum(), bias)[0]
         self.assert_bytes_equal(gradient, torch.full_like(bias, 70), 'bias-only VJP')
 
-    def test_training_statistics_remain_aten_and_full_inference_precedes_affine(self):
+    def test_training_fuses_statistics_and_full_inference_precedes_affine(self):
         from models.util_converse import LayerNorm
         layer = LayerNorm(64, data_format='channels_first').cuda()
         x = torch.randn(2, 64, 128, 128, device='cuda', requires_grad=True)
@@ -85,7 +98,8 @@ class LayerNormAffineCUDA(CUDATestCase):
         with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as trace:
             layer(x)
         training = {event.key:event.count for event in trace.key_averages()}
-        self.assertEqual(training.get('aten::mean'), 2)
+        self.assertNotIn('aten::mean', training)
+        self.assertEqual(training.get('converse2d::_channel_layernorm_forward_stats'), 1)
         self.assertNotIn('converse2d::_channel_affine', training)
         self.assertNotIn('converse2d::_channel_layernorm', training)
         with torch.no_grad(), torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as trace:

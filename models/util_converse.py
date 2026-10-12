@@ -87,6 +87,80 @@ def _channel_layernorm(value, weight, bias, eps, backend="auto"):
     return None
 
 
+def _channel_layernorm_domain(value, weight, bias, eps):
+    """Shape/layout/dtype domain shared by the fused inference and training paths."""
+    tensors = (value, weight, bias)
+    if (any(t.dtype != torch.float32 or t.layout != torch.strided for t in tensors)
+            or value.ndim != 4 or value.shape[1] not in (64, 128)
+            or weight.shape != (value.shape[1],) or bias.shape != weight.shape
+            or weight.device != value.device or bias.device != value.device
+            or value.shape[2] * value.shape[3] <= 1
+            or not 0 < value.numel() * 4 <= 2**31 - 1
+            or not all(t.is_contiguous() for t in tensors)
+            or not isinstance(eps, (int, float)) or not math.isfinite(eps) or eps <= 0):
+        return False
+    return not any(t.is_neg() or t.is_conj() for t in tensors)
+
+
+class _ChannelLayerNormTraining(torch.autograd.Function):
+    """Fused channels-first LayerNorm with a first-order fused VJP.
+
+    The forward reuses the exact inference kernel (byte-identical to the ATen
+    statistics) and keeps each pixel's mean and denominator. The first-order
+    backward is one fused CUDA kernel plus a fixed-order ATen reduction for the
+    channel vectors. Whenever a higher-order graph is requested the backward
+    recomputes the original ATen expression and differentiates it, so second
+    and third derivatives keep the native ATen path.
+    """
+
+    @staticmethod
+    def forward(ctx, x, weight, bias, eps):
+        output, mean, denominator = torch.ops.converse2d._channel_layernorm_forward_stats(
+            x, weight, bias, eps)
+        ctx.save_for_backward(x, weight, bias, mean, denominator)
+        ctx.eps = eps
+        ctx.set_materialize_grads(False)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        if grad_output is None:
+            return None, None, None, None
+        x, weight, bias, mean, denominator = ctx.saved_tensors
+        needs = ctx.needs_input_grad[:3]
+        if torch.is_grad_enabled():
+            # Higher-order fallback: the native ATen graph of the original expression.
+            with torch.enable_grad():
+                leaves = [t for t, need in zip((x, weight, bias), needs) if need]
+                u = x.mean(1, keepdim=True)
+                s = (x - u).pow(2).mean(1, keepdim=True)
+                output = weight[:, None, None] * ((x - u) / torch.sqrt(s + ctx.eps)) + bias[:, None, None]
+                grads = iter(torch.autograd.grad(output, leaves, grad_output, create_graph=True))
+            return (*(next(grads) if need else None for need in needs), None)
+        if grad_output.is_neg() or grad_output.is_conj():
+            grad_output = grad_output.resolve_neg().resolve_conj()
+        dx, dw, db = torch.ops.converse2d._channel_layernorm_backward(
+            grad_output.contiguous(), x, mean, denominator, weight, *needs)
+        return dx, dw, db, None
+
+
+def _channel_layernorm_training(value, weight, bias, eps, backend="auto"):
+    """Return the fused training result only inside the verified CUDA domain."""
+    if (not torch.is_grad_enabled() or not value.is_cuda or torch.is_autocast_enabled("cuda")
+            or not (value.requires_grad or weight.requires_grad or bias.requires_grad)):
+        return None
+    backend = os.environ.get("CONVERSE2D_BACKEND", "") or backend
+    if not isinstance(backend, str) or backend.lower() == "pytorch":
+        return None
+    if not _channel_layernorm_domain(value, weight, bias, eps):
+        return None
+    _try_import_converse2d_ext()
+    if (hasattr(torch.ops.converse2d, "_channel_layernorm_forward_stats")
+            and hasattr(torch.ops.converse2d, "_channel_layernorm_backward")):
+        return _ChannelLayerNormTraining.apply(value, weight, bias, float(eps))
+    return None
+
+
 """
 # --------------------------------------------
 # LayerNorm for Vision Normalization
@@ -116,6 +190,9 @@ class LayerNorm(nn.Module):
             return F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
         elif self.data_format == "channels_first":
             fused = _channel_layernorm(x, self.weight, self.bias, self.eps, self.backend)
+            if fused is not None:
+                return fused
+            fused = _channel_layernorm_training(x, self.weight, self.bias, self.eps, self.backend)
             if fused is not None:
                 return fused
             u = x.mean(1, keepdim=True)

@@ -1,4 +1,4 @@
-"""Exact full channel LayerNorm admission; no research extension is imported."""
+"""Exact full channel LayerNorm inference admission and training routing; no research extension is imported."""
 import os
 import unittest
 from unittest.mock import patch
@@ -69,6 +69,9 @@ class AccuracyMixin:
                 weight, bias = layer.weight, layer.bias
                 output, events = profiled(lambda: layer(x))
                 self.assertNotIn("converse2d::_channel_layernorm", events)
+                # Differentiable CUDA inputs select the fused training forward;
+                # CPU and the private inference op keep the ATen expression.
+                self.assertEqual("converse2d::_channel_layernorm_forward_stats" in events, device == "cuda")
             else:
                 output = (private if candidate else reference)(x, weight, bias, .2)
             gradients = torch.autograd.grad(output.sin().sum(), (x, weight, bias), create_graph=True)
@@ -76,7 +79,18 @@ class AccuracyMixin:
                                          (x, weight, bias), create_graph=True)
             third = torch.autograd.grad(sum(g.square().sum() for g in second), (x, weight, bias))
             results.append((output, *gradients, *second, *third))
-        self.assert_results_equal(results[0][:4], results[1][:4])
+        if use_public and device == "cuda":
+            # Fused training: byte-exact output, budgeted first-order VJPs
+            # against the Python FP32 expression and the independent FP64 oracle.
+            from numerical_policy import comparison
+            self.assert_bytes_equal(results[1][0], results[0][0], "output")
+            high = [value.detach().double().requires_grad_() for value in raw]
+            oracle = torch.autograd.grad(reference(*high, .2).sin().sum(), high)
+            for index, (actual, expected, ref64) in enumerate(zip(results[1][1:4], results[0][1:4], oracle)):
+                row = comparison(actual, expected, ref64)
+                self.assertTrue(row["passed"], f"VJP {index}: {row}")
+        else:
+            self.assert_results_equal(results[0][:4], results[1][:4])
         # Preserve the existing higher-order ATen admission tolerance. These
         # checks do not relax either first-order bytes or inference FP64 gates.
         for actual, expected in zip(results[0][4:], results[1][4:]):

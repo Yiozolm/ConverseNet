@@ -28,8 +28,9 @@ while build checks, the CPU extension and the portable Python fallback still run
 | `test_fft_callbacks.py` | cuFFT callback FFT selection at the side-16 boundary; public s1/s2/s3, circular s1, layout, second-derivative and in-place-rebase FP64 budgets at sizes that exercise callbacks |
 | `test_batch_reduce.py` | B2/B4 shared-kernel batch reductions, original accumulation order, gradient masks, fallback geometry, higher derivatives and Graph replay |
 | `test_peripheral_fusion.py` | Alpha residual FP32 multiply/add boundaries, gradient subsets, aliases, higher derivatives, layouts and streams |
-| `test_layernorm_affine.py` | Private affine values/gradients, full-inference dispatch precedence and unchanged training statistics |
-| `test_layernorm_full.py` | Six ATen reduction geometries, alignment/tails, byte and FP64 gates, unsupported-input fallbacks, higher derivatives, streams and Graph replay |
+| `test_layernorm_affine.py` | Private affine values/gradients, full-inference dispatch precedence and fused training statistics routing |
+| `test_layernorm_full.py` | Six ATen reduction geometries, alignment/tails, byte and FP64 gates, unsupported-input fallbacks, training routing, higher derivatives, streams and Graph replay |
+| `test_layernorm_training.py` | Fused channels-first LayerNorm training: byte-exact forward, FP64-budgeted VJPs over all masks, seeded channel-vector budgets, geometries/alignment, permuted upstream, determinism, dispatch boundaries, native higher-order fallback |
 | `test_peripheral_policy.py` | CPU-only automatic dispatch boundaries for large inference tensors, frozen/differentiable inputs and all three GradMode contexts |
 | `test_cuda_graph.py` | Graph ownership, replay, invalidation and training transitions |
 | `test_pretrained_fp32.py` | DnCNN/SRResNet/USRNet pretrained outputs and three-seed, three-step USRNet/Adam regression |
