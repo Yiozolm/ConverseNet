@@ -45,7 +45,7 @@ def session(root, seed, variant, start, end, *, parent=None, quality_delta=0., s
                   deterministic_algorithms=True, stop_when_stable=False, purpose=purpose,
                   resume=str(parent / "final.pth") if parent else None, max_wall_seconds=None,
                   deadline_utc=None, build=False, verbose_build=False)
-    sources = {name: h(name) for name in audit.SHARED_SOURCES}
+    sources = {name: h(name) for name in audit.SHARED_SOURCES + (audit.LOADER_SOURCE,)}
     sources["Converse2D/torch_converse2d/unit.cpp"] = h(variant)
     build = dict(library="unit.pyd", binary_sha256=h("binary" + variant),
                  inputs=dict(sources={"unit.cpp": h(variant)}))
