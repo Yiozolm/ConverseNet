@@ -82,17 +82,23 @@ class RealCropContracts(CUDATestCase):
                 weight = torch.rand(1, 3, 3, 3, generator=generator).cuda().requires_grad_()
                 bias = torch.randn(1, 3, 1, 1, generator=generator).cuda()
                 out = torch.ops.converse2d.forward(x, x0, weight, bias, scale, 1e-5)
-                self.assertTrue(has_real_crop_node(out))
+                # The fused real/crop+IFFT node edges go straight to the solved spectrum.
+                self.assertIn("RealCropIFFTBackward", node_names(out))
                 # Native view metadata: out is the real view of the complex IFFT.
                 z = out._base
                 self.assertEqual(z.dtype, torch.complex64)
                 self.assertEqual((out.stride(), out.storage_offset()), (z.real.stride(), z.real.storage_offset()))
+                # Planes below 16 keep ATen FFTs, so the fused VJP must equal the
+                # native z.real chain (through z's IFFT node) byte for byte.
                 g = upstream(out.shape, "transposed")
-                fused, = torch.autograd.grad(out, z, g, retain_graph=True)
-                native, = torch.autograd.grad(z.real, z, g)
-                self.assert_bytes_equal(fused, native, "public forward real VJP")
+                inputs = (x, weight) if shared else (x, x0, weight)
+                fused = torch.autograd.grad(out, inputs, g, retain_graph=True)
+                native = torch.autograd.grad(z.real, inputs, g)
+                for index, (a, b) in enumerate(zip(fused, native)):
+                    self.assert_bytes_equal(a, b, f"public forward real VJP {index}")
                 with torch.no_grad():
-                    self.assertFalse(has_real_crop_node(torch.ops.converse2d.forward(x, x0, weight, bias, scale, 1e-5)))
+                    frozen = torch.ops.converse2d.forward(x, x0, weight, bias, scale, 1e-5)
+                    self.assertFalse(any("RealCrop" in name for name in node_names(frozen)))
 
     def test_exact_view_alias_layout_and_no_grad_modes(self):
         schema = torch.ops.converse2d._training_real_crop.default._schema

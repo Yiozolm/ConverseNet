@@ -29,6 +29,7 @@ depends = ["torch_converse2d/" + name for name in config.dependency_names(has_cu
 extension = (CUDAExtension if has_cu else CppExtension)(
     name="converse2d_ext", sources=sources, depends=depends,
     extra_compile_args={"cxx":cxx,"nvcc":nvcc} if has_cu else cxx,
+    libraries=config.link_libraries(has_cu),
     define_macros=[("CONVERSE2D_WITH_CUDA","1")] if has_cu else [],
 )
 setup(name="torch_converse2d",version="1.0.0",
