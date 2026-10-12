@@ -38,6 +38,9 @@ total = mismatched = 0
 for name, (b, c, h, w, scale, pad) in fs.CASES.items():
     if not new.supported(h, w, scale, pad, device):
         continue
+    if not old.supported(h, w, scale, pad, device):  # e.g. a plane the reference needed clusters for
+        print(f'{name:28s} skipped: not supported by {tag}', flush=True)
+        continue
     torch.manual_seed(77001)
     x = torch.randn(b, c, h, w, device='cuda', requires_grad=True)
     x0 = torch.randn(b, c, h * scale, w * scale, device='cuda', requires_grad=scale > 1)

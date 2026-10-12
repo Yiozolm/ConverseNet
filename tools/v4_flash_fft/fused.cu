@@ -11,9 +11,13 @@
 #include <ATen/ATen.h>
 #include <c10/cuda/CUDAException.h>
 
+#include <cooperative_groups.h>
+
 #include <cmath>
 #include <map>
 #include <vector>
+
+namespace cg = cooperative_groups;
 
 namespace {
 
@@ -501,12 +505,13 @@ __device__ __forceinline__ void load_embedded(float2* s, const float* __restrict
     }
 }
 
-// Block sizes of the s1 kernels, 512 or 1024 (flash_set_s1_threads). At 80 KB per
-// plane sm_120 holds one block per SM either way; 1024 threads double the resident
-// warps (16 -> 32 of 48) at a 64-register budget. The forward fits that budget
-// (no spills, 413 -> 282 us at B4 C128 100x100); the two-term backward spills at
-// 64 registers and stays at 512 (865 -> 626 us).
-int g_s1_forward_threads = 1024;
+// Block sizes of the s1 kernels, 512, 768 or 1024 (flash_set_s1_threads). At 80 KB
+// per plane sm_120 holds one block per SM either way. The forward runs 768 threads
+// (24 warps, an 80-register budget that holds the fused passes without spills: 253 us
+// at B4 C128 100x100 against 277 us for 1024 single-stage threads and 282 us for
+// 512 fused ones); the two-term backward stays at 512 (574 us; 768 and 1024 are
+// within 2% and spill).
+int g_s1_forward_threads = 768;
 int g_s1_backward_threads = kThreads;
 
 // Pair packs batches (2m, 2m+1) of one channel as x_2m + i*x_2m+1. The solve is
@@ -594,6 +599,7 @@ template <bool Pair>
 void dispatch_static(const at::Tensor& x, const at::Tensor& k, const at::Tensor& l, at::Tensor& out, int pad, int mode,
                      int H, int W, const float2* tr, const float2* tc) {
     if (g_s1_forward_threads == 1024) return dispatch_static_t<Pair, 1024>(x, k, l, out, pad, mode, H, W, tr, tc);
+    if (g_s1_forward_threads == 768) return dispatch_static_t<Pair, 768>(x, k, l, out, pad, mode, H, W, tr, tc);
     dispatch_static_t<Pair, 512>(x, k, l, out, pad, mode, H, W, tr, tc);
 }
 
@@ -1124,6 +1130,272 @@ void scaled_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor
     reduce_partials(part, gl_part, gk, gl, reg, gb);
 }
 
+// ---- v4: two-CTA clusters with distributed shared memory for the s2/s3 planes ----
+// A 128x128 (s2) or 144x144 (s3) complex plane is 128 / 162 KB, above the 99 KB one
+// SM offers on sm_120. A cluster of two CTAs holds one plane: CTA rank r keeps rows
+// [r SH/2, (r+1) SH/2) in the row phases and the columns of parity r in the column
+// phases. W is even, so the S*S aliases (h + aH, w + bW) of a low-res (h, w) share a
+// column parity and live in one CTA, and the solve stays local. Between a row and a
+// column phase the CTAs swap the quarter plane each holds for the other through
+// DSMEM: every thread reads its stay-at-home and incoming elements into registers,
+// the cluster syncs, and writes them in the new layout. Row layout:
+// s[(row - r SH/2) SW + col]; column layout: s[row (SW/2) + col / 2]. Every line of
+// every FFT pass and every solve group is computed exactly as in the single-CTA
+// kernels, so the outputs are bitwise those of static_s_forward where both fit.
+template <int SH, int SW, int T>
+__device__ __forceinline__ void exchange_rows_to_cols(float2* s, cg::cluster_group& cluster, int rank, int tid) {
+    constexpr int HALF = SH / 2, CW = SW / 2, N2 = SH * CW, per = (N2 + T - 1) / T;
+    float2* remote = cluster.map_shared_rank(s, rank ^ 1);
+    float2 v[per];
+    cluster.sync();  // the other CTA's row phase is complete
+#pragma unroll
+    for (int q = 0; q < per; ++q) {
+        const int d = tid + q * T;
+        if (N2 % T == 0 || d < N2) {
+            const int row = d / CW, col = 2 * (d % CW) + rank, src = (row % HALF) * SW + col;
+            v[q] = row / HALF == rank ? s[src] : remote[src];
+        }
+    }
+    cluster.sync();  // every read of both CTAs is done before any write
+#pragma unroll
+    for (int q = 0; q < per; ++q) {
+        const int d = tid + q * T;
+        if (N2 % T == 0 || d < N2) s[d] = v[q];
+    }
+    __syncthreads();
+}
+template <int SH, int SW, int T>
+__device__ __forceinline__ void exchange_cols_to_rows(float2* s, cg::cluster_group& cluster, int rank, int tid) {
+    constexpr int HALF = SH / 2, CW = SW / 2, N2 = SH * CW, per = (N2 + T - 1) / T;
+    float2* remote = cluster.map_shared_rank(s, rank ^ 1);
+    float2 v[per];
+    cluster.sync();
+#pragma unroll
+    for (int q = 0; q < per; ++q) {
+        const int d = tid + q * T;
+        if (N2 % T == 0 || d < N2) {
+            const int col = d % SW, row = rank * HALF + d / SW, src = row * CW + col / 2;
+            v[q] = col % 2 == rank ? s[src] : remote[src];
+        }
+    }
+    cluster.sync();
+#pragma unroll
+    for (int q = 0; q < per; ++q) {
+        const int d = tid + q * T;
+        if (N2 % T == 0 || d < N2) s[d] = v[q];
+    }
+    __syncthreads();
+}
+
+// Row FFTs of this CTA's half of the rows, the exchange, column FFTs of its columns.
+template <int SH, int SW, bool Inverse>
+__device__ __forceinline__ void cluster_fft2(float2* s, const Twiddles& tw, cg::cluster_group& cluster, int rank,
+                                             int tid) {
+    constexpr int HALF = SH / 2, CW = SW / 2;
+    if constexpr (!Inverse) {
+        static_fft<SW, 0, 1, false, false, HALF, SW, 1>(s, tw.high_rows, tid);
+        exchange_rows_to_cols<SH, SW, kThreads>(s, cluster, rank, tid);
+        static_fft<SH, 0, 1, false, true, CW, 1, CW>(s, tw.high_cols, tid);
+    } else {
+        static_fft<SH, 0, 1, true, true, CW, 1, CW>(s, tw.high_cols, tid);
+        exchange_cols_to_rows<SH, SW, kThreads>(s, cluster, rank, tid);
+        static_fft<SW, 0, 1, true, false, HALF, SW, 1>(s, tw.high_rows, tid);
+    }
+}
+
+template <int H, int W, int S>
+__global__ void __cluster_dims__(2, 1, 1) __launch_bounds__(kThreads, 1) cluster_s_forward(
+    const float* __restrict__ x, const float* __restrict__ x0, const float2* __restrict__ k,
+    const float* __restrict__ l, float* __restrict__ out, float2* __restrict__ scratch, int C, int KB, Twiddles tw,
+    float prediction_factor, float power_factor) {
+    extern __shared__ float2 s[];
+    cg::cluster_group cluster = cg::this_cluster();
+    constexpr int SH = S * H, SW = S * W, N = SH * SW, n = H * W, HALF = SH / 2, CW = SW / 2, N2 = N / 2;
+    static_assert(W % 2 == 0 && SH % 2 == 0 && n <= N2, "cluster split needs even sides");
+    const int rank = int(cluster.block_rank()), bc = blockIdx.x / 2, c = bc % C, tid = threadIdx.x;
+    // Low-res spectrum: both CTAs transform it (it fits beside nothing else yet); rank 0 parks it.
+    const float* xp = x + size_t(bc) * n;
+    for (int i = tid; i < n; i += kThreads) s[i] = make_float2(xp[i], 0.f);
+    __syncthreads();
+    fft2_plane<H, W>(s, tw.low_rows, tw.low_cols, tid);
+    float2* yp = scratch + size_t(bc) * n;
+    if (rank == 0)
+        for (int i = tid; i < n; i += kThreads) yp[i] = s[i];
+    __syncthreads();
+    const float* x0p = x0 + size_t(bc) * N + size_t(rank) * HALF * SW;
+    for (int i = tid; i < N2; i += kThreads) s[i] = make_float2(x0p[i], 0.f);
+    __syncthreads();
+    cluster_fft2<SH, SW, false>(s, tw, cluster, rank, tid);
+    __threadfence();
+    cluster.sync();  // rank 0's yp is visible
+    const float2* kp = k + kernel_plane(KB, C, bc / C, c) * N;
+    const float lc = l[c];
+    for (int i = tid; i < n / 2; i += kThreads) {
+        const int h = i / (W / 2), w = 2 * (i % (W / 2)) + rank;
+        float2 pm = make_float2(0.f, 0.f);
+        float pw = 0.f;
+#pragma unroll
+        for (int j = 0; j < S * S; ++j) {
+            const int row = h + (j / S) * H, col = w + (j % S) * W;
+            const float2 kk = __ldg(kp + row * SW + col);
+            pm = add2(pm, prod(kk, s[row * CW + col / 2]));
+            pw = __fadd_rn(pw, __fadd_rn(__fmul_rn(kk.x, kk.x), __fmul_rn(kk.y, kk.y)));
+        }
+        pm = make_float2(__fmul_rn(pm.x, prediction_factor), __fmul_rn(pm.y, prediction_factor));
+        const float den = __fadd_rn(__fmul_rn(pw, power_factor), lc);
+        const float2 y = yp[h * W + w];
+        const float2 q = div_real(make_float2(__fadd_rn(y.x, -pm.x), __fadd_rn(y.y, -pm.y)), den);
+#pragma unroll
+        for (int j = 0; j < S * S; ++j) {
+            const int row = h + (j / S) * H, col = w + (j % S) * W, off = row * CW + col / 2;
+            s[off] = add2(s[off], prod(conj2(__ldg(kp + row * SW + col)), q));
+        }
+    }
+    __syncthreads();
+    cluster_fft2<SH, SW, true>(s, tw, cluster, rank, tid);
+    const float scale = float(1.0 / double(N));
+    float* op = out + size_t(bc) * N + size_t(rank) * HALF * SW;
+    for (int i = tid; i < N2; i += kThreads) op[i] = s[i].x * scale;
+}
+
+// Backward in a cluster, as static_s_backward: P parked in the plane's grad_k partial
+// slot (each CTA parks and later owns the alias indices of its column parity), G in
+// shared memory, the low-res gy in the yp scratch (each CTA writes its own (h, w)).
+// grad_l: each CTA block-sums its pixels; rank 1 leaves its (hi, lo) in the plane's
+// second partial pair and rank 0 adds it two-term, so the plane's sum is one value.
+template <int H, int W, int S>
+__global__ void __cluster_dims__(2, 1, 1) __launch_bounds__(kThreads, 1) cluster_s_backward(
+    const float* __restrict__ x, const float* __restrict__ x0, const float* __restrict__ g,
+    const float2* __restrict__ k, const float* __restrict__ l, float* __restrict__ gx, float* __restrict__ gx0,
+    float2* __restrict__ part, float* __restrict__ gl_part, float* __restrict__ gl_rank1,
+    float2* __restrict__ scratch_y, int C, int KB, Twiddles tw, float2 inv_n, float2 mean_factor,
+    float2 inverse_aliases, const float4* __restrict__ reg) {
+    extern __shared__ float2 s[];
+    __shared__ DF partial[kThreads / 32];
+    cg::cluster_group cluster = cg::this_cluster();
+    constexpr int SH = S * H, SW = S * W, N = SH * SW, n = H * W, HALF = SH / 2, CW = SW / 2, N2 = N / 2;
+    static_assert(W % 2 == 0 && SH % 2 == 0 && n <= N2, "cluster split needs even sides");
+    const int rank = int(cluster.block_rank()), bc = blockIdx.x / 2, c = bc % C, tid = threadIdx.x;
+    const size_t lo = size_t(bc) * n, hi = size_t(bc) * N;
+    float2* yp = scratch_y + lo;
+    float2* pp = part + hi;
+    for (int i = tid; i < n; i += kThreads) s[i] = make_float2(x[lo + i], 0.f);
+    __syncthreads();
+    fft2_plane<H, W>(s, tw.low_rows, tw.low_cols, tid);
+    if (rank == 0)
+        for (int i = tid; i < n; i += kThreads) yp[i] = s[i];
+    __syncthreads();
+    const size_t rows = hi + size_t(rank) * HALF * SW;
+    for (int i = tid; i < N2; i += kThreads) s[i] = make_float2(x0[rows + i], 0.f);
+    __syncthreads();
+    cluster_fft2<SH, SW, false>(s, tw, cluster, rank, tid);
+    for (int d = tid; d < N2; d += kThreads) pp[(d / CW) * SW + 2 * (d % CW) + rank] = s[d];
+    __syncthreads();
+    for (int i = tid; i < N2; i += kThreads) s[i] = make_float2(g[rows + i], 0.f);
+    __syncthreads();
+    cluster_fft2<SH, SW, false>(s, tw, cluster, rank, tid);
+    __threadfence();
+    cluster.sync();  // yp (rank 0) and both CTAs' P are visible
+    const float2* kp = k + kernel_plane(KB, C, bc / C, c) * N;
+    const DF lc = reg ? DF{reg[c].x, reg[c].y} : df(l[c]);
+    const DF scale{inv_n.x, inv_n.y}, factor{mean_factor.x, mean_factor.y}, inverse{inverse_aliases.x, inverse_aliases.y};
+    DF gl_sum = df(0.f);
+    for (int i = tid; i < n / 2; i += kThreads) {
+        const int h = i / (W / 2), w = 2 * (i % (W / 2)) + rank, pix = h * W + w;
+        CDF pm = cdf(make_float2(0.f, 0.f)), t = pm;
+        DF pw = df(0.f);
+#pragma unroll
+        for (int j = 0; j < S * S; ++j) {
+            const int row = h + (j / S) * H, col = w + (j % S) * W;
+            const float2 kk = __ldg(kp + row * SW + col);
+            pm = cdf_add(pm, cmul_ff(kk, pp[row * SW + col]));
+            pw = df_adds(pw, df_norm(kk));
+            t = cdf_add(t, cmul_ff(scaled32(s[row * CW + col / 2], scale.hi), kk));
+        }
+        const DF rd = df_rcp(df_adds(df_mul(pw, factor), lc));
+        const CDF q = cscale(cdf_sub(cdf(yp[pix]), cscale(pm, factor)), rd);
+        const CDF gy = cscale(t, rd), gm = cscale(cdf_neg(gy), inverse);
+        const DF v = neg_real_dot(t, cscale(q, rd)), two_power = df_mul_f(df_mul(v, inverse), 2.f);
+        const float2 gm32 = cdf_round(gm);
+#pragma unroll
+        for (int j = 0; j < S * S; ++j) {
+            const int row = h + (j / S) * H, col = w + (j % S) * W, gp = row * SW + col, off = row * CW + col / 2;
+            const float2 kk = __ldg(kp + gp), P = pp[gp], G = scaled32(s[off], scale.hi);
+            s[off] = add2(G, prod(gm32, conj2(kk)));
+            const CDF power{df_mul_f(two_power, kk.x), df_mul_f(two_power, kk.y)};
+            pp[gp] = cdf_round(cdf_add(cdf_add(cmul_df(q, conj2(G)), cmul_df(gm, conj2(P))), power));
+        }
+        yp[pix] = cdf_round(gy);
+        gl_sum = df_add(gl_sum, v);
+    }
+    __syncthreads();
+    cluster_fft2<SH, SW, true>(s, tw, cluster, rank, tid);
+    for (int i = tid; i < N2; i += kThreads) gx0[rows + i] = s[i].x;
+    // grad_l of the plane: rank 1's block sum joins rank 0's.
+    store_block_sum(gl_sum, partial, rank == 0 ? gl_part + 2 * size_t(bc) : gl_rank1 + 2 * size_t(bc));
+    __threadfence();
+    cluster.sync();  // both CTAs' gy and block sums are visible
+    if (rank == 0) {
+        if (tid == 0) {
+            const DF a{gl_part[2 * bc], gl_part[2 * bc + 1]}, b{gl_rank1[2 * bc], gl_rank1[2 * bc + 1]};
+            const DF v = df_add(a, b);
+            gl_part[2 * bc] = v.hi;
+            gl_part[2 * bc + 1] = v.lo;
+        }
+        __syncthreads();
+        for (int i = tid; i < n; i += kThreads) s[i] = yp[i];
+        __syncthreads();
+        ifft2_plane<H, W>(s, tw.low_rows, tw.low_cols, tid);
+        for (int i = tid; i < n; i += kThreads) gx[lo + i] = s[i].x;
+    }
+}
+
+// Cluster launchers: two CTAs per plane, half a plane of dynamic shared memory each.
+template <int H, int W, int S>
+void cluster_forward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& k, const at::Tensor& l,
+                     at::Tensor& out) {
+    constexpr int N = S * S * H * W;
+    auto kernel = cluster_s_forward<H, W, S>;
+    TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, N * 4) == cudaSuccess);
+    auto scratch = at::empty({x.size(0), x.size(1), H, W}, k.options());
+    const float factor = float(H * W) / float(N);
+    kernel<<<2 * x.size(0) * x.size(1), kThreads, N * 4, at::cuda::getCurrentCUDAStream()>>>(
+        x.data_ptr<float>(), x0.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()), l.data_ptr<float>(),
+        out.data_ptr<float>(), reinterpret_cast<float2*>(scratch.data_ptr()), x.size(1), int(k.size(0)),
+        twiddles(H, W, S * H, S * W, x.get_device()), factor, factor);
+}
+
+template <int H, int W, int S>
+void cluster_backward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& g, const at::Tensor& k,
+                      const at::Tensor& l, at::Tensor& gx, at::Tensor& gx0, at::Tensor& gk, at::Tensor& gl,
+                      const at::Tensor& reg = at::Tensor(), at::Tensor gb = at::Tensor()) {
+    constexpr int N = S * S * H * W;
+    auto kernel = cluster_s_backward<H, W, S>;
+    TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, N * 4) == cudaSuccess);
+    auto scratch_y = at::empty({x.size(0), x.size(1), H, W}, k.options());
+    auto part = kernel_partials(x, k, gk);
+    auto gl_part = at::empty({x.size(0), x.size(1), 2}, l.options());
+    auto gl_rank1 = at::empty({x.size(0), x.size(1), 2}, l.options());
+    const float2 inverse = df_constant(1.0 / (S * S));
+    kernel<<<2 * x.size(0) * x.size(1), kThreads, N * 4, at::cuda::getCurrentCUDAStream()>>>(
+        x.data_ptr<float>(), x0.data_ptr<float>(), g.data_ptr<float>(), reinterpret_cast<const float2*>(k.data_ptr()),
+        l.data_ptr<float>(), gx.data_ptr<float>(), gx0.data_ptr<float>(), reinterpret_cast<float2*>(part.data_ptr()),
+        gl_part.data_ptr<float>(), gl_rank1.data_ptr<float>(), reinterpret_cast<float2*>(scratch_y.data_ptr()),
+        x.size(1), int(k.size(0)), twiddles(H, W, S * H, S * W, x.get_device()), df_constant(1.0 / N), inverse, inverse,
+        reg.defined() ? reinterpret_cast<const float4*>(reg.data_ptr()) : nullptr);
+    reduce_partials(part, gl_part, gk, gl, reg, gb);
+}
+
+// 0: clusters only for planes one SM cannot hold; 1: clusters for every s2/s3 plane
+// (the bitwise cross-check against the single-CTA kernels); 2: never.
+int g_cluster_mode = 0;
+bool use_cluster(int side, int scale, int device) {
+    if (scale < 2 || g_cluster_mode == 2) return false;
+    const int64_t plane = int64_t(scale * side) * (scale * side) * 8, cap = smem_capacity(device);
+    const bool single = plane + kStaticSmem <= cap, half = plane / 2 + kStaticSmem <= cap;
+    return g_cluster_mode == 1 ? half : (!single && half);
+}
+
 // Diagnostic: the raw 2-D FFT of real planes exactly as the fused kernels compute
 // it (fft2_plane after loading (x, 0)), for error attribution in Python.
 template <int H, int W>
@@ -1521,18 +1793,24 @@ bool flash_supported(int64_t h0, int64_t w0, int64_t scale, int64_t pad, int64_t
     if (h0 != w0 || scale < 1 || scale > 3 || (scale > 1 && pad)) return false;
     const int side = scale == 1 ? int(h0 + 2 * pad) : int(h0);
     if (!compiled(side, int(scale))) return false;
-    const int64_t plane = int64_t(scale * side) * (scale * side + (scale == 1 ? 1 : 0)) * 8;
-    return plane + kStaticSmem <= smem_capacity(int(device));
+    const int64_t plane = int64_t(scale * side) * (scale * side + (scale == 1 ? kS1Pad : 0)) * 8;
+    return plane + kStaticSmem <= smem_capacity(int(device)) || use_cluster(side, int(scale), int(device));
 }
+
+void flash_set_cluster_mode(int64_t mode) {
+    TORCH_CHECK(mode >= 0 && mode <= 2, "cluster mode is 0 (auto), 1 (always) or 2 (never)");
+    g_cluster_mode = int(mode);
+}
+int64_t flash_cluster_mode() { return g_cluster_mode; }
 
 int64_t flash_smem_capacity(int64_t device) { return smem_capacity(int(device)); }
 
-// Block sizes of the s1 forward (512 or 1024) and backward (512, 768 or 1024) kernels;
-// defaults 1024 and 512. 768 threads give the backward 24 warps per SM at an
-// 80-register budget.
+// Block sizes of the s1 forward and backward kernels, 512, 768 or 1024 each; defaults
+// 768 and 512.
 void flash_set_s1_threads(int64_t forward, int64_t backward) {
-    TORCH_CHECK((forward == 512 || forward == 1024) && (backward == 512 || backward == 768 || backward == 1024),
-                "s1 block sizes: forward 512 or 1024, backward 512, 768 or 1024");
+    TORCH_CHECK((forward == 512 || forward == 768 || forward == 1024) &&
+                    (backward == 512 || backward == 768 || backward == 1024),
+                "s1 block sizes must be 512, 768 or 1024");
     g_s1_forward_threads = int(forward);
     g_s1_backward_threads = int(backward);
 }
@@ -1551,8 +1829,11 @@ at::Tensor flash_scaled_forward(const at::Tensor& x, const at::Tensor& x0, const
     c10::cuda::CUDAGuard guard(x.device());
     auto out = at::empty_like(x0);
     const int side = x.size(2);
-#define FLASH_FWD2(n) if (scale == 2 && side == n) scaled_forward<n, n, 2>(x, x0, k, l, out);
-#define FLASH_FWD3(n) if (scale == 3 && side == n) scaled_forward<n, n, 3>(x, x0, k, l, out);
+    const bool cl = use_cluster(side, int(scale), x.get_device());
+#define FLASH_FWD2(n) \
+    if (scale == 2 && side == n) { if (cl) cluster_forward<n, n, 2>(x, x0, k, l, out); else scaled_forward<n, n, 2>(x, x0, k, l, out); }
+#define FLASH_FWD3(n) \
+    if (scale == 3 && side == n) { if (cl) cluster_forward<n, n, 3>(x, x0, k, l, out); else scaled_forward<n, n, 3>(x, x0, k, l, out); }
     FLASH_S2_SIZES(FLASH_FWD2)
     FLASH_S3_SIZES(FLASH_FWD3)
 #undef FLASH_FWD2
@@ -1576,8 +1857,17 @@ static std::vector<at::Tensor> scaled_backward_any(const at::Tensor& x, const at
     auto gl = at::empty({x.size(1)}, l.options());
     auto gb = reg.defined() ? at::empty({x.size(1)}, l.options()) : at::Tensor();
     const int side = x.size(2);
-#define FLASH_BWD2(n) if (scale == 2 && side == n) scaled_backward<n, n, 2>(x, x0, g, k, l, gx, gx0, gk, gl, reg, gb);
-#define FLASH_BWD3(n) if (scale == 3 && side == n) scaled_backward<n, n, 3>(x, x0, g, k, l, gx, gx0, gk, gl, reg, gb);
+    const bool cl = use_cluster(side, int(scale), x.get_device());
+#define FLASH_BWD2(n) \
+    if (scale == 2 && side == n) { \
+        if (cl) cluster_backward<n, n, 2>(x, x0, g, k, l, gx, gx0, gk, gl, reg, gb); \
+        else scaled_backward<n, n, 2>(x, x0, g, k, l, gx, gx0, gk, gl, reg, gb); \
+    }
+#define FLASH_BWD3(n) \
+    if (scale == 3 && side == n) { \
+        if (cl) cluster_backward<n, n, 3>(x, x0, g, k, l, gx, gx0, gk, gl, reg, gb); \
+        else scaled_backward<n, n, 3>(x, x0, g, k, l, gx, gx0, gk, gl, reg, gb); \
+    }
     FLASH_S2_SIZES(FLASH_BWD2)
     FLASH_S3_SIZES(FLASH_BWD3)
 #undef FLASH_BWD2

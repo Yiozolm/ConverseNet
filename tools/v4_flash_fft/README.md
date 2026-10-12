@@ -861,3 +861,71 @@ What limits the kernels now: the `wait` stall (1.0-1.7 cycles per instruction of
 dependencies), the second Stockham stage's 2-2.5-way store conflicts, and the instruction count
 of the backward's two-term pointwise phase (about half of its 142 M instructions). Those, and
 clusters with distributed shared memory for the 128x128 and 144x144 planes, are the next items.
+
+## 768-thread forward, a persistent-block regression, and two-CTA clusters for the s2/s3 planes (`flash_rtx5060ti_012_cluster`, `_013_f768`, `cluster_check_rtx5060ti_001.json`)
+
+Three more steps after the fused stages, on the same RTX 5060 Ti and shape:
+
+- **Forward at 768 threads with fused stages: the new default.** 24 warps per SM at an 80-register
+  budget hold the fused passes without spills (67 registers): 253 us against 277 us for 1024
+  single-stage threads and 282 us for 512 fused ones (`profile/flash-fft-v3d-20261012`). Mio
+  throttle fell from 3.15 to 1.23 cycles per instruction while warps active went from 65% to 50%.
+  Bitwise identical to `6dd4bbb`. The backward stays at 512 threads (574 us; 768 is 585).
+- **Persistent blocks, tried and reverted** (`profile/flash-fft-v3c-20261012`). One block per SM
+  walking the planes and prefetching the next plane's x, g and k to L2 was bitwise identical and
+  2-5x slower: ptxas spilled 1.2-1.5 KB per thread in every instantiation once the kernel body
+  became a loop (2-3 M local loads, 140-415 MB of spill traffic to DRAM). The idea needs the loop
+  state kept out of the FFT's register budget; not pursued further here.
+- **Two-CTA clusters with distributed shared memory** (`cluster_s_forward`, `cluster_s_backward`).
+  The s2 128x128 (128 KB) and s3 144x144 (162 KB) planes exceed the 99 KB one SM offers, so a
+  cluster of two CTAs holds one plane: rank r keeps rows [r SH/2, (r+1) SH/2) in the row phases
+  and the columns of parity r in the column phases (W is even, so every S*S alias group of a low-res
+  pixel shares a parity and the solve stays local). Between phases the CTAs swap the quarter plane
+  each holds for the other through DSMEM: every thread reads its stay-at-home and incoming elements
+  into registers, `cluster.sync()`, writes them in the new layout. Both CTAs transform the low-res
+  plane (it fits beside nothing else at that point) and rank 0 parks it; rank 0 runs the low-res
+  inverse; rank 1 adds its grad_l block sum to rank 0's two-term. `set_cluster_mode(0|1|2)`: clusters
+  only when one SM cannot hold the plane (default), always, never. `cluster_check.py`: on the four
+  s2/s3 planes that fit one SM, the cluster kernels are **bitwise identical** to the single-CTA
+  kernels in output, grad_x, grad_x0, grad_weight and grad_bias.
+
+RTX 5060 Ti, forward+VJP against production, forward 1024 / backward 512, cluster mode 0
+(`flash_rtx5060ti_012_cluster`; the `_006` column is this morning's baseline, where both large planes
+fell back to production):
+
+| Case | plane | `_006` | this run |
+|---|---|---|---|
+| s2 B4 C64 64 -> 128 | 128 KB, cluster | production (3976 us) | **1.83x** (3318 / 1814 us), worst ratio 0.90 |
+| s3 B2 C32 48 -> 144 | 162 KB, cluster | production (750 us) | 0.93x (678 / 732 us), worst ratio 0.96 |
+| s2 48 / s2 32 | 72 / 32 KB | 1.57x / 1.29x | 1.57x / 1.26x |
+| s3 32 / s3 24 | 72 / 40 KB | 1.36x / 1.22x | 1.38x / 1.23x |
+| s1 cases | 78 / 72 KB | 1.48x / 2.18x / 2.06x / 1.48x | 1.88x / 3.03x / 2.81x / 1.85x |
+
+Every budget passes on the cluster planes (rel-L2 ratios 0.69-0.99, max-abs up to 1.38 on the s3
+grad_weight), bitwise repeatable; the s2 32 grad_bias single-seed draw of 1.46 is the one recorded in
+`_006` from the unchanged single-CTA kernel. The s3 144x144 case loses to production: 64 planes make
+128 CTAs, 3.6 waves on 36 SMs, and the exchanges plus the duplicated low-res transform and the
+rank-0-only low-res inverse cost more than the fusion saves at that size. Splitting the low-res
+work between the ranks and overlapping the exchange with the row passes are the next items there.
+
+Final defaults (forward 768 fused, backward 512 fused, cluster mode 0), bitwise identical to `6dd4bbb`
+on the 8 single-SM cases (`flash_rtx5060ti_013_f768`, `ops_rtx5060ti_007_f768`; the `_010` column is the
+1024-thread forward of the previous section, `_006` this morning's baseline):
+
+| Case | `_006` | `_010_fft_v3` | `_013_f768` |
+|---|---|---|---|
+| circular s1 B4 C64 96 pad 2 | 1.48x | 1.99x | 1.87x (1299 / 693 us) |
+| circular s1 B4 C128 96 pad 2 | 2.18x | 3.04x | **3.08x** (3776 / 1227 us) |
+| s1 B4 C128 100 | 2.06x | 2.90x | 2.89x (3606 / 1248 us) |
+| s1 B4 C64 96 | 1.48x | 1.90x | 1.87x (1361 / 727 us) |
+| ops: data term s1 C64 96, KB 4 | 1.27x | 1.54x | 1.59x |
+| ops: replicate 92 pad 4 / reflect / zeros | 1.70x / 1.73x / 1.69x | 2.33x / 2.39x / 2.25x | 2.20x / 2.33x / 2.24x |
+| ops: circular C64 / C128 | 1.46x / 2.19x | 1.99x / 3.00x | 1.97x / 3.04x |
+
+Every budget passes at a 1.00x rel-L2 ratio, bitwise repeatable; the C64 cases are within the run-to-run
+spread of the 1024-thread forward (the kernel-level gain is 9% on the forward alone).
+
+NCU of the s2 cluster kernels, B4 C64 64 -> 128, one call (`profile/flash-cluster-v4-20261012`): forward
+498 us and backward 935 us for 512 CTAs of 64 KB; long-scoreboard (7.5 / 4.9 cycles per instruction,
+the DSMEM and global loads) and mio-throttle (4.7 / 2.7) stalls, 33% warps active. The exchange and
+the 128-point single-stage FFTs leave the same room the s1 kernels had before their v2/v3 steps.

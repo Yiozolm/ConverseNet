@@ -9,6 +9,8 @@ std::vector<at::Tensor> flash_s1_backward(const at::Tensor& x, const at::Tensor&
 bool flash_supported(int64_t h0, int64_t w0, int64_t scale, int64_t pad, int64_t device);
 int64_t flash_smem_capacity(int64_t device);
 void flash_set_s1_threads(int64_t forward, int64_t backward);
+void flash_set_cluster_mode(int64_t mode);
+int64_t flash_cluster_mode();
 std::vector<int64_t> flash_s1_threads();
 at::Tensor flash_scaled_forward(const at::Tensor& x, const at::Tensor& x0, const at::Tensor& k, const at::Tensor& l,
                                 int64_t scale);
@@ -33,9 +35,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("mode") = 0);
     m.def("supported", &flash_supported);
     m.def("smem_capacity", &flash_smem_capacity);
-    // s1 block sizes (forward, backward), 512 or 1024 threads each; defaults 1024 and 512.
-    m.def("set_s1_threads", &flash_set_s1_threads, py::arg("forward") = 1024, py::arg("backward") = 512);
+    // s1 block sizes (forward, backward), 512, 768 or 1024 threads each; defaults 768 and 512.
+    m.def("set_s1_threads", &flash_set_s1_threads, py::arg("forward") = 768, py::arg("backward") = 512);
     m.def("s1_threads", &flash_s1_threads);
+    // s2/s3 planes in two-CTA clusters: 0 only when one SM cannot hold the plane (default),
+    // 1 always (cross-check), 2 never.
+    m.def("set_cluster_mode", &flash_set_cluster_mode);
+    m.def("cluster_mode", &flash_cluster_mode);
     m.def("scaled_forward", &flash_scaled_forward);
     m.def("scaled_backward", &flash_scaled_backward);
     m.def("debug_fft2", &flash_debug_fft2);
