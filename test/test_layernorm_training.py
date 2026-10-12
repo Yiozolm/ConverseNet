@@ -6,7 +6,7 @@ from unittest.mock import patch
 import torch
 
 from support import CUDATestCase, profiled
-from numerical_policy import comparison, seeded_comparison
+from numerical_policy import SEEDED_MIN_SEEDS, comparison, seeded_comparison
 
 STATS_OP = "converse2d::_channel_layernorm_forward_stats"
 BACKWARD_OP = "converse2d::_channel_layernorm_backward"
@@ -63,7 +63,7 @@ class LayerNormTrainingCUDA(CUDATestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
-    def three_way(self, raw, needs, eps=1e-5, *, permuted=False):
+    def three_way(self, raw, needs, eps=1e-5, *, permuted=False, dx_max_abs_per_seed=True):
         high, _ = evaluate(raw, needs, eps, dtype=torch.float64, permuted=permuted)
         baseline, _ = evaluate(raw, needs, eps, permuted=permuted)
         actual, active = evaluate(raw, needs, eps, production=True, permuted=permuted)
@@ -74,8 +74,18 @@ class LayerNormTrainingCUDA(CUDATestCase):
         rows = {}
         for name in actual:
             rows[name] = comparison(actual[name], baseline[name], high[name])
-            if name in ("output", "dx"):
+            if name == "output" or (name == "dx" and dx_max_abs_per_seed):
                 self.assertTrue(rows[name]["passed"], f"{name}: {rows[name]}")
+            elif name == "dx":
+                # dx values of a few units carry 1-2 ulp errors, at the max-abs
+                # floor, from the per-pixel statistics that the frozen forward
+                # kernel and ATen round differently; a single seed's max-abs is
+                # a noise draw (one element in 589,824 at 2.5 vs 1.5 ulp on
+                # (1, 64, 96, 96), seed 5326, on RTX 5060 Ti and A100). Rel-L2
+                # stays a per-seed gate; max-abs is gated over seeds by the caller.
+                row = rows[name]
+                self.assertTrue(row["candidate"]["finite"], f"{name}: {row}")
+                self.assertLessEqual(row["candidate"]["rel_l2"], row["limits"]["rel_l2"], f"{name}: {row}")
         return rows
 
     def test_production_shape_all_gradient_masks(self):
@@ -105,12 +115,25 @@ class LayerNormTrainingCUDA(CUDATestCase):
                  ((1, 128, 8, 8), 2, 1e-5), ((1, 128, 7, 10), 1, .2), ((1, 64, 1, 7), 0, 1e-5),
                  ((2, 128, 7, 1), 0, 1e-5), ((3, 64, 33, 31), 3, 1e-5)]
         for index, (shape, offset, eps) in enumerate(cases):
-            raw = fixture(shape, 5300 + index, offset)
-            self.assertEqual(raw[0].data_ptr() % 16, offset * 4)
-            with self.subTest(shape=shape, offset=offset, eps=eps):
-                rows = self.three_way(raw, (True, True, True), eps)
-                for name in ("dweight", "dbias"):
-                    self.assertTrue(rows[name]["passed"], f"{name}: {rows[name]}")
+            # Output and dx are gated per seed inside three_way. The channel
+            # vectors are cancelling sums over every pixel, so each seed is a
+            # noise draw against the ATen baseline's own reduction order: the
+            # single-seed budget failed 1-3 of 8 seeds per geometry on the
+            # RTX 5060 Ti and two geometries on the A100 release run of
+            # 2026-10-12 (tools/v4_release_a100). They are gated over
+            # independent seeds, as for the production shape above.
+            rows = {"dx": [], "dweight": [], "dbias": []}
+            for seed in range(SEEDED_MIN_SEEDS):
+                raw = fixture(shape, 5300 + 10 * index + seed, offset)
+                self.assertEqual(raw[0].data_ptr() % 16, offset * 4)
+                with self.subTest(shape=shape, offset=offset, eps=eps, seed=seed):
+                    result = self.three_way(raw, (True, True, True), eps, dx_max_abs_per_seed=False)
+                for name in rows:
+                    rows[name].append(result[name])
+            for name, seeds in rows.items():
+                with self.subTest(shape=shape, offset=offset, eps=eps, name=name):
+                    verdict = seeded_comparison(seeds)
+                    self.assertTrue(verdict["passed"], f"{name}: {verdict}")
 
     def test_permuted_upstream_gradient(self):
         rows = self.three_way(fixture((2, 64, 24, 20), 5401), (True, True, True), permuted=True)

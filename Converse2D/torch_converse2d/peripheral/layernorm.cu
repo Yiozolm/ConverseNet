@@ -133,6 +133,16 @@ __global__ void full_layernorm_parallel_two_pass(
 constexpr int kBackwardThreads=128;
 constexpr int kBackwardWarps=kBackwardThreads/32;
 
+// Knuth TwoSum: hi+lo == hi_old+lo_old+value exactly (barring overflow); every
+// operation is an explicit IEEE round so no contraction can reorder it.
+__device__ __forceinline__ void two_sum_accumulate(float& hi,float& lo,float value) {
+    const float s=__fadd_rn(hi,value);
+    const float bb=__fsub_rn(s,hi);
+    const float err=__fadd_rn(__fsub_rn(hi,__fsub_rn(s,bb)),__fsub_rn(value,bb));
+    hi=s;
+    lo=__fadd_rn(lo,err);
+}
+
 template<int Channels>
 __global__ void __launch_bounds__(kBackwardThreads) full_layernorm_backward(
     const float* __restrict__ grad,const float* __restrict__ input,
@@ -148,19 +158,25 @@ __global__ void __launch_bounds__(kBackwardThreads) full_layernorm_backward(
     const bool valid=pixel<pixels;
     const int base=valid ? (pixel/hw)*Channels*hw+pixel%hw : 0;
     const float m=valid ? mean[pixel] : 0.f;
-    const float r=valid ? __fdiv_rn(1.f,denominator[pixel]) : 0.f;
-    float sum_g=0.f,sum_gx=0.f;
+    const float d=valid ? denominator[pixel] : 1.f;
+    // xhat is the forward's own normalized value: the same division, not a
+    // rounded reciprocal product. The two channel means are 64/128-term sums
+    // whose rounding enters every dx element of the pixel, so they accumulate
+    // as compensated (hi, lo) pairs; the order stays the serial channel order.
+    // Together these take the fused dx from 1.15x to <= 1.0x of the ATen
+    // expression's FP64 error (tools/v4_layernorm_training/README.md).
+    float sum_g=0.f,sum_g_lo=0.f,sum_gx=0.f,sum_gx_lo=0.f;
     #pragma unroll 4
     for(int c=0;c<Channels;++c) {
         float g=0.f,xhat=0.f;
         if(valid) {
             const int i=base+c*hw;
             g=grad[i];
-            xhat=__fmul_rn(__fsub_rn(input[i],m),r);
+            xhat=__fdiv_rn(__fsub_rn(input[i],m),d);
         }
         const float gw=__fmul_rn(g,w[c]);
-        sum_g=__fadd_rn(sum_g,gw);
-        sum_gx=__fadd_rn(sum_gx,__fmul_rn(gw,xhat));
+        two_sum_accumulate(sum_g,sum_g_lo,gw);
+        two_sum_accumulate(sum_gx,sum_gx_lo,__fmul_rn(gw,xhat));
         if(needs_params) {
             float pw=__fmul_rn(g,xhat),pb=g;
             #pragma unroll
@@ -176,13 +192,14 @@ __global__ void __launch_bounds__(kBackwardThreads) full_layernorm_backward(
     }
     if(needs_input && valid) {
         constexpr float factor=1.f/Channels;
-        const float a=__fmul_rn(sum_g,factor),b=__fmul_rn(sum_gx,factor);
+        const float a=__fmul_rn(__fadd_rn(sum_g,sum_g_lo),factor);
+        const float b=__fmul_rn(__fadd_rn(sum_gx,sum_gx_lo),factor);
         #pragma unroll 4
         for(int c=0;c<Channels;++c) {
             const int i=base+c*hw;
-            const float xhat=__fmul_rn(__fsub_rn(input[i],m),r);
+            const float xhat=__fdiv_rn(__fsub_rn(input[i],m),d);
             const float gw=__fmul_rn(grad[i],w[c]);
-            grad_input[i]=__fmul_rn(r,__fsub_rn(__fsub_rn(gw,a),__fmul_rn(xhat,b)));
+            grad_input[i]=__fdiv_rn(__fsub_rn(__fsub_rn(gw,a),__fmul_rn(xhat,b)),d);
         }
     }
     if(needs_params) {
