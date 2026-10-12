@@ -126,8 +126,12 @@ for geometry in SYNTHETIC:
     print('synthetic', key, f"{s['passed']}/{s['cases']}", 'ratio rel_l2 max', round(s['ratio_rel_l2']['max'], 4), flush=True)
 
 # Production module: routing through PointwiseConv2d gives exactly the operator result.
-first = torch.load(args.fixtures[0], map_location='cpu', weights_only=False)['captures']
-for name in ('p.m_body.0.conv1.1/call0', 'p.m_body.0.conv1.5/call0'):
+# Without captured fixtures (an explicit empty --fixtures), the probe is skipped and recorded as such.
+first = (torch.load(args.fixtures[0], map_location='cpu', weights_only=False)['captures']
+         if args.fixtures else {})
+if not first:
+    report['production_probe_skipped'] = 'no captured fixtures; synthetic geometries only'
+for name in ('p.m_body.0.conv1.1/call0', 'p.m_body.0.conv1.5/call0') if first else ():
     capture = first[name]
     x = capture['x'].cuda().requires_grad_(True)
     layer = PointwiseConv2d(capture['weight'].shape[1], capture['weight'].shape[0], 1, backend='cuda').cuda()
