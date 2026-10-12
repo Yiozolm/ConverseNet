@@ -77,6 +77,42 @@ def comparison(candidate, baseline, ref64, *, regime='normal', distribution=Fals
                 limits=limits, passed=bool(passed))
 
 
+SEEDED_MIN_SEEDS = 8
+
+
+def seeded_comparison(rows, *, regime='normal', min_seeds=SEEDED_MIN_SEEDS):
+    """Multi-seed budget for outputs whose FP64 error is reduction-order noise.
+
+    For a gradient formed by a heavily cancelling sum (kernel and regularizer
+    gradients: a few FP32 ulps concentrated in a few channels), one run compares
+    two noise draws: two equally accurate implementations exceed the 1.25x
+    rel-L2 factor in about a third of single runs. `rows` are comparison()
+    results for the same output over independent seeds. Each seed contributes
+    u = candidate / max(baseline, floor / factor), so a single seed passes
+    comparison() exactly when u <= factor; this budget requires the geometric
+    mean of u over the seeds to stay within the same factor, for rel-L2 and
+    max-abs separately. Every seed must be finite. There is deliberately no
+    per-seed cap, which equal-quality noise exceeds with high probability over
+    many seeds. It supplements, never replaces, comparison() for other outputs.
+    """
+    if len(rows) < min_seeds:
+        raise ValueError(f'seeded budget requires at least {min_seeds} seeds')
+    if any(r['regime'] != regime for r in rows):
+        raise ValueError('all seeds must use the requested regime')
+    policy = BUDGETS[regime]
+    finite = all(r['candidate']['finite'] and r['baseline']['finite'] for r in rows)
+    result = dict(regime=regime, seeds=len(rows), finite=finite, single_run_failures=sum(not r['passed'] for r in rows))
+    if not finite:
+        return dict(result, passed=False)
+    for metric in ('rel_l2', 'max_abs'):
+        factor, floor = policy[metric + '_factor'], policy[metric + '_floor']
+        u = [r['candidate'][metric] / max(r['baseline'][metric], floor / factor) for r in rows]
+        geomean = math.exp(sum(math.log(max(v, 1e-6)) for v in u) / len(u))
+        result[metric] = dict(geomean_ratio=geomean, limit=factor, max_seed_ratio=max(u), passed=geomean <= factor)
+    result['passed'] = result['rel_l2']['passed'] and result['max_abs']['passed']
+    return result
+
+
 def assert_budget(test, actual, baseline, high, *, regime='normal'):
     test.assertEqual(len(actual), len(baseline))
     test.assertEqual(len(actual), len(high))
