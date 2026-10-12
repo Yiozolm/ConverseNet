@@ -146,6 +146,17 @@ the same checked CUDA build. `wgrad_production_study.py` runs the actual
 production module and records its Python source hashes separately from the
 C++ binary manifest. Prototype results do not substitute for production tests.
 
+The fused LayerNorm training VJP (`test_layernorm_training.py`) gates its channel
+vectors dweight/dbias with the seeded budget over `SEEDED_MIN_SEEDS` seeds per
+geometry, not per seed: they are cancelling sums over every pixel, and the
+2026-10-12 A100 release run plus eight-seed sweeps on both GPUs
+(`tools/v4_release_a100/`) showed 1–3 of 8 seeds missing the single-seed factor
+on the same geometries while every seeded verdict passed. dx keeps a per-seed
+rel-L2 gate; its max-abs is gated over seeds because values of a few units carry
+1–2 ulp errors, at the max-abs floor, from per-pixel statistics that the frozen
+forward kernel and ATen round differently. The forward output stays byte-exact
+per seed.
+
 Private peripheral and preparation tests still carry their own exact contracts.
 An optimization that changes those operations must supply its own independent
 FP64 budget test; do not globally weaken `assert_bytes_equal`. Cache and stream
