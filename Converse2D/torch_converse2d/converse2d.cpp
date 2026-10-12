@@ -14,6 +14,11 @@ TORCH_LIBRARY(converse2d, m) {
     m.def("_channel_affine(Tensor scale, Tensor input, Tensor bias) -> Tensor");
     m.def("_channel_layernorm(Tensor input, Tensor weight, Tensor bias, float "
           "eps=1e-5) -> Tensor");
+    m.def("_channel_layernorm_forward_stats(Tensor input, Tensor weight, Tensor bias, "
+          "float eps) -> (Tensor, Tensor, Tensor)");
+    m.def("_channel_layernorm_backward(Tensor grad_output, Tensor input, Tensor mean, "
+          "Tensor denominator, Tensor weight, bool needs_input, bool needs_weight, "
+          "bool needs_bias) -> (Tensor, Tensor, Tensor)");
 #ifdef CONVERSE2D_WITH_CUDA
     m.def("_training_full_spectral(Tensor y, Tensor p, Tensor k, Tensor "
           "regularizer, int scale) -> Tensor");
@@ -33,6 +38,10 @@ TORCH_LIBRARY_IMPL(converse2d, CompositeImplicitAutograd, m) {
     m.impl("_channel_affine", TORCH_FN(converse2d::peripheral::channel_affine));
     m.impl("_channel_layernorm",
            TORCH_FN(converse2d::peripheral::channel_layernorm));
+    m.impl("_channel_layernorm_forward_stats",
+           TORCH_FN(converse2d::peripheral::channel_layernorm_forward_stats));
+    m.impl("_channel_layernorm_backward",
+           TORCH_FN(converse2d::peripheral::channel_layernorm_backward));
 #ifdef CONVERSE2D_WITH_CUDA
     m.impl("_training_full_spectral",
            TORCH_FN(converse2d::full_training::full_spectral));
