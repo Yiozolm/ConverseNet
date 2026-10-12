@@ -802,3 +802,62 @@ Next, in the same order as FlashAttention's revisions: conflict-free twiddle and
 two shared round trips per axis instead of three, the backward's pointwise phase under 64
 registers (v3); clusters with distributed shared memory for the 128x128 and 144x144 planes and
 TMA staging of g behind FFT(x) (v4). Details in `profile/flash-memory-v2-20261012/REPORT.md`.
+
+## The shared-memory FFT: per-stage twiddles and fused stages (`flash_rtx5060ti_010_fft_v3`, `profile/flash-fft-v3-final-20261012`)
+
+After the memory-movement revision the s1 forward's stalls were mio throttle (2.9 cycles per
+issued instruction), barrier (1.9) and wait (1.7): the Stockham FFT's shared-memory round trips
+and its two barriers per stage. Three changes, each gated bitwise against `6dd4bbb` with
+`compare_commit.py` (8/8 eligible cases identical every time):
+
+- **Per-stage twiddle layout.** The shared copy of the twiddle table is laid out
+  `(r - 1) NS + (j % NS)` per stage (`fill_twiddles`), so a warp's consecutive butterflies read
+  consecutive words or broadcast instead of 32 words at stride `span r`. Same values. Worth 2% on
+  each kernel and 8 registers on the forward.
+- **Fused two-stage register pass** (`static_stage2`). Two consecutive Stockham stages run in one
+  pass: the R2 stage-1 butterflies that feed the same R1 stage-2 butterflies form a closed group of
+  R1 R2 elements (NS1 | N / (R1 R2), true for every compiled size), one thread per group. Each axis
+  makes two shared round trips and four barriers instead of three and six (100: (4,5) 5; 96: (4,4)
+  (2,3); 64: (4,4) 4). Same twiddles and `dft` calls in the same order. Compiled for 512 and 768
+  threads (24 staged complex values per thread); the 1024-thread kernels keep single stages.
+- **Padded line stride, rejected.** W + 1 for the fused passes cost 4% more instructions and 65%
+  more shared store conflicts than W (`profile/flash-fft-v3b-20261012/analysis/pad_ablation.md`).
+
+NCU, one call each, B4 C128 100x100 (uncontrolled clocks, 10-16% foreign GPU load):
+
+| metric | fwd v2 (1024) | fwd v3 (1024) | fwd v3 512 fused | bwd v2 (512) | bwd v3 (512 fused) |
+|---|---|---|---|---|---|
+| kernel time | 282 us | **277 us** | 282 us | 626 us | **574 us** |
+| shared wavefronts | 12.6 M | 12.0 M | 9.5 M | 18.8 M | 14.6 M |
+| instructions | 59.1 M | 59.0 M | 52.4 M | 144.3 M | 136.6 M |
+| warps active | 66% | 64% | 33% | 33% | 37% |
+| stall mio throttle / barrier / wait (cycles per inst) | 2.91 / 1.86 / 1.72 | 3.15 / 1.67 / 1.73 | 1.14 / 0.50 / 1.65 | 0.65 / 0.42 / 1.02 | 0.60 / 0.38 / 0.96 |
+| warp latency per issued instruction | 14.1 | 13.9 | 8.0 | 6.7 | 6.4 |
+| registers | 64 | 56 | 79 | 128 | 119 |
+
+The fused pass took a third of the FFT's shared round trips and barriers out of the backward:
+15% fewer shared wavefronts, mio-throttle and barrier stalls below 0.6 cycles per instruction.
+The forward at 512 threads with fused stages ties the single-stage forward at 1024 threads (16
+warps that stall less against 32 that stall more), so the defaults stay forward 1024 / backward
+512. Backward block sizes 512 / 768 / 1024 were within 1% of each other with single stages.
+
+RTX 5060 Ti, forward+VJP against production (`_007_memory` is the memory-movement revision):
+
+| Case | `_006` | `_007_memory` | `_010_fft_v3` |
+|---|---|---|---|
+| circular s1 B4 C64 96 pad 2 | 1.48x | 1.86x | **1.99x** (1421 / 714 us) |
+| circular s1 B4 C128 96 pad 2 | 2.18x | 2.86x | **3.04x** (3962 / 1301 us) |
+| s1 B4 C128 100 | 2.06x | 2.62x | **2.90x** (3769 / 1298 us) |
+| s1 B4 C64 96 | 1.48x | 1.63x | 1.90x (1398 / 738 us) |
+| ops: data term s1 C64 96, KB 4 | 1.27x | 1.43x | 1.54x |
+| ops: replicate 92 pad 4 / reflect / zeros | 1.70x / 1.73x / 1.69x | 2.07x / 2.08x / 2.09x | 2.33x / 2.39x / 2.25x |
+| ops: circular C64 / C128 | 1.46x / 2.19x | 1.82x / 2.76x | 1.99x / 3.00x |
+
+Every output and gradient passes at a 1.00x rel-L2 ratio and repeats bitwise (`flash_rtx5060ti_009_fused_*`
+for the 512/512 and 1024/512 fused builds, `_010_fft_v3` and `ops_rtx5060ti_006_fft_v3` for the
+default; 8-16% foreign GPU load, compare ratios).
+
+What limits the kernels now: the `wait` stall (1.0-1.7 cycles per instruction of fixed-latency
+dependencies), the second Stockham stage's 2-2.5-way store conflicts, and the instruction count
+of the backward's two-term pointwise phase (about half of its 142 M instructions). Those, and
+clusters with distributed shared memory for the 128x128 and 144x144 planes, are the next items.

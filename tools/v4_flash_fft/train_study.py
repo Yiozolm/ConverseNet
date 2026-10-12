@@ -57,7 +57,7 @@ def main():
     parser.add_argument('--rounds', type=int, default=6)
     parser.add_argument('--iters', type=int, default=20)
     parser.add_argument('--s1-threads', type=int, nargs=2, default=(1024, 512), metavar=('FWD', 'BWD'),
-                        help='s1 block sizes of the forward and backward kernels, 512 or 1024')
+                        help='s1 block sizes: forward 512 or 1024, backward 512, 768 or 1024')
     args = parser.parse_args()
     if args.output.exists():
         raise SystemExit(f'{args.output} exists; keep earlier evidence')

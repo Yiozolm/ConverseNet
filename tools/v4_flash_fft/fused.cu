@@ -245,19 +245,38 @@ __host__ __device__ constexpr int radix_at(int n, int i) {
 // registers without spilling.
 constexpr int kBudget = 20;
 
-// Twiddle w^r of a stage: from the L1-cached global table, or from a copy of the
-// table in shared memory (TwShared, the s1 kernels). The global gathers were the
-// largest L1TEX sector stream of the s1 kernels on sm_120 (57% of all global
-// sectors, 5.5 sectors per request); the shared copy costs 1.6 KB per block.
-template <bool TwShared>
-__device__ __forceinline__ float2 twiddle_at(const float2* __restrict__ tw, int i) {
-    if constexpr (TwShared) return tw[i];
-    else return __ldg(tw + i);
+// Twiddles of a stage. Global (default): the L1-cached table of n roots, w^(t r) at
+// tw[t r]. These gathers were the largest L1TEX sector stream of the s1 kernels on
+// sm_120 (57% of all global sectors, 5.5 sectors per request). Shared (TwShared, the
+// s1 kernels): a per-stage copy in shared memory laid out (r - 1) * NS + (j % NS), so
+// the consecutive j of a warp read consecutive words (the plain table in shared
+// memory, indexed t r, read 32 words at stride span * r and conflicted 2.3x more
+// than the FFT's own loads). Same host-rounded values, so the arithmetic is bitwise
+// the same. staged_twiddles(N) words per axis, about N.
+__host__ __device__ constexpr int staged_twiddles(int n) {
+    int ns = 1, total = 0;
+    for (int i = 0;; ++i) {
+        const int r = radix_at(n, i);
+        if (!r) return total;
+        if (ns > 1) total += ns * (r - 1);
+        ns *= r;
+    }
+}
+template <int N, int I, int NS, int Off, int T>
+__device__ __forceinline__ void fill_twiddles(float2* tws, const float2* __restrict__ tw, int tid) {
+    constexpr int R = radix_at(N, I);
+    if constexpr (R != 0) {
+        if constexpr (NS > 1) {
+            constexpr int span = N / (NS * R), count = NS * (R - 1);
+            for (int e = tid; e < count; e += T) tws[Off + e] = __ldg(tw + (e % NS) * span * (e / NS + 1));
+        }
+        fill_twiddles<N, I + 1, NS * R, Off + (NS > 1 ? NS * (R - 1) : 0), T>(tws, tw, tid);
+    }
 }
 
 // T is the block size; the s1 kernels instantiate 512 and 1024 threads.
 template <int R, bool Inverse, bool LineFastest, int N, int NS, int Lines, int LineStride, int ElemStride,
-          int T = kThreads, bool TwShared = false>
+          int T = kThreads, bool TwShared = false, int TwOff = 0>
 __device__ __forceinline__ void static_stage(float2* s, const float2* __restrict__ tw, int tid) {
     constexpr int per_line = N / R, span = N / (NS * R);
     constexpr int fit = kBudget * T / N > 0 ? kBudget * T / N : 1;
@@ -278,7 +297,7 @@ __device__ __forceinline__ void static_stage(float2* s, const float2* __restrict
                 for (int r = 0; r < R; ++r) {
                     float2 x = base[(j + r * per_line) * ElemStride];
                     if (r && NS > 1) {
-                        float2 w = twiddle_at<TwShared>(tw, t * r);
+                        float2 w = TwShared ? tw[TwOff + (r - 1) * NS + j % NS] : __ldg(tw + t * r);
                         if (Inverse) w.y = -w.y;
                         x = cmul(x, w);
                     }
@@ -304,15 +323,106 @@ __device__ __forceinline__ void static_stage(float2* s, const float2* __restrict
     }
 }
 
+// Two consecutive Stockham stages (radix R1 at NS1, then R2 at NS2 = NS1 R1) in one
+// register pass. Stage-1 butterfly j writes y[(j / NS1) NS1 R1 + j % NS1 + r NS1];
+// stage-2 butterfly j' reads y[j' + r' N / R2]. With M = N / (R1 R2) and NS1 | M, the
+// R2 stage-1 butterflies {g NS1 + m + r' M} feed exactly the R1 stage-2 butterflies
+// {g NS2 + lane NS1 + m}, lane r of each: a closed group of R1 R2 elements that one
+// thread keeps in registers. The plane makes one shared-memory round trip and two
+// barriers instead of two and four. Same twiddles, same dft calls in the same order
+// as the two single stages: bitwise identical. Per-stage shared twiddles only.
+constexpr int kFuseBudget = 24;    // complex values staged per thread
+constexpr int kFuseMaxRadix = 20;  // R1 R2 of a fused pair
+// Padding words per line of the fused s1 plane. 1 was tried against the 128 B
+// per-line stride of a fused row pass's groups: it cost 4% more instructions and
+// 65% more shared store conflicts than 0 (profile/flash-fft-v3b-20261012).
+constexpr int kS1Pad = 0;
+template <int R1, int R2, bool Inverse, bool LineFastest, int N, int NS1, int Lines, int LineStride, int ElemStride,
+          int T, int TwOffA, int TwOffB>
+__device__ __forceinline__ void static_stage2(float2* s, const float2* __restrict__ tw, int tid) {
+    constexpr int M = N / (R1 * R2), NS2 = NS1 * R1, per_line1 = N / R1;
+    static_assert(M % NS1 == 0, "fused stages need NS1 | N / (R1 R2)");
+    constexpr int per_thread = kFuseBudget / (R1 * R2) > 0 ? kFuseBudget / (R1 * R2) : 1;
+    constexpr int fit = per_thread * T / M > 0 ? per_thread * T / M : 1;
+    constexpr int chunks = (Lines + fit - 1) / fit, lpc = (Lines + chunks - 1) / chunks;
+    constexpr int total = lpc * M, cap = (total + T - 1) / T;
+#pragma unroll 1
+    for (int chunk = 0; chunk < chunks; ++chunk) {
+        const int first = chunk * lpc;
+        float2 v[cap][R2][R1];
+#pragma unroll
+        for (int q = 0; q < cap; ++q) {
+            const int u = tid + q * T;
+            const int local = LineFastest ? u % lpc : u / M, grp = LineFastest ? u / lpc : u % M;
+            if ((total % T == 0 || u < total) && (Lines % lpc == 0 || first + local < Lines)) {
+                const float2* base = s + (first + local) * LineStride;
+                const int g = grp / NS1, m = grp % NS1;
+#pragma unroll
+                for (int rp = 0; rp < R2; ++rp) {
+                    const int jA = g * NS1 + m + rp * M;
+#pragma unroll
+                    for (int r = 0; r < R1; ++r) {
+                        float2 x = base[(jA + r * per_line1) * ElemStride];
+                        if (r && NS1 > 1) {
+                            float2 w = tw[TwOffA + (r - 1) * NS1 + m];
+                            if (Inverse) w.y = -w.y;
+                            x = cmul(x, w);
+                        }
+                        v[q][rp][r] = x;
+                    }
+                    dft<R1, Inverse>(v[q][rp]);
+                }
+            }
+        }
+        __syncthreads();
+#pragma unroll
+        for (int q = 0; q < cap; ++q) {
+            const int u = tid + q * T;
+            const int local = LineFastest ? u % lpc : u / M, grp = LineFastest ? u / lpc : u % M;
+            if ((total % T == 0 || u < total) && (Lines % lpc == 0 || first + local < Lines)) {
+                float2* base = s + (first + local) * LineStride;
+                const int g = grp / NS1, m = grp % NS1;
+#pragma unroll
+                for (int lane = 0; lane < R1; ++lane) {
+                    float2 b[R2];
+#pragma unroll
+                    for (int rp = 0; rp < R2; ++rp) {
+                        float2 x = v[q][rp][lane];
+                        if (rp) {
+                            float2 w = tw[TwOffB + (rp - 1) * NS2 + lane * NS1 + m];
+                            if (Inverse) w.y = -w.y;
+                            x = cmul(x, w);
+                        }
+                        b[rp] = x;
+                    }
+                    dft<R2, Inverse>(b);
+                    const int outB = g * NS2 * R2 + lane * NS1 + m;
+#pragma unroll
+                    for (int rp = 0; rp < R2; ++rp) base[(outB + rp * NS2) * ElemStride] = b[rp];
+                }
+            }
+        }
+        __syncthreads();
+    }
+}
+
+// Fuse pairs consecutive stages greedily (100: (4,5) 5; 96: (4,4) (2,3); 64: (4,4) 4)
+// when their product is at most kFuseMaxRadix; it needs the per-stage shared twiddles.
 template <int N, int I, int NS, bool Inverse, bool LineFastest, int Lines, int LineStride, int ElemStride,
-          int T = kThreads, bool TwShared = false>
+          int T = kThreads, bool TwShared = false, int TwOff = 0, bool Fuse = false>
 __device__ __forceinline__ void static_fft(float2* s, const float2* __restrict__ tw, int tid) {
-    constexpr int R = radix_at(N, I);
-    if constexpr (R != 0) {
-        static_stage<R, Inverse, LineFastest, N, NS, Lines, LineStride, ElemStride, T, TwShared>(s, tw, tid);
-        static_fft<N, I + 1, NS * R, Inverse, LineFastest, Lines, LineStride, ElemStride, T, TwShared>(s, tw, tid);
-    } else {
+    constexpr int R = radix_at(N, I), R2 = radix_at(N, I + 1);
+    if constexpr (R == 0) {
         static_assert(NS == N, "length must be 2/3/5-smooth");
+    } else if constexpr (Fuse && TwShared && R2 != 0 && R * R2 <= kFuseMaxRadix && (N / (R * R2)) % NS == 0) {
+        constexpr int offB = TwOff + (NS > 1 ? NS * (R - 1) : 0);
+        static_stage2<R, R2, Inverse, LineFastest, N, NS, Lines, LineStride, ElemStride, T, TwOff, offB>(s, tw, tid);
+        static_fft<N, I + 2, NS * R * R2, Inverse, LineFastest, Lines, LineStride, ElemStride, T, TwShared,
+                   offB + NS * R * (R2 - 1), Fuse>(s, tw, tid);
+    } else {
+        static_stage<R, Inverse, LineFastest, N, NS, Lines, LineStride, ElemStride, T, TwShared, TwOff>(s, tw, tid);
+        static_fft<N, I + 1, NS * R, Inverse, LineFastest, Lines, LineStride, ElemStride, T, TwShared,
+                   TwOff + (TwShared && NS > 1 ? NS * (R - 1) : 0), Fuse>(s, tw, tid);
     }
 }
 
@@ -332,17 +442,19 @@ __device__ __forceinline__ void prefetch_l2_range(const void* p, int bytes, int 
     for (int off = tid * 128; off < bytes; off += T * 128) prefetch_l2(q + off);
 }
 
-// Row (W) and column (H) twiddle tables into shared memory: tws[0, W) and tws[W, W + H).
+// Row (W) and column (H) per-stage twiddle tables into shared memory: the rows' at
+// tws, the columns' at tws + staged_twiddles(W).
 template <int H, int W, int T>
 __device__ __forceinline__ void stage_twiddles(float2* tws, const float2* __restrict__ tw_rows,
                                                const float2* __restrict__ tw_cols, int tid) {
-    for (int i = tid; i < W + H; i += T) tws[i] = i < W ? __ldg(tw_rows + i) : __ldg(tw_cols + i - W);
+    fill_twiddles<W, 0, 1, 0, T>(tws, tw_rows, tid);
+    fill_twiddles<H, 0, 1, staged_twiddles(W), T>(tws, tw_cols, tid);
 }
 
 // Padded s1 plane of x0 (and x1 as the imaginary part for Pair) into shared memory.
 // Every thread issues all of its ceil(H*W/T) global loads before its first shared
 // store, so each warp keeps that many loads in flight instead of one.
-template <int H, int W, int T, bool Pair>
+template <int H, int W, int LS, int T, bool Pair>
 __device__ __forceinline__ void load_padded(float2* s, const float* __restrict__ x0, const float* __restrict__ x1,
                                             int h0, int w0, int pad, int mode, int tid) {
     constexpr int N = H * W, per = (N + T - 1) / T;
@@ -364,12 +476,12 @@ __device__ __forceinline__ void load_padded(float2* s, const float* __restrict__
 #pragma unroll
     for (int q = 0; q < per; ++q) {
         const int i = tid + q * T;
-        if (N % T == 0 || i < N) s[i] = make_float2(a[q], Pair ? b[q] : 0.f);
+        if (N % T == 0 || i < N) s[(i / W) * LS + i % W] = make_float2(a[q], Pair ? b[q] : 0.f);
     }
 }
 
 // g embedded in the padded grid (zero margins), loads batched as in load_padded.
-template <int H, int W, int T>
+template <int H, int W, int LS, int T>
 __device__ __forceinline__ void load_embedded(float2* s, const float* __restrict__ g, int h0, int w0, int pad, int tid) {
     constexpr int N = H * W, per = (N + T - 1) / T;
     float a[per];
@@ -385,7 +497,7 @@ __device__ __forceinline__ void load_embedded(float2* s, const float* __restrict
 #pragma unroll
     for (int q = 0; q < per; ++q) {
         const int i = tid + q * T;
-        if (N % T == 0 || i < N) s[i] = make_float2(a[q], 0.f);
+        if (N % T == 0 || i < N) s[(i / W) * LS + i % W] = make_float2(a[q], 0.f);
     }
 }
 
@@ -409,8 +521,13 @@ __global__ void __launch_bounds__(T) static_s1_forward(const float* __restrict__
                                                        const float2* __restrict__ tw_rows,
                                                        const float2* __restrict__ tw_cols) {
     extern __shared__ float2 s[];
-    __shared__ float2 tws[H + W];
+    __shared__ float2 tws[staged_twiddles(W) + staged_twiddles(H)];
+    const float2* twc = tws + staged_twiddles(W);
+    // Fused passes stage 50 registers of data, so they are compiled for 512 and 768
+    // threads only; the 1024-thread kernels run single stages.
     constexpr int N = H * W;
+    constexpr bool Fuse = T <= 768;
+    constexpr int LS = W + (Fuse ? kS1Pad : 0);
     static_assert(N >= T, "every thread owns at least one element");
     const int tid = threadIdx.x, c = blockIdx.x / NB, b = Pair ? 2 * (blockIdx.x % NB) : blockIdx.x % NB;
     const size_t plane = size_t(h0) * w0;
@@ -419,10 +536,10 @@ __global__ void __launch_bounds__(T) static_s1_forward(const float* __restrict__
     const float2* kp = k + kernel_plane(KB, C, b, c) * N;
     prefetch_l2_range<T>(kp, N * int(sizeof(float2)), tid);
     stage_twiddles<H, W, T>(tws, tw_rows, tw_cols, tid);
-    load_padded<H, W, T, Pair>(s, x0, x1, h0, w0, pad, mode, tid);
+    load_padded<H, W, LS, T, Pair>(s, x0, x1, h0, w0, pad, mode, tid);
     __syncthreads();
-    static_fft<W, 0, 1, false, false, H, W, 1, T, true>(s, tws, tid);
-    static_fft<H, 0, 1, false, true, W, 1, W, T, true>(s, tws + W, tid);
+    static_fft<W, 0, 1, false, false, H, LS, 1, T, true, 0, Fuse>(s, tws, tid);
+    static_fft<H, 0, 1, false, true, W, 1, LS, T, true, 0, Fuse>(s, twc, tid);
     const float lc = l[c];
     {
         // k one step ahead: its load overlaps the solve of the current element.
@@ -434,18 +551,19 @@ __global__ void __launch_bounds__(T) static_s1_forward(const float* __restrict__
             if (N % T != 0 && i >= N) break;
             const float2 ki = kn;
             if (i + T < N) kn = __ldg(kp + i + T);
-            s[i] = solve(s[i], ki, lc);
+            const int si = (i / W) * LS + i % W;
+            s[si] = solve(s[si], ki, lc);
         }
     }
     __syncthreads();
-    static_fft<H, 0, 1, true, true, W, 1, W, T, true>(s, tws + W, tid);
-    static_fft<W, 0, 1, true, false, H, W, 1, T, true>(s, tws, tid);
+    static_fft<H, 0, 1, true, true, W, 1, LS, T, true, 0, Fuse>(s, twc, tid);
+    static_fft<W, 0, 1, true, false, H, LS, 1, T, true, 0, Fuse>(s, tws, tid);
     const float scale = float(1.0 / double(N));
     float* o0 = out + (size_t(b) * C + c) * plane;
     float* o1 = o0 + size_t(C) * plane;
     for (int i = tid; i < h0 * w0; i += T) {
         const int r = i / w0, q = i % w0;
-        const float2 z = s[(r + pad) * W + q + pad];
+        const float2 z = s[(r + pad) * LS + q + pad];
         o0[i] = z.x * scale;
         if (Pair) o1[i] = z.y * scale;
     }
@@ -455,7 +573,7 @@ template <int H, int W, bool Pair, int T>
 void launch_static(const at::Tensor& x, const at::Tensor& k, const at::Tensor& l, at::Tensor& out, int pad, int mode,
                    const float2* tw_rows, const float2* tw_cols) {
     auto kernel = static_s1_forward<H, W, Pair, T>;
-    const int bytes = H * W * sizeof(float2);
+    const int bytes = H * (W + kS1Pad) * sizeof(float2);
     TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes) == cudaSuccess);
     const int NB = Pair ? x.size(0) / 2 : x.size(0);
     kernel<<<NB * x.size(1), T, bytes, at::cuda::getCurrentCUDAStream()>>>(
@@ -705,8 +823,10 @@ __global__ void __launch_bounds__(T, 1) static_s1_backward(
     const float2* __restrict__ tw_cols, float2 inv_n) {
     extern __shared__ float2 s[];
     __shared__ DF partial[T / 32];
-    __shared__ float2 tws[H + W];
-    constexpr int N = H * W;
+    __shared__ float2 tws[staged_twiddles(W) + staged_twiddles(H)];
+    constexpr int N = H * W;  // see static_s1_forward
+    constexpr bool Fuse = T <= 768;
+    constexpr int LS = W + (Fuse ? kS1Pad : 0);
     static_assert(N >= T, "every thread owns at least one element");
     const int tid = threadIdx.x, c = blockIdx.x / B, b = blockIdx.x % B, slot = b * C + c;
     const size_t plane = size_t(h0) * w0, offset = size_t(slot) * plane;
@@ -720,18 +840,18 @@ __global__ void __launch_bounds__(T, 1) static_s1_backward(
     prefetch_l2_range<T>(kp, N * int(sizeof(float2)), tid);
     stage_twiddles<H, W, T>(tws, tw_rows, tw_cols, tid);
     const float2* tw_r = tws;
-    const float2* tw_c = tws + W;
+    const float2* tw_c = tws + staged_twiddles(W);
     {
-        load_padded<H, W, T, false>(s, x + offset, nullptr, h0, w0, pad, mode, tid);
+        load_padded<H, W, LS, T, false>(s, x + offset, nullptr, h0, w0, pad, mode, tid);
         __syncthreads();
-        static_fft<W, 0, 1, false, false, H, W, 1, T, true>(s, tw_r, tid);
-        static_fft<H, 0, 1, false, true, W, 1, W, T, true>(s, tw_c, tid);
-        for (int i = tid; i < N; i += T) yp[i] = s[i];
+        static_fft<W, 0, 1, false, false, H, LS, 1, T, true, 0, Fuse>(s, tw_r, tid);
+        static_fft<H, 0, 1, false, true, W, 1, LS, T, true, 0, Fuse>(s, tw_c, tid);
+        for (int i = tid; i < N; i += T) yp[i] = s[(i / W) * LS + i % W];
         __syncthreads();
-        load_embedded<H, W, T>(s, g + offset, h0, w0, pad, tid);
+        load_embedded<H, W, LS, T>(s, g + offset, h0, w0, pad, tid);
         __syncthreads();
-        static_fft<W, 0, 1, false, false, H, W, 1, T, true>(s, tw_r, tid);
-        static_fft<H, 0, 1, false, true, W, 1, W, T, true>(s, tw_c, tid);
+        static_fft<W, 0, 1, false, false, H, LS, 1, T, true, 0, Fuse>(s, tw_r, tid);
+        static_fft<H, 0, 1, false, true, W, 1, LS, T, true, 0, Fuse>(s, tw_c, tid);
         {
             constexpr int per = (N + T - 1) / T;
             float2 kn = __ldg(kp + tid), Yn = yp[tid];
@@ -743,7 +863,8 @@ __global__ void __launch_bounds__(T, 1) static_s1_backward(
                 // (sloppy adds, Newton reciprocal). G enters them as production's FP32 value,
                 // and grad_Y, which feeds grad_x, is assembled in FP32 with production's
                 // boundaries: (G + gy) + gm conj(k). grad_k term = conj(G) q + gm conj(Y) + 2 k gd.
-                const float2 ki = kn, Y = Yn, G = scaled32(s[i], scale.hi);
+                const int si = (i / W) * LS + i % W;
+                const float2 ki = kn, Y = Yn, G = scaled32(s[si], scale.hi);
                 if (i + T < N) {  // next k and Y: their loads overlap this element's arithmetic
                     kn = __ldg(kp + i + T);
                     Yn = yp[i + T];
@@ -753,7 +874,7 @@ __global__ void __launch_bounds__(T, 1) static_s1_backward(
                 const CDF t = cmul_ff(G, ki), gy = cscale(t, rd), gm = cdf_neg(gy);
                 const DF v = neg_real_dot(t, cscale(q, rd));
                 const float2 gy32 = cdf_round(gy), gm32 = make_float2(-gy32.x, -gy32.y);
-                s[i] = add2(add2(G, gy32), prod(gm32, conj2(ki)));
+                s[si] = add2(add2(G, gy32), prod(gm32, conj2(ki)));
                 const DF two_v = df_mul_f(v, 2.f);
                 const CDF power{df_mul_f(two_v, ki.x), df_mul_f(two_v, ki.y)};
                 yp[i] = cdf_round(cdf_add(cdf_add(cmul_df(q, conj2(G)), cmul_df(gm, conj2(Y))), power));
@@ -761,8 +882,8 @@ __global__ void __launch_bounds__(T, 1) static_s1_backward(
             }
         }
         __syncthreads();
-        static_fft<H, 0, 1, true, true, W, 1, W, T, true>(s, tw_c, tid);
-        static_fft<W, 0, 1, true, false, H, W, 1, T, true>(s, tw_r, tid);
+        static_fft<H, 0, 1, true, true, W, 1, LS, T, true, 0, Fuse>(s, tw_c, tid);
+        static_fft<W, 0, 1, true, false, H, LS, 1, T, true, 0, Fuse>(s, tw_r, tid);
         // Pad adjoint: each interior pixel collects its own padded copy plus the
         // margin copies its mode maps onto it, rows then columns, ascending.
         for (int i = tid; i < h0 * w0; i += T) {
@@ -771,7 +892,7 @@ __global__ void __launch_bounds__(T, 1) static_s1_backward(
             float sum = 0.f;
             for (int a = 0; a < rows.count(); ++a) {
                 const int R = rows.at(a);
-                for (int z = 0; z < cols.count(); ++z) sum = __fadd_rn(sum, s[R * W + cols.at(z)].x);
+                for (int z = 0; z < cols.count(); ++z) sum = __fadd_rn(sum, s[R * LS + cols.at(z)].x);
             }
             gx[offset + i] = sum;
         }
@@ -785,7 +906,7 @@ void launch_backward_t(const at::Tensor& x, const at::Tensor& g, const at::Tenso
                        at::Tensor& gx, at::Tensor& gk, at::Tensor& gl, int pad, int mode, const float2* tr,
                        const float2* tc) {
     auto kernel = static_s1_backward<H, W, T>;
-    const int bytes = H * W * sizeof(float2);
+    const int bytes = H * (W + kS1Pad) * sizeof(float2);
     TORCH_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes) == cudaSuccess);
     auto part = kernel_partials(x, k, gk);
     auto gl_part = at::empty({x.size(0), x.size(1), 2}, l.options());
@@ -800,6 +921,7 @@ template <int H, int W>
 void launch_backward(const at::Tensor& x, const at::Tensor& g, const at::Tensor& k, const at::Tensor& l, at::Tensor& gx,
                      at::Tensor& gk, at::Tensor& gl, int pad, int mode, const float2* tr, const float2* tc) {
     if (g_s1_backward_threads == 1024) return launch_backward_t<H, W, 1024>(x, g, k, l, gx, gk, gl, pad, mode, tr, tc);
+    if (g_s1_backward_threads == 768) return launch_backward_t<H, W, 768>(x, g, k, l, gx, gk, gl, pad, mode, tr, tc);
     launch_backward_t<H, W, 512>(x, g, k, l, gx, gk, gl, pad, mode, tr, tc);
 }
 
@@ -1399,17 +1521,18 @@ bool flash_supported(int64_t h0, int64_t w0, int64_t scale, int64_t pad, int64_t
     if (h0 != w0 || scale < 1 || scale > 3 || (scale > 1 && pad)) return false;
     const int side = scale == 1 ? int(h0 + 2 * pad) : int(h0);
     if (!compiled(side, int(scale))) return false;
-    const int64_t plane = int64_t(scale * side) * (scale * side) * 8;
+    const int64_t plane = int64_t(scale * side) * (scale * side + (scale == 1 ? 1 : 0)) * 8;
     return plane + kStaticSmem <= smem_capacity(int(device));
 }
 
 int64_t flash_smem_capacity(int64_t device) { return smem_capacity(int(device)); }
 
-// Block sizes of the s1 forward and backward kernels, 512 or 1024 threads each
-// (defaults 1024 and 512).
+// Block sizes of the s1 forward (512 or 1024) and backward (512, 768 or 1024) kernels;
+// defaults 1024 and 512. 768 threads give the backward 24 warps per SM at an
+// 80-register budget.
 void flash_set_s1_threads(int64_t forward, int64_t backward) {
-    TORCH_CHECK((forward == 512 || forward == 1024) && (backward == 512 || backward == 1024),
-                "s1 block sizes must be 512 or 1024");
+    TORCH_CHECK((forward == 512 || forward == 1024) && (backward == 512 || backward == 768 || backward == 1024),
+                "s1 block sizes: forward 512 or 1024, backward 512, 768 or 1024");
     g_s1_forward_threads = int(forward);
     g_s1_backward_threads = int(backward);
 }
